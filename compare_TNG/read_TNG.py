@@ -9,6 +9,8 @@ from scipy.special import gamma
 from scipy.integrate import solve_ivp, quad
 from scipy.integrate import nquad
 from scipy.optimize import curve_fit
+import sys
+import os
 
 #output dn/dM in the unit of [(Mpc/h)^(-3) (Msun/h)^(-1)]
 #input M in the unit of Msun/h
@@ -36,7 +38,8 @@ def Vel_Virial(M_vir_in_Msun, z):
 
 
 #dN/ d ln(ln(m/M))
-def Subhalo_Mass_Function_ln(ln_m_over_M,SHMF_model):
+def Subhalo_Mass_Function_ln(ln_m_over_M,bestfitparams=None):
+    global SHMF_model
     if SHMF_model == 'Giocoli2010':
         m_over_M = np.exp(ln_m_over_M)
         f0 = 0.1
@@ -56,11 +59,26 @@ def Subhalo_Mass_Function_ln(ln_m_over_M,SHMF_model):
         omega = 4
         A = 0.065
         return A* m_over_M**(-alpha) * np.exp(-beta * m_over_M**omega) / np.log(10)
+    elif SHMF_model == 'BestFit':
+        #(alpha,beta_ln10, omega, lgA) provided by bestfitparams
+        if bestfitparams is None:
+            print("Error: bestfitparams is None")
+            return -999
+        m_over_M = np.exp(ln_m_over_M)
+        alpha = bestfitparams[0]
+        beta = bestfitparams[1]
+        omega = bestfitparams[2]
+        A = 10**bestfitparams[3]
+        return A* m_over_M**(-alpha) * np.exp(-beta * m_over_M**omega) / np.log(10)
+        
 
 
 
 #use Bosch2016 model to calculate the DF heating
-def integrand(ln_m_over_M, logM, z):
+def integrand(ln_m_over_M, logM, z, *bestfitparams):
+    if not bestfitparams:
+        bestfitparams = None
+    global SHMF_model
     global G_grav,rho_b0,h_Hubble, Mpc, Msun
     
     eta = 1.0
@@ -71,8 +89,12 @@ def integrand(ln_m_over_M, logM, z):
     m = m_over_M * M  
     rho_g = 200 * rho_b0*(1+z)**3 *Msun/Mpc**3
     DF_heating =  eta * 4 * np.pi * (G_grav * m *Msun/h_Hubble) ** 2 / Vel_Virial(M/h_Hubble, z) *rho_g *I_DF
-    SHMF_model = 'Bosch2016'
-    DF_heating *= Subhalo_Mass_Function_ln(ln_m_over_M,SHMF_model) 
+    if SHMF_model == 'BestFit':
+        DF_heating *= Subhalo_Mass_Function_ln(ln_m_over_M,bestfitparams)
+    else:
+        DF_heating *= Subhalo_Mass_Function_ln(ln_m_over_M) 
+
+
     DF_heating *= HMF_Colossus(M,z) * np.log(10)*M   #convert from M to log10(M)
     
     return DF_heating
@@ -116,8 +138,8 @@ def plot_hmf(halos, current_redshift, dark_matter_resolution,hmf_filename):
 
 
 
-def plot_DF_heating_per_logM_comparison(volume,current_redshift,logM_bins,subhalo_DF_heating_hostmassbin,hosthalo_DF_heating_hostmassbin,filename):
-    
+def plot_DF_heating_per_logM_comparison(volume,current_redshift,dark_matter_resolution,logM_bins,subhalo_DF_heating_hostmassbin,hosthalo_DF_heating_hostmassbin,filename,bestfitparams=None):
+    global simulation_set, SHMF_model
     #convert to per volume per logM bin size
     logM_bin_width = logM_bins[1] - logM_bins[0]
     logM_bin_centers = (logM_bins[:-1] + logM_bins[1:]) / 2
@@ -131,20 +153,28 @@ def plot_DF_heating_per_logM_comparison(volume,current_redshift,logM_bins,subhal
        
     # Plot DF heating as a function of host halo mass bin
     fig = plt.figure(facecolor='white')
-    plt.plot(logM_bin_centers, 1e7*subhalo_DF_heating_hostmassbin_perV_perBinsize,'r-',label='TNG 100-1 subhalo')
-    plt.plot(logM_bin_centers, 1e7*hosthalo_DF_heating_hostmassbin_perV_perBinsize,'b-',label='TNG 100-1 host halo')
+    plt.plot(logM_bin_centers, 1e7*subhalo_DF_heating_hostmassbin_perV_perBinsize,'r-',label=simulation_set+' subhalo')
+    plt.plot(logM_bin_centers, 1e7*hosthalo_DF_heating_hostmassbin_perV_perBinsize,'b-',label=simulation_set+' host halo')
 
     #check contribution to heating (analytical result)
     z_value = current_redshift
-    logM_limits = [2, 16]  # Limits for log10(M [Msun/h])
-    ln_m_over_M_limits = [-12, 0]  # Limits for m/M
+    M_Jeans = 220*(1+z_value)**1.425*h_Hubble
+    print("Jeans mass: ",M_Jeans)
+    logM_limits = [np.log10(M_Jeans), 15]  # Limits for log10(M [Msun/h])
+    ln_m_over_M_limits = [np.log(1e-3), 0]  # Limits for m/M
 
     logM_list = np.linspace(logM_limits[0], logM_limits[1],57)
 
 
     DF_heating_perlogM = []
     for logM in logM_list:
-        result, error = quad(integrand, ln_m_over_M_limits[0], ln_m_over_M_limits[1], args=(logM, z_value))
+        if SHMF_model == 'BestFit':
+            result, error = quad(integrand, ln_m_over_M_limits[0], ln_m_over_M_limits[1], args=(logM, z_value,*bestfitparams))
+        else:
+            result, error = quad(integrand, ln_m_over_M_limits[0], ln_m_over_M_limits[1], args=(logM, z_value))
+
+
+
         if (abs(error) > 0.01 * abs(result)):
             print("Possible large integral error at z = %f, relative error = %f\n", z_value, error/result)
 
@@ -152,9 +182,12 @@ def plot_DF_heating_per_logM_comparison(volume,current_redshift,logM_bins,subhal
 
     DF_heating_perlogM = np.array(DF_heating_perlogM)
     plt.plot(logM_list,1e7*DF_heating_perlogM,'g-',label='subhalo analytic')
+    plt.axvline(np.log10(100*dark_matter_resolution), color='black', linestyle='--')
     plt.legend()
     #plt.xlim([4,12])
-    plt.xlim([8,16])
+    xlim_min = min(np.min(logM_list),4)
+    xlim_max = max(np.max(logM_list),12)
+    plt.xlim([xlim_min,xlim_max])
     plt.ylim([1e37,1e43])
     plt.yscale('log')
     plt.ylabel(r'DF heating per logM [erg/s (Mpc/h)$^{-3}$]',fontsize=12)
@@ -169,7 +202,11 @@ def plot_DF_heating_per_logM_comparison(volume,current_redshift,logM_bins,subhal
     print("subhalo_DF_heating_total_TNG: ",subhalo_DF_heating_total_TNG)
     print("hosthalo_DF_heating_total_TNG: ",hosthalo_DF_heating_total_TNG)
 
-    DF_heating_total_analytic, error = nquad(integrand, [[ln_m_over_M_limits[0], ln_m_over_M_limits[1]], [logM_limits[0], logM_limits[1]]], args=(z_value,))
+    if SHMF_model == 'BestFit':
+        DF_heating_total_analytic, error = nquad(integrand, [[ln_m_over_M_limits[0], ln_m_over_M_limits[1]], [logM_limits[0], logM_limits[1]]], args=(z_value,*bestfitparams))
+    else:
+        DF_heating_total_analytic, error = nquad(integrand, [[ln_m_over_M_limits[0], ln_m_over_M_limits[1]], [logM_limits[0], logM_limits[1]]], args=(z_value,))
+
 
     if (abs(error) > 0.01 * abs(DF_heating_total_analytic)):
         print("possible large integral error at z = %f, relative error = %f\n",z_value,error/DF_heating_total_analytic)
@@ -239,6 +276,13 @@ def plot_Mratio_cumulative(sub_host_Mratio,filename):
 def fitFunc_lg_dNdlgx(lgx,alpha,beta_ln10, omega, lgA):
     x = 10**lgx
     return lgA - alpha*lgx - beta_ln10*x**omega 
+
+#fix omega = 4 and beta_ln10 = 50/ln(10)
+def fitFunc_lg_dNdlgx_fixomega(lgx,alpha,lgA):
+    x = 10**lgx
+    beta_ln10 = 50/np.log(10)
+    omega = 4
+    return lgA - alpha*lgx - beta_ln10*x**omega
 
 def plot_Mratio_dN_dlogMratio(All_sub_host_M,dark_matter_resolution,filename):
     print("total number of subhalos: ",len(All_sub_host_M))
@@ -322,13 +366,48 @@ def plot_Mratio_dN_dlogMratio(All_sub_host_M,dark_matter_resolution,filename):
     #use >resolution data to fit the distribution
     fig = plt.figure(facecolor='white')
 
+    all_fitting_params = []
     for i in range(3,5):
         number_density = number_density_list[i]
-        fit_mask = (bin_centers > np.log10(critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
         #fitFunc_lg_dNdlgx(lgx,alpha,beta_ln10, omega, lgA)
         #p_guess = [0.86, 50/np.log(10),4 ,np.log10(0.065)]
-        popt, pcov = curve_fit(fitFunc_lg_dNdlgx, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p_guess)
+        try:
+            if current_redshift > 10:
+                fit_mask = (bin_centers > np.log10(2.0*critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
+            else:
+                fit_mask = (bin_centers > np.log10(critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
+            popt, pcov = curve_fit(fitFunc_lg_dNdlgx, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p_guess, maxfev= 1000)
+            alpha = popt[0]
+            beta_ln10 = popt[1]
+            omega = popt[2]
+
+            if (alpha < 0 and beta_ln10>0):
+                print("i = {}: fit failed, increase critical ratio".format(i))
+                popt, pcov = curve_fit(fitFunc_lg_dNdlgx, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p_guess, maxfev= 1000)
+            elif(beta_ln10 <= 0 or omega > 10):
+                print("i = {}: fit failed, increase critical ratio and fix the exponential slope".format(i))
+                fit_mask = (bin_centers > np.log10(2.0*critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
+                p0_fixomega = [0.86, np.log10(0.065)]
+                popt, pcov = curve_fit(fitFunc_lg_dNdlgx_fixomega, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p0_fixomega, maxfev= 1000)
+                alpha = popt[0];  lgA = popt[1]
+                popt = [alpha,50/np.log(10),4,lgA]
+
+        except:
+            print("i = {}: fit failed, increase critical ratio and fix the exponential slope".format(i))
+            fit_mask = (bin_centers > np.log10(2.0*critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
+            p0_fixomega = [0.86, np.log10(0.065)]
+            popt, pcov = curve_fit(fitFunc_lg_dNdlgx_fixomega, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p0_fixomega, maxfev= 1000)
+            alpha = popt[0];  lgA = popt[1]
+            popt = [alpha,50/np.log(10),4,lgA]
+
+        
+
+
+            #popt = advanced_fit(bin_centers[fit_mask],number_density[:-1][fit_mask],p_guess)
+
         print("fit parameters: ",popt)
+        all_fitting_params.append([snapNum,i,logM_bins[i],logM_bins[i+1],*popt])
+
         fit_lg_number_density = fitFunc_lg_dNdlgx(bin_centers[fit_mask],*popt)
         plt.step(bin_edges, np.log10(number_density), where='post',color=colors[i],label=labels[i])
         plt.plot(bin_centers[fit_mask],fit_lg_number_density,linestyle='-.',color=colors[i])
@@ -348,15 +427,50 @@ def plot_Mratio_dN_dlogMratio(All_sub_host_M,dark_matter_resolution,filename):
     plt.legend(loc='lower left')
     plt.savefig(filename.replace('.png','_fit.png'),dpi=300)
 
+    write_SHMF_fit_parameters(filename.replace('.png','_fit_parameters.txt'),all_fitting_params)
 
+def advanced_fit(x,y,p_guess):
+    pass
+
+def write_SHMF_fit_parameters(filename,all_fitting_params):
+    with open(filename, 'w') as f:
+        f.write('snapNum bin_index logM_min logM_max alpha beta_ln10 omega lgA\n')
+        for params in all_fitting_params:
+            f.write(' '.join(map(str,params)) + '\n')
+
+#return the bestfit parameters (alpha beta_ln10 omega lgA)
+def read_SHMF_fit_parameters(filename):
+    with open(filename, 'r') as f:
+        f.readline()
+        lines = f.readlines()
+    #only use the last line
+    #snapNum bin_index logM_min logM_max alpha beta_ln10 omega lgA
+    last_line = lines[-1]
+    params = last_line.split()
+    print("BestFit parameters: ",params)
+    return np.array([float(p) for p in params[4:]])
+
+simulation_set = 'TNG50-1'
+SHMF_model = 'BestFit'
 if __name__ == "__main__":
-    simulation_set = 'TNG100-1'
-    gas_resolution = 1.4e6 * h_Hubble  # Msun/h 
-    dark_matter_resolution = 7.5e6 * h_Hubble  # Msun/h
+    if simulation_set == 'TNG100-1':
+        gas_resolution = 1.4e6 * h_Hubble  # Msun/h 
+        dark_matter_resolution = 7.5e6 * h_Hubble  # Msun/h
+    elif simulation_set == 'TNG50-1':
+        gas_resolution = 4.5e5 * h_Hubble
+        dark_matter_resolution = 8.5e4 * h_Hubble
 
     basePath = '/home/zwu/21cm_project/TNG_data/'+simulation_set+'/output'
+    #snapNum = 99
+    #get snapNum as a parameter when running the file
+    snapNum = int(sys.argv[1])
     output_dir = '/home/zwu/21cm_project/compare_TNG/results/'+simulation_set+'/'
-    snapNum = 99
+    output_dir += f'snap_{snapNum}/'
+    #mkdir for this snapshot
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    print("output_dir: ",output_dir)
+
 
     # Load the group catalog data
     print("loading header ...")
@@ -399,6 +513,43 @@ if __name__ == "__main__":
     #print("finish loading gas.")
 
 
+
+    All_sub_host_M  = []
+    #calculate the average m/M ratio for each host halo
+    for host in range(len(halos['GroupMass'])):
+        #Calculate M and m
+        M = halos['GroupMass'][host]*1e10
+        if (M < 100*dark_matter_resolution):
+            continue
+        # Get the subhalos of this host
+        first_sub = int(halos['GroupFirstSub'][host])
+        num_subs = int(halos['GroupNsubs'][host])
+        subhalos_of_host = [(j, subhalos['SubhaloMass'][j]*1e10) for j in range(first_sub, first_sub + num_subs)]   #to Msun/h
+        if (num_subs == 0):
+            continue
+        subhalos_of_host.sort(key=lambda x: x[1])
+        subhalos_of_host = subhalos_of_host[:-1] #exclude the most massive subhalo (not a real subhalo)
+        #calculate m/M ratio
+        for (subhalo_index, subhalo_mass) in subhalos_of_host:
+            m = subhalo_mass
+            if (m < 50*dark_matter_resolution):
+                continue
+            if (m/M >= 1):
+                print("Warning: m/M > 1")
+                continue
+            All_sub_host_M.append([m/M, M, host])
+
+    #plot histogram of m/M ratios 
+    All_sub_host_M = np.array(All_sub_host_M)
+    All_sub_host_Mratio = All_sub_host_M[:,0]
+    All_host_M = All_sub_host_M[:,1]
+
+    #plot_Mratio_cumulative(All_sub_host_Mratio,output_dir+f'Mratio_cumulative_snap{snapNum}_z{current_redshift:.2f}.png')
+
+    plot_Mratio_dN_dlogMratio(All_sub_host_M,dark_matter_resolution, output_dir+f'Average_Mratio_dN_dlogMratio_snap{snapNum}_z{current_redshift:.2f}.png')
+
+    exit(0)
+
     #Calculate the total DF heating for each host halo mass bin 
     #Define the bins for the host halo masses
     logM_min = np.log10(halos['GroupMass'].min()*1e10)
@@ -428,7 +579,6 @@ if __name__ == "__main__":
     vel_host_list = []
     vel_host_gas_list = []
 
-    All_sub_host_M  = []
     for i, hosts_in_bin in enumerate(hosts_in_bins):
         # Loop over each host halo in this bin
         print("\n\nbin: ",i)
@@ -448,7 +598,6 @@ if __name__ == "__main__":
             #exclude small halos not resolved
             if(M < 100*dark_matter_resolution):
                 continue
-
            
             #calculate host halo DF heating, unit: J/s
             #use global average gas density instead of 200*rho_b(z)
@@ -500,7 +649,6 @@ if __name__ == "__main__":
                     print("Warning: m/M > 1")
                     continue
 
-                All_sub_host_M.append([m/M, M, host])
 
 
                 #use simulation velocity and gas density
@@ -528,19 +676,29 @@ if __name__ == "__main__":
         #end of host loop
     #end of host mass bin loop
     
-    filename = output_dir+f"DF_heating_perlogM_comparison_Bosch16_snap{snapNum}_z{current_redshift:.2f}.png"
-    plot_DF_heating_per_logM_comparison(volume, current_redshift,logM_bins,subhalo_DF_heating_hostmassbin,hosthalo_DF_heating_hostmassbin,filename)
+    #plot DF heating per logM
+        
+    if SHMF_model == 'BestFit':
+        filename = output_dir+f"DF_heating_perlogM_comparison_BestFit_snap{snapNum}_z{current_redshift:.2f}.png"
+        #read bestfit parameters
+        SHMF_fit_params_file = output_dir+f"Average_Mratio_dN_dlogMratio_snap{snapNum}_z{current_redshift:.2f}_fit_parameters.txt"
+        bestfitparams = read_SHMF_fit_parameters(SHMF_fit_params_file)
+        plot_DF_heating_per_logM_comparison(volume, current_redshift,dark_matter_resolution,logM_bins,subhalo_DF_heating_hostmassbin,hosthalo_DF_heating_hostmassbin,filename,bestfitparams)
+    else:
+        filename = output_dir+f"DF_heating_perlogM_comparison_Bosch16_snap{snapNum}_z{current_redshift:.2f}.png"
+        plot_DF_heating_per_logM_comparison(volume, current_redshift,dark_matter_resolution,logM_bins,subhalo_DF_heating_hostmassbin,hosthalo_DF_heating_hostmassbin,filename)
+
    
     
     #plot histogram of host vel
-    vel_host_list = np.array(vel_host_list)
-    fig = plt.figure(facecolor='white')
-    plt.hist(vel_host_list/1e3, bins=50)
-    plt.title(f'Host Halo Velocity Distribution, z={current_redshift:.2f}')
-    plt.xlabel('Host Halo Velocity [km/s]')
-    plt.ylabel('Counts')
-    plt.tight_layout()
-    plt.savefig(output_dir+f'Host_vel_snap{snapNum}_z{current_redshift:.2f}.png',dpi=300)
+    # vel_host_list = np.array(vel_host_list)
+    # fig = plt.figure(facecolor='white')
+    # plt.hist(vel_host_list/1e3, bins=50)
+    # plt.title(f'Host Halo Velocity Distribution, z={current_redshift:.2f}')
+    # plt.xlabel('Host Halo Velocity [km/s]')
+    # plt.ylabel('Counts')
+    # plt.tight_layout()
+    # plt.savefig(output_dir+f'Host_vel_snap{snapNum}_z{current_redshift:.2f}.png',dpi=300)
 
     #plot histogram of host vel relative to gas
     # vel_host_gas_list = np.array(vel_host_gas_list)
@@ -560,14 +718,5 @@ if __name__ == "__main__":
     # plt.ylabel(r'$\epsilon_{DF}$ [erg/s]')
     # plt.tight_layout()
     # plt.savefig(f'./figures/DF_heating_usegas_z{current_redshift:.2f}.png',dpi=300)
-
-    #plot histogram of m/M ratios 
-    All_sub_host_M = np.array(All_sub_host_M)
-    All_sub_host_Mratio = All_sub_host_M[:,0]
-    All_host_M = All_sub_host_M[:,1]
-
-    plot_Mratio_cumulative(All_sub_host_Mratio,output_dir+f'Mratio_cumulative_snap{snapNum}_z{current_redshift:.2f}.png')
-
-    plot_Mratio_dN_dlogMratio(All_sub_host_M,dark_matter_resolution, output_dir+f'Average_Mratio_dN_dlogMratio_snap{snapNum}_z{current_redshift:.2f}.png')
 
 

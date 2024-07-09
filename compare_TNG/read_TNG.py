@@ -36,6 +36,11 @@ def Vel_Virial(M_vir_in_Msun, z):
     V_vir = 163*1e3 * (M_vir_in_Msun/1e12*h_Hubble)**(1/3) * (Delta_vir/200)**(1/6) * Omega_m**(1/6) *(1+z)**(1/2)
     return V_vir
 
+def Temperature_Virial(M,z):
+    #M in solar mass, return virial temperature in K
+    return 3.6e5 * (Vel_Virial(M,z)/1e3/100)**2
+
+
 
 #dN/ d ln(ln(m/M))
 def Subhalo_Mass_Function_ln(ln_m_over_M,bestfitparams=None):
@@ -381,10 +386,12 @@ def plot_Mratio_dN_dlogMratio(All_sub_host_M,dark_matter_resolution,filename):
             beta_ln10 = popt[1]
             omega = popt[2]
 
-            if (alpha < 0 and beta_ln10>0):
+            #if (alpha < 0 and beta_ln10>0):
+            if (False):
                 print("i = {}: fit failed, increase critical ratio".format(i))
                 popt, pcov = curve_fit(fitFunc_lg_dNdlgx, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p_guess, maxfev= 1000)
-            elif(beta_ln10 <= 0 or omega > 10):
+            #elif(beta_ln10 <= 0 or omega > 10):
+            elif(True):
                 print("i = {}: fit failed, increase critical ratio and fix the exponential slope".format(i))
                 fit_mask = (bin_centers > np.log10(2.0*critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
                 p0_fixomega = [0.86, np.log10(0.065)]
@@ -427,7 +434,8 @@ def plot_Mratio_dN_dlogMratio(All_sub_host_M,dark_matter_resolution,filename):
     plt.legend(loc='lower left')
     plt.savefig(filename.replace('.png','_fit.png'),dpi=300)
 
-    write_SHMF_fit_parameters(filename.replace('.png','_fit_parameters.txt'),all_fitting_params)
+    #write_SHMF_fit_parameters(filename.replace('.png','_fit_parameters.txt'),all_fitting_params)
+    write_SHMF_fit_parameters(filename.replace('.png','_2paramfit_parameters.txt'),all_fitting_params)
 
 def advanced_fit(x,y,p_guess):
     pass
@@ -463,7 +471,8 @@ if __name__ == "__main__":
     basePath = '/home/zwu/21cm_project/TNG_data/'+simulation_set+'/output'
     #snapNum = 99
     #get snapNum as a parameter when running the file
-    snapNum = int(sys.argv[1])
+    #snapNum = int(sys.argv[1])
+    snapNum = 3
     output_dir = '/home/zwu/21cm_project/compare_TNG/results/'+simulation_set+'/'
     output_dir += f'snap_{snapNum}/'
     #mkdir for this snapshot
@@ -476,7 +485,7 @@ if __name__ == "__main__":
     print("loading header ...")
     header = il.groupcat.loadHeader(basePath, snapNum)
     print("loading halos ...")
-    halos = il.groupcat.loadHalos(basePath, snapNum, fields=['GroupFirstSub', 'GroupNsubs', 'GroupPos', 'GroupMass', 'GroupMassType','Group_R_Crit200','GroupVel'])
+    halos = il.groupcat.loadHalos(basePath, snapNum, fields=['GroupFirstSub', 'GroupNsubs', 'GroupPos', 'GroupMass', 'GroupMassType','Group_M_Crit200','Group_R_Crit200','Group_R_Crit500','GroupVel'])
     print("loading subhalos ...")
     subhalos = il.groupcat.loadSubhalos(basePath, snapNum, fields=['SubhaloMass', 'SubhaloPos', 'SubhaloVel', 'SubhaloGrNr', 'SubhaloMassType'])
     #Type: 0 gas , 1 dark matter, 2 gas tracers, 3 stellar,  4 stellar wind particles, 5 black hole sinks
@@ -501,7 +510,7 @@ if __name__ == "__main__":
     print("number of halos: ", halos['count'])
     print("number of subhalos: ", subhalos['count'])
     hmf_filename= output_dir+ f'HMF_snap_{snapNum}_z_{current_redshift:.2f}.png'
-    plot_hmf(halos, current_redshift,dark_matter_resolution,hmf_filename)
+    #plot_hmf(halos, current_redshift,dark_matter_resolution,hmf_filename)
 
     
     #Load snapshot data
@@ -546,9 +555,8 @@ if __name__ == "__main__":
 
     #plot_Mratio_cumulative(All_sub_host_Mratio,output_dir+f'Mratio_cumulative_snap{snapNum}_z{current_redshift:.2f}.png')
 
-    plot_Mratio_dN_dlogMratio(All_sub_host_M,dark_matter_resolution, output_dir+f'Average_Mratio_dN_dlogMratio_snap{snapNum}_z{current_redshift:.2f}.png')
+    # plot_Mratio_dN_dlogMratio(All_sub_host_M,dark_matter_resolution, output_dir+f'Average_Mratio_dN_dlogMratio_snap{snapNum}_z{current_redshift:.2f}.png')
 
-    exit(0)
 
     #Calculate the total DF heating for each host halo mass bin 
     #Define the bins for the host halo masses
@@ -578,7 +586,10 @@ if __name__ == "__main__":
     hosthalo_DF_heating_list = []
     vel_host_list = []
     vel_host_gas_list = []
-
+    T_DFheating_list = []
+    DF_thermal_energy_list = []
+    Mach_rel_list = []
+    
     for i, hosts_in_bin in enumerate(hosts_in_bins):
         # Loop over each host halo in this bin
         print("\n\nbin: ",i)
@@ -586,12 +597,18 @@ if __name__ == "__main__":
         for host in hosts_in_bin:
             
             #Calculate M and m
-            M = halos['GroupMass'][host]*1e10
+            M = halos['GroupMass'][host]*1e10  #Msun/h
+            M_crit200 = halos['Group_M_Crit200'][host]*1e10 #Msun/h
             M_gas = halos['GroupMassType'][host][0]*1e10  #Msun/h
             R_crit200 = halos['Group_R_Crit200'][host]  #ckpc/h
             R_crit200 = R_crit200/1e3 * scale_factor / h_Hubble  #Mpc
+            R_crit500 = halos['Group_R_Crit500'][host]  #ckpc/h
+            R_crit500 = R_crit500/1e3 * scale_factor / h_Hubble
+            
             rho_g_analytic = rho_b0*(1+current_redshift)**3 *Msun/Mpc**3
+            rho_m_analytic = rho_m0*(1+current_redshift)**3 *Msun/Mpc**3
             rho_g_analytic_200 = 200 *rho_g_analytic
+            rho_m_analytic_200 = 200 *rho_m_analytic
             group_vel = halos['GroupVel'][host]*1e3/scale_factor  #km/s/a to m/s
             vel_analytic = Vel_Virial(M/h_Hubble, current_redshift)
 
@@ -604,7 +621,9 @@ if __name__ == "__main__":
             rho_g = rho_g_analytic
             vel_host = np.sqrt(np.sum(group_vel**2))
             vel_host_list.append(vel_host)
-
+            
+            Tvir_host = Temperature_Virial(M/h_Hubble, current_redshift)
+            Cs_host = np.sqrt(5.0/3.0 *kB *Tvir_host/(mu*mp))
             #surrounding_gas_vel = calc_gas_vel(gas_all,halos['GroupPos'][host],R_crit200)
             #surrounding_gas_vel = surrounding_gas_vel*1e3*np.sqrt(scale_factor)  #sqrt(a)*km/s to m/s
             # print("surrounding gas vel: ",surrounding_gas_vel)
@@ -655,12 +674,14 @@ if __name__ == "__main__":
                 subhalo_vel = subhalos['SubhaloVel'][subhalo_index]*1e3  #km/s to m/s (default unit for subhalo vel is km/s, see TNG data specification)
 
                 vel = np.sqrt(np.sum((group_vel - subhalo_vel)**2))
+                Mach_rel = vel/Cs_host
+                Mach_rel_list.append(Mach_rel)
                 rho_g = rho_g_analytic_200
 
                 # if(R_crit200 > 0):
                 #     rho_g_numerical = M_gas*(Msun/h_Hubble)/(4/3*np.pi*R_crit200**3)  #kg/Mpc^3
                 #     rho_g_numerical = rho_g_numerical/Mpc**3  #kg/m^3
-                #     rho_g = rho_g_numerical
+                #     print("rho_g ratio: ",rho_g_numerical/rho_g_analytic_200) #Mgas > Mgas in R_crit200
                 # else:
                 #     rho_g = rho_g_analytic_200
 
@@ -671,13 +692,40 @@ if __name__ == "__main__":
                 DF_heating =  eta * 4 * np.pi * (G_grav * m *Msun/h_Hubble) ** 2 / vel *rho_g *I_DF
 
                 subhalo_DF_heating_hostmassbin[i] += DF_heating
-                subhalo_DF_heating_list.append((subhalo_index,DF_heating))
+                #estimate the temperature of the DF wake 
+                #dynamical time scale
+                if (R_crit200 > 0):
+                    R_crit200_m = R_crit200 * Mpc
+                    rho_halo = (M_crit200*Msun/h_Hubble)/(4/3*np.pi*R_crit200_m**3)
+                    print("rho halo ratio: ",rho_halo/rho_m_analytic_200) #always 1
+                else:
+                    rho_halo = rho_m_analytic_200
+                t_dyn = 1/np.sqrt(G_grav*rho_halo)
+                #t_DF (to be continued)
+                DF_thermal_energy = DF_heating * t_dyn
+                DF_thermal_energy_list.append(DF_thermal_energy)
+                #size of the wake and density fluctuations? (to be continued)
+                N_gas = M_gas*Msun/h_Hubble/(mu*mp)
+                T_DFheating = DF_thermal_energy * 2/(3*kB*N_gas)  #K
+                T_DFheating_list.append(T_DFheating)
+                print("temperature of DF heating: ",T_DFheating)
+                print(f"t_dyn: {t_dyn:.5e} s = ",t_dyn/1e9/3.15e7," Gyr")
+                
+                
+                
+                subhalo_DF_heating_list.append((subhalo_index,DF_heating,T_DFheating))
             #end of subhalo loop
         #end of host loop
     #end of host mass bin loop
+    print("max T: ",np.max(T_DFheating_list))
+    print("min T: ",np.min(T_DFheating_list))
+    print("max DF thermal energy: ",np.max(DF_thermal_energy_list))
+    print("min DF thermal energy: ",np.min(DF_thermal_energy_list))
+    
+
     
     #plot DF heating per logM
-        
+    '''    
     if SHMF_model == 'BestFit':
         filename = output_dir+f"DF_heating_perlogM_comparison_BestFit_snap{snapNum}_z{current_redshift:.2f}.png"
         #read bestfit parameters
@@ -687,8 +735,100 @@ if __name__ == "__main__":
     else:
         filename = output_dir+f"DF_heating_perlogM_comparison_Bosch16_snap{snapNum}_z{current_redshift:.2f}.png"
         plot_DF_heating_per_logM_comparison(volume, current_redshift,dark_matter_resolution,logM_bins,subhalo_DF_heating_hostmassbin,hosthalo_DF_heating_hostmassbin,filename)
+    '''
+    
+    #plot histogram of Mach number
+    Mach_rel_list = np.array(Mach_rel_list)
+    fig = plt.figure(facecolor='white')
+    plt.hist(Mach_rel_list, bins=50)
+    plt.title(f'Mach Number Distribution, z={current_redshift:.2f}')
+    plt.xlabel('Mach Number')
+    plt.ylabel('Counts')
+    plt.tight_layout()
+    plt.savefig(output_dir+f'Mach_number_snap{snapNum}_z{current_redshift:.2f}.png',dpi=300)
+    
+    
+    
+    
+    exit(0)
+    T_DFheating_list = np.array(T_DFheating_list)
+    DF_thermal_energy_list = np.array(DF_thermal_energy_list)
+    DF_thermal_energy_erg_list = DF_thermal_energy_list * 1e7  #erg
+    
+    #plot T_DFheating histogram (in lgT bin)
+    bins = np.logspace(np.log10(T_DFheating_list.min()), np.log10(T_DFheating_list.max()), num=50)
+    hist, bin_edges = np.histogram(T_DFheating_list, bins=bins)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    log_bin_centers = np.log10(bin_centers)
 
-   
+    # Calculate the width of each bar
+    width = np.diff(log_bin_centers)
+    width = np.append(width, width[-1])
+    # Add a zero at the end of the width array to match the shape of log_bin_centers
+
+    fig = plt.figure(facecolor='white',figsize=(10,6))
+    plt.bar(log_bin_centers, hist, align='center', width=width)
+    plt.title(f'T_DF Distribution, z={current_redshift:.2f}')
+    plt.xlabel('log10 (T_DF) [K]',fontsize=13)
+    plt.ylabel('Counts',fontsize=13)
+    plt.tight_layout()
+    plt.savefig(output_dir+f'T_DF_snap{snapNum}_z{current_redshift:.2f}.png',dpi=300)
+    
+        
+        
+    #plot 2D histogram of T_DF and thermal energy    
+    # Convert the temperature list to logarithmic scale
+    log_T_DFheating_list = np.log10(T_DFheating_list)
+
+    # Convert the thermal energy list to erg
+    DF_thermal_energy_erg_list = DF_thermal_energy_list * 1e7
+
+    # Define the number of bins for the 2D histogram
+    num_bins_x = 50
+    num_bins_y = 40
+
+    # Define logarithmic bins for both dimensions
+    xedges = np.logspace(np.log10(T_DFheating_list.min()), np.log10(T_DFheating_list.max()), num_bins_x+1)
+    yedges = np.logspace(np.log10(DF_thermal_energy_erg_list.min()), np.log10(DF_thermal_energy_erg_list.max()), num_bins_y+1)
+
+    # Create the 2D histogram
+    hist2d, xedges, yedges = np.histogram2d(T_DFheating_list, DF_thermal_energy_erg_list, bins=[xedges, yedges])
+    
+    total_thermal_energy_bin = np.zeros_like(hist2d)
+    thermal_energy_midpoints = 0.5 * (yedges[:-1] + yedges[1:])
+    print(num_bins_x,num_bins_y)
+    print(hist2d.shape)
+    print(total_thermal_energy_bin.shape)
+    print(thermal_energy_midpoints.shape)
+    for i in range(num_bins_x):
+        for j in range(num_bins_y):
+            total_thermal_energy_bin[i, j] = hist2d[i, j] * thermal_energy_midpoints[j]
+
+    
+    # Plot the 2D histogram
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Use a colormap to show the counts in each bin
+    #pcm = ax.pcolormesh(np.log10(xedges), np.log10(yedges), hist2d.T, cmap='viridis', shading='auto')
+    
+    # Use a colormap to show the total thermal energy in each bin
+    pcm = ax.pcolormesh(np.log10(xedges), np.log10(yedges), total_thermal_energy_bin.T, cmap='viridis', shading='auto')
+    
+
+    # Add a color bar to show the count scale
+    #cbar = plt.colorbar(pcm, ax=ax, label='Counts')
+    cbar = plt.colorbar(pcm, ax=ax, label='thermal energy in bin [erg]')
+    
+    # Set plot labels and title
+    ax.set_xlabel('log10 (T_DF) [K]',fontsize=13)
+    ax.set_ylabel('log10 (Thermal Energy) [erg]',fontsize=13)
+    ax.set_title(f'T_DF and Thermal Energy Distribution, z={current_redshift:.2f}')
+
+    # Save the figure
+    plt.tight_layout()
+    #plt.savefig(output_dir + f'T_DF_ThermalEnergy_snap{snapNum}_z{current_redshift:.2f}.png', dpi=300)
+    plt.savefig(output_dir + f'T_DF_ThermalEnergy_newcolor_snap{snapNum}_z{current_redshift:.2f}.png', dpi=300)
+    
     
     #plot histogram of host vel
     # vel_host_list = np.array(vel_host_list)

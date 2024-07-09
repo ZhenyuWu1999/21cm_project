@@ -1,9 +1,10 @@
 import subprocess
 import numpy as np
 # List of snapshot numbers
-snapshots = np.arange(5, 14, 1)
-snapshots = np.append(snapshots, np.arange(15, 27, 2))
-snapshots = np.append(snapshots, np.array([29,33,40,50,67]))
+snapshots = np.arange(0,5,1)
+# snapshots = np.arange(5, 14, 1)
+# snapshots = np.append(snapshots, np.arange(15, 27, 2))
+# snapshots = np.append(snapshots, np.array([29,33,40,50,67]))
 print(snapshots)
 
 # Loop over the snapshot numbers

@@ -7,8 +7,9 @@ h_planck = 6.62607015e-34
 me = 9.1093837e-31
 c = 2.99792458e8
 kB = 1.380649e-23
-sigma_T = 6.65e-29
+sigma_T = 6.65e-29  #Thomson scattering cross section
 mp = 1.67262192e-27
+sigma_SB = 5.670374419e-8  #Stefan-Boltzmann constant
 
 H0 = cosmo.H0
 H0_s = H0 / 3.086e19  # Convert H0 from km/s/Mpc to s^(-1)

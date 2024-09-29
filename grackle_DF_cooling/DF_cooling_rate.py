@@ -11,7 +11,6 @@
 # software.
 ########################################################################
 
-from matplotlib import pyplot
 import numpy as np
 import os
 import sys
@@ -35,19 +34,19 @@ from pygrackle.utilities.model_tests import \
     model_test_format_version
 
 
-def run_cool_rate(redshift,lognH,specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity):
+def run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity):
     '''
     print(f"Current redshift = {redshift}")
     print(f"nH = rho/mH [1/cm^3], log(nH) = {lognH}")
     print(f"Specific heating rate = {specific_heating_rate} [erg/g/s]")
     print(f"Volumetric heating rate = {volumetric_heating_rate} [erg/cm^3/s]")
     print(f"Temperature = {temperature} [K]")
+    print(f"Gas metallicity = {gas_metallicity} [Zsun]")
     '''
-    evolve_cooling = False #find the equilibrium cooling rate
+    
     tiny_number = 1e-20
     
     nH = 10**lognH 
-    volumetric_heating_rate = 0.0
     
     # dictionary to store extra information in output dataset
     extra_attrs = {}
@@ -63,7 +62,7 @@ def run_cool_rate(redshift,lognH,specific_heating_rate, volumetric_heating_rate,
         
     my_chemistry.primordial_chemistry = 3
     my_chemistry.metal_cooling = 1
-    my_chemistry.UVbackground = 1
+    my_chemistry.UVbackground = 0
     my_chemistry.self_shielding_method = 0
     my_chemistry.H2_self_shielding = 0
     my_chemistry.grackle_data_file = \
@@ -90,21 +89,33 @@ def run_cool_rate(redshift,lognH,specific_heating_rate, volumetric_heating_rate,
 
     density = nH * mass_hydrogen_cgs
     
+    if np.log10(gas_metallicity)<-6:
+        gas_metallicity = 1e-6  #valid range minimum value
     #metallicity = 0.0 # Solar   #assume primordial gas
-    #metal_mass_fraction = metallicity * my_chemistry.SolarMetalFractionByMass
-    metal_mass_fraction = gas_metallicity
+    metal_mass_fraction = gas_metallicity * my_chemistry.SolarMetalFractionByMass
+    #(SolarMetalFractionByMass: 0.01295)
+    #metal_mass_fraction = gas_metallicity
     
     # Call convenience function for setting up a fluid container.
     # This container holds the solver parameters, units, and fields.
     
     #temperature = np.logspace(1, 9, 200)
+    max_iterations = 100000
+    if(specific_heating_rate != 0.0 or volumetric_heating_rate != 0.0):
+        print("Include DF Heating in Fluid Container")
+    else:
+        print("Zero Heating in Fluid Container") 
+    
     fc = setup_fluid_container(
         my_chemistry,
         density=density,
         temperature=temperature,
         state=state,
         metal_mass_fraction=metal_mass_fraction,
-        converge=True)
+        dust_to_gas_ratio=None,
+        converge=True,
+        tolerance=0.01,
+        max_iterations=max_iterations)
     
 
     if my_chemistry.use_specific_heating_rate:
@@ -127,13 +138,13 @@ def run_cool_rate(redshift,lognH,specific_heating_rate, volumetric_heating_rate,
 
 
 def plot_single_cooling_rate(data, output_filename):
-    fig = pyplot.figure(figsize=(8, 6),facecolor='white')
-    pyplot.loglog(data["temperature"], np.abs(data["cooling_rate"]),
+    fig = plt.figure(figsize=(8, 6),facecolor='white')
+    plt.loglog(data["temperature"], np.abs(data["cooling_rate"]),
           color="black")
-    pyplot.xlabel('T [K]')
-    pyplot.ylabel('$\\Lambda$ [erg s$^{-1}$ cm$^{3}$]')
-    pyplot.tight_layout()
-    pyplot.savefig(output_filename)
+    plt.xlabel('T [K]')
+    plt.ylabel('$\\Lambda$ [erg s$^{-1}$ cm$^{3}$]')
+    plt.tight_layout()
+    plt.savefig(output_filename)
 
 
 def print_attrs(name, obj):
@@ -190,10 +201,10 @@ def plot_multiple_cooling_rates(data_list, output_filename):
         cooling_time = data["data/cooling_time"]
         cooling_rate = data["data/cooling_rate"]
         turning_point = np.where(cooling_time<0)[0][0]
-        cooling_rate = np.abs(cooling_rate)
+        #cooling_rate = np.abs(cooling_rate)
         
         ax.loglog(temperature[0:turning_point], cooling_rate[0:turning_point], color=colors[i], linestyle='--')
-        ax.loglog(temperature[turning_point:], cooling_rate[turning_point:], color=colors[i], linestyle='-', label=f"log(nH)={lognH_list[i]}")
+        ax.loglog(temperature[turning_point:], -cooling_rate[turning_point:], color=colors[i], linestyle='-', label=f"log(nH)={lognH_list[i]}")
     
    
     ax.set_ylim(1e-29, 1e-21)    
@@ -209,38 +220,80 @@ def plot_multiple_cooling_rates(data_list, output_filename):
 if __name__ == "__main__":
     
     # Lists of parameters
-    current_redshift_list = [15.2,6.0,3.0,0.0]
+    data_name = 'zero_metallicity_noUVB'
+    current_redshift_list = [20.0]
+    #current_redshift_list = [20.0, 15.2, 15.0, 10.0, 0.0]
+    
     lognH_list = [-5, -2, 0, 1, 3]
     temperature = np.logspace(1, 9, 200)
     specific_heating_rate = 0.0
     volumetric_heating_rate = 0.0
-    gas_metallicity = 1e-4
+    gas_metallicity = 0.0
+    evolve_cooling = False
+    
     
     for redshift in current_redshift_list:
         for lognH in lognH_list:
-            data = run_cool_rate(redshift,lognH,specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity)
+            data = run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity)
             print(f"Current redshift = {redshift}")
             print(f"nH = rho/mH [1/cm^3], log(nH) = {lognH}")
 
-            output_filename = f'new_data/Z1e-4/DF_cooling_rate_z{redshift:.1f}_lognH{lognH:.0f}'
+            output_filename = f'new_data/{data_name}/DF_cooling_rate_z{redshift:.1f}_lognH{lognH:.0f}'
             ds_name = output_filename + '.h5'
             im_name = output_filename + '.png'
             
-            yt.save_as_dataset({}, ds_name, data)
+            #yt.save_as_dataset({}, ds_name, data)
             
             #plot_single_cooling_rate(data, im_name) 
                    
     
-  
+    '''
     for current_redshift in current_redshift_list:
         file_list = []
         data_list = []
         for lognH in lognH_list: 
             
-            filename = f'new_data/Z1e-4/DF_cooling_rate_z{current_redshift:.1f}_lognH{lognH:.0f}.h5'
+            filename = f'new_data/{data_name}/DF_cooling_rate_z{current_redshift:.1f}_lognH{lognH:.0f}.h5'
             file_list.append(filename)
             data_list.append(read_hdf5_data(filename))
         
-        output_filename = f'new_figures/Z1e-4/DF_cooling_rate_z{current_redshift:.1f}.png'
+        output_filename = f'new_figures/{data_name}/DF_cooling_rate_z{current_redshift:.1f}.png'
         plot_multiple_cooling_rates(data_list, output_filename)
-        
+    '''
+    
+    '''
+    redshift = 15.2
+    lognH = 0
+    temperature = 1e5
+    data = run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity)
+    
+    fig = plt.figure(figsize=(8, 6),facecolor='white')
+    p1, = plt.loglog(data["time"].to("Myr"),
+                        data["temperature"],
+                        color="black", label="T")
+    plt.xlabel("Time [Myr]")
+    plt.ylabel("T [K]")
+    plt.twinx()
+    p2, = plt.semilogx(data["time"].to("Myr"),
+                          data["mean_molecular_weight"],
+                          color="red", label="$\\mu$")
+    plt.ylabel("$\\mu$")
+    plt.legend([p1,p2],["T","$\\mu$"], fancybox=True,
+                  loc="center left")
+    plt.tight_layout()
+    plt.savefig('new_figures/zero_metallicity_CoolingCell/DF_cooling_rate_z15.2_T_mu.png')
+    
+    
+    #plot cooling rate
+    fig = plt.figure(figsize=(8, 6),facecolor='white')
+    plt.plot(data["time"].to("Myr"), -data["cooling_rate"],
+          color="black")
+    plt.xlabel('Time [Myr]')
+    plt.ylabel('$\\Lambda$ [erg s$^{-1}$ cm$^{3}$]')
+    plt.yscale('log')
+    
+    plt.tight_layout()
+    plt.savefig('new_figures/zero_metallicity_CoolingCell/DF_cooling_rate_z15.2.png')
+    '''
+    
+    

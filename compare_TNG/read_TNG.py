@@ -553,7 +553,7 @@ if __name__ == "__main__":
     #snapNum = 99
     #get snapNum as a parameter when running the file
     #snapNum = int(sys.argv[1])
-    snapNum = 1
+    snapNum = 4
     output_dir = '/home/zwu/21cm_project/compare_TNG/results/'+simulation_set+'/'
     output_dir += f'snap_{snapNum}/'
     #mkdir for this snapshot
@@ -568,7 +568,7 @@ if __name__ == "__main__":
     print("loading halos ...")
     halos = il.groupcat.loadHalos(basePath, snapNum, fields=['GroupFirstSub', 'GroupNsubs', 'GroupPos', 'GroupMass', 'GroupMassType','Group_M_Crit200','Group_R_Crit200','Group_R_Crit500','GroupVel','GroupGasMetallicity'])
     print("loading subhalos ...")
-    subhalos = il.groupcat.loadSubhalos(basePath, snapNum, fields=['SubhaloMass', 'SubhaloPos', 'SubhaloVel', 'SubhaloHalfmassRad','SubhaloGrNr', 'SubhaloMassType'])
+    subhalos = il.groupcat.loadSubhalos(basePath, snapNum, fields=['SubhaloMass', 'SubhaloPos', 'SubhaloVel', 'SubhaloHalfmassRad','SubhaloGrNr', 'SubhaloMassType','SubhaloGasMetallicity'])
     #Type: 0 gas , 1 dark matter, 2 gas tracers, 3 stellar,  4 stellar wind particles, 5 black hole sinks
     
 
@@ -703,6 +703,10 @@ if __name__ == "__main__":
             #Calculate M and m
             M = halos['GroupMass'][host]*1e10  #Msun/h
             M_crit200 = halos['Group_M_Crit200'][host]*1e10 #Msun/h
+            if(M_crit200 == 0):
+                print("Warning: M_crit200 = 0, missing data")
+                continue
+            
             M_gas = halos['GroupMassType'][host][0]*1e10  #Msun/h
             R_crit200 = halos['Group_R_Crit200'][host]  #ckpc/h
             R_crit200 = R_crit200/1e3 * scale_factor / h_Hubble  #Mpc
@@ -782,6 +786,7 @@ if __name__ == "__main__":
 
                 #use simulation velocity and gas density
                 subhalo_vel = subhalos['SubhaloVel'][subhalo_index]*1e3  #km/s to m/s (default unit for subhalo vel is km/s, see TNG data specification)
+                gas_metallicity_sub = subhalos['SubhaloGasMetallicity'][subhalo_index]
 
                 vel = np.sqrt(np.sum((group_vel - subhalo_vel)**2))
                 Mach_rel = vel/Cs_host
@@ -851,6 +856,7 @@ if __name__ == "__main__":
                 N_gas = M_gas*Msun/h_Hubble/(mu*mp)
                 N_gas_in_wake = M_gas_in_wake/(mu*mp)
                 #if the wake volume is larger than the host halo volume, use the gas mass in the host halo
+                Volume_wake_original = Volume_wake
                 if (Volume_filling_factor > 1):
                     N_gas_in_wake = N_gas
                     Volume_wake = 4/3*np.pi*R_crit200_m**3
@@ -867,12 +873,12 @@ if __name__ == "__main__":
                 T_DFheating_list.append(T_DFheating)
                 # print("temperature of DF heating: ",T_DFheating)
                 
-                Xray_fraction = calc_fraction_in_Xray(T_DFheating)
-                Xray_luminosity = Xray_fraction * DF_heating
                 
                 DF_heating_thishost += DF_heating
                 subhalo_mass_kg = m*Msun/h_Hubble
-                subhalo_info = (subhalo_index,subhalo_mass_kg, Mach_rel,DF_heating, t_dyn, mu, Volume_wake, N_gas_in_wake,T_DFheating, Xray_luminosity)
+                vel_rel = vel #relative velocity between subhalo and host halo
+                
+                subhalo_info = (subhalo_index,subhalo_mass_kg, rho_g, vel_rel, Mach_rel,DF_heating, t_dyn, R0_m, Volume_wake_original,Volume_wake,Volume_filling_factor, N_gas_in_wake, T_DFheating, Tvir_host, gas_metallicity_sub, gas_metallicity_host)
                 Output_Subhalo_Info.append(subhalo_info)
                 
                 
@@ -882,17 +888,15 @@ if __name__ == "__main__":
             if (host_DF_defined):
                 DF_thermal_energy_host = DF_heating_thishost * t_dyn
                 T_DFheating_host = DF_thermal_energy_host * 2/(3*kB*N_gas)  #K
-                Xray_fraction_host = calc_fraction_in_Xray(T_DFheating_host)
                 
                 Temperature_host_list.append(T_DFheating_host)
                 DF_thermal_energy_host_list.append(DF_thermal_energy_host)
-                Xray_fraction_host_list.append(Xray_fraction_host)
                 GasMetallicity_host_list.append(gas_metallicity_host)
                 
                 M_crit200_kg = M_crit200*Msun/h_Hubble
                 M_gas_kg = M_gas*Msun/h_Hubble
                 
-                hosthalo_info = (M_crit200_kg,R_crit200_m,M_gas_kg, DF_heating_thishost, t_dyn, mu, N_gas,T_DFheating_host,Xray_fraction_host,gas_metallicity_host,Tvir_host)
+                hosthalo_info = (M_crit200_kg,R_crit200_m,M_gas_kg,rho_g_analytic_200, DF_heating_thishost, t_dyn, mu, N_gas,T_DFheating_host,gas_metallicity_host,Tvir_host)
                 Output_Hosthalo_Info.append(hosthalo_info)
                 
         #end of host loop
@@ -916,16 +920,22 @@ if __name__ == "__main__":
     
     # Data types for subhalo information
     dtype_subhalo = np.dtype([
-        ('subhalo_index', np.int64),
+        ('subhalo_index', np.int32),
         ('subhalo_mass_kg', np.float64),
+        ('rho_g', np.float64),
+        ('vel_rel', np.float64),
         ('Mach_rel', np.float64),
         ('DF_heating', np.float64),
         ('t_dyn', np.float64),
-        ('mu', np.float64),
+        ('R0_m', np.float64),
+        ('Volume_wake_original', np.float64),
         ('Volume_wake', np.float64),
+        ('Volume_filling_factor', np.float64),
         ('N_gas_in_wake', np.float64),
         ('T_DFheating', np.float64),
-        ('Xray_luminosity', np.float64)
+        ('Tvir_host', np.float64),
+        ('gas_metallicity_sub', np.float64),
+        ('gas_metallicity_host', np.float64)
     ])
 
     # Data types for hosthalo information
@@ -933,12 +943,12 @@ if __name__ == "__main__":
         ('M_crit200_kg', np.float64),
         ('R_crit200_m', np.float64),
         ('M_gas_kg', np.float64),
+        ('rho_g_analytic_200', np.float64),
         ('DF_heating_thishost', np.float64),
         ('t_dyn', np.float64),
         ('mu', np.float64),
         ('N_gas', np.float64),
         ('T_DFheating_host', np.float64),
-        ('Xray_fraction_host', np.float64),
         ('gas_metallicity_host', np.float64),
         ('Tvir_host', np.float64)
     ])

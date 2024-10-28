@@ -1,11 +1,13 @@
-
-
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
-
 import os
 from DF_cooling_rate import run_cool_rate
+from scipy.optimize import brentq
+import datetime
+import sys
+import tracemalloc
+
 
 def read_hdf5_data(filepath):
     data_dict = {}
@@ -37,15 +39,48 @@ def read_hdf5_data(filepath):
 
 
 #equilibrium temperature including DF heating, based on Grackle cooling rate
-def get_Grackle_TDF():
-    pass
+def get_Grackle_TDF(initial_T, lognH, metallicity, normalized_heating, redshift):
+    # Define the net heating function
+    def net_heating(T, lognH, metallicity, normalized_heating, redshift):
+        cooling_data = run_cool_rate(False, redshift, lognH, 0.0, 0.0, T, metallicity)
+        cooling_rate = cooling_data["cooling_rate"][0].v.item()
+        return cooling_rate + normalized_heating
 
+    # Helper function to find equilibrium temperature
+    def find_equilibrium(T_low, T_high, abs_tol, rel_tol):
+        if net_heating(T_low, lognH, metallicity, normalized_heating, redshift) * net_heating(T_high, lognH, metallicity, normalized_heating, redshift) > 0:
+            return None
+        else:
+            return brentq(net_heating, T_low, T_high, args=(lognH, metallicity, normalized_heating, redshift), xtol=abs_tol, rtol=rel_tol)
 
+    # Set initial range and tolerances
+    T_low = initial_T
+    T_high = 10 * initial_T
+    abs_tol = 10  # Absolute tolerance  10 K
+    rel_tol = 1e-3  # Relative tolerance
+
+    # First attempt to find the equilibrium temperature
+    equilibrium_temperature = find_equilibrium(T_low, T_high, abs_tol, rel_tol)
+    if equilibrium_temperature is None:
+        T_high = 100 * initial_T
+        equilibrium_temperature = find_equilibrium(T_low, T_high, abs_tol, rel_tol)
+        if equilibrium_temperature is None:
+            print("Warning: No equilibrium found within 100 times the initial temperature. Please check the parameters or extend the range further.")
+    
+    return equilibrium_temperature
+
+#-------------------------------------------------------------------------------------
 amu_kg           = 1.660538921e-27  # g
 mass_hydrogen_kg = 1.007947*amu_kg  # g
 if __name__ == "__main__":
-    output_dir = "snap_1/"
-    filepath = "/home/zwu/21cm_project/compare_TNG/results/TNG50-1/snap_1/"
+    
+    print("Start time: ", datetime.datetime.now())
+    tracemalloc.start()
+    
+    output_dir = "/home/zwu/21cm_project/grackle_DF_cooling/snap_3/"
+    filepath = "/home/zwu/21cm_project/compare_TNG/results/TNG50-1/snap_3/"
+    current_redshift = 10.0
+    
     #find the hdf5 file starting with "DF_heating_snap"
     for file in os.listdir(filepath):
         if file.startswith("DF_heating_snap"):
@@ -53,17 +88,14 @@ if __name__ == "__main__":
             break
     print(f"Reading data from {filename}")
     data_dict = read_hdf5_data(filename)
-    
-    
     Host_data = data_dict["HostHalo"]
     Sub_data = data_dict["SubHalo"]
     
 
-    current_redshift = 15.0
     Cooling_Heating_ratio_list = []
     
     
-    Model = 'Hosthalo'
+    Model = 'SubhaloWake'
     TemperatureModel = 'Virial'
     
     if Model == 'Hosthalo':
@@ -82,6 +114,7 @@ if __name__ == "__main__":
     plt.savefig(output_dir+"Host_halo_gas_metallicity_distribution.png",dpi=300)
     
     
+    snapshot1 = tracemalloc.take_snapshot()
     
     if Model == 'Hosthalo':
         print("Using host halo data")
@@ -165,7 +198,7 @@ if __name__ == "__main__":
                 
       
         elif TemperatureModel == 'Virial':
-            test_num = 20
+            test_num = len(Host_data['Tvir_host'])
             for i in range(test_num):
                 Tvir = Host_data['Tvir_host'][i]
                 gas_metallicity = Host_data['gas_metallicity_host'][i]
@@ -180,35 +213,69 @@ if __name__ == "__main__":
                 #pass the parameters to run_cool_rate
                 #use either specific_heating or volumetric_heating, not both
                 evolve_cooling = False
-                cooling_data = run_cool_rate(evolve_cooling,current_redshift,lognH,specific_heating, 0.0, Tvir,gas_metallicity)
-                cooling_rate_specific = cooling_data["cooling_rate"][0]
-                
-                # cooling_data_2 = run_cool_rate(evolve_cooling,current_redshift,lognH,0.0, volumetric_heating, Tvir,gas_metallicity)
-                # cooling_rate_volumetric = cooling_data_2["cooling_rate"][0]
                 
                 #compare with the case of zero heating
                 cooling_data_zeroheating = run_cool_rate(evolve_cooling,current_redshift,lognH,0.0, 0.0, Tvir,gas_metallicity)
                 cooling_rate_zeroheating = cooling_data_zeroheating["cooling_rate"][0]
                 print(f"\nTvir: {Tvir} K, lognH: {lognH}")
-                print("Specific heating rate: ", specific_heating, "erg/g/s")
+                # print("Specific heating rate: ", specific_heating, "erg/g/s")
                 # print("Volumetric heating rate: ", volumetric_heating, "erg/cm^3/s")
                 print("Normalized heating rate: ", normalized_heating, "erg cm^3 s^-1")
-                
-                print("Cooling rate (with specific heating): ", cooling_rate_specific)
                 print("Cooling rate (zero heating): ", cooling_rate_zeroheating)
+                cooling_rate_zeroheating = cooling_rate_zeroheating.v.item()
                 
-                #print("ratio:", cooling_rate_specific/cooling_rate_volumetric)
-                
-                # hosthalo_info = (Tvir, lognH, gas_metallicity, specific_heating, volumetric_heating, normalized_heating, cooling_rate_specific, cooling_rate_volumetric, cooling_rate_zeroheating)
-                # Output_Hosthalo_Info.append(hosthalo_info)
+                net_heating_flag = 0
+                if cooling_rate_zeroheating + normalized_heating <= 0:
+                    #net cooling even with DF heating
+                    net_heating_flag = -1
+                    T_DF = Tvir
+                    cooling_rate_TDF = cooling_rate_zeroheating
+                    print("Net cooling even with DF heating")
+                else:
+                    net_heating_flag = 1
+                    
+                    T_DF = get_Grackle_TDF(Tvir, lognH, gas_metallicity, normalized_heating, current_redshift)
+                    print("Equilibrium Temperature:", T_DF if T_DF is not None else "No equilibrium found.")
+                    cooling_data_TDF = run_cool_rate(evolve_cooling,current_redshift,lognH, 0.0, 0.0, T_DF,gas_metallicity)
+                    cooling_rate_TDF = cooling_data_TDF["cooling_rate"][0].v.item()
+                    
+
+
+                hosthalo_info = (Tvir, lognH, gas_metallicity, specific_heating, volumetric_heating, normalized_heating, net_heating_flag, T_DF, cooling_rate_zeroheating, cooling_rate_TDF)
+                Output_Hosthalo_Info.append(hosthalo_info)
                 
                 print("\n\n")
     
                 
     elif Model == 'SubhaloWake':   #use subhalo instead of host halo
         print("Using subhalo data")
-        test_num = 4
+        
+        print("t_dyn:",Sub_data['t_dyn'])
+        
+        max_output_len = 50000
+        batch_num = -1
+        #output data type
+        dtype_subhalowake = np.dtype([
+            ('Tvir', np.float64),
+            ('lognH', np.float64),
+            ('rho_g_wake', np.float64),
+            ('gas_metallicity_host', np.float64),
+            ('volume_wake_tdyn_cm3', np.float64),
+            ('heating', np.float64),
+            ('specific_heating', np.float64),
+            ('volumetric_heating', np.float64),
+            ('normalized_heating', np.float64),
+            ('net_heating_flag', np.int32),
+            ('T_DF', np.float64),
+            ('cooling_rate_zeroheating', np.float64),
+            ('cooling_rate_TDF', np.float64),
+            ('Mach_rel', np.float64),
+            ('vel_rel', np.float64)
+        ])
+        
+        test_num = len(Sub_data['Tvir_host'])
         for i in range(test_num):
+            print(f"Subhalo {i} (total {test_num})")
             Tvir = Sub_data['Tvir_host'][i]
             
             #use host halo gas metallicity because subhalo gas metallicity is often not available
@@ -218,6 +285,8 @@ if __name__ == "__main__":
             gas_metallicity_host /= 0.01295
             print("Zsub: ", gas_metallicity_sub, "Zsun")
             print("Zhost: ", gas_metallicity_host, "Zsun")
+            Mach_rel = Sub_data['Mach_rel'][i]
+            vel_rel = Sub_data['vel_rel'][i] #m/s
             
             heating = Sub_data['DF_heating'][i]
             heating *= 1e7 #convert to erg/s
@@ -236,27 +305,73 @@ if __name__ == "__main__":
             normalized_heating = heating/volume_wake_tdyn_cm3/nH_cm3**2 #erg cm^3 s^-1
             Mgas_wake = volume_wake_tdyn*rho_g_wake
             specific_heating = heating/(Mgas_wake*1e3) #erg/s/g
-            
             evolve_cooling = False
-            cooling_data = run_cool_rate(evolve_cooling,current_redshift,lognH, specific_heating, 0.0, Tvir,gas_metallicity_host)
-            # cooling_data_2 = run_cool_rate(evolve_cooling,current_redshift,lognH, 0.0, volumetric_heating, Tvir,gas_metallicity_host)
+            #cooling_data = run_cool_rate(evolve_cooling,current_redshift,lognH, specific_heating, 0.0, Tvir,gas_metallicity_host)
+            #cooling_data_2 = run_cool_rate(evolve_cooling,current_redshift,lognH, 0.0, volumetric_heating, Tvir,gas_metallicity_host)
             cooling_data_zeroheating = run_cool_rate(evolve_cooling,current_redshift,lognH,0.0, 0.0, Tvir,gas_metallicity_host)
             
+           
             
             
             print(f"\nTvir: {Tvir} K, lognH: {lognH}")
             print("Specific heating rate: ", specific_heating, "erg/g/s")
-            print("Volumetric heating rate: ", volumetric_heating, "erg/cm^3/s")
-            print("Normalized heating rate: ", normalized_heating, "erg cm^3 s^-1")
+            # print("Volumetric heating rate: ", volumetric_heating, "erg/cm^3/s")
+            # print("Normalized heating rate: ", normalized_heating, "erg cm^3 s^-1")
             
-            print("Cooling rate (with specific heating): ", cooling_data["cooling_rate"][0])
-            # print("Cooling rate (with volumetric heating): ", cooling_data_2["cooling_rate"][0])  
+            #print("Cooling rate (with specific heating): ", cooling_data["cooling_rate"][0])
+            #print("Cooling rate (with volumetric heating): ", cooling_data_2["cooling_rate"][0])  
             print("Cooling rate (zero heating): ", cooling_data_zeroheating["cooling_rate"][0])
             
-            #subhalowake_info = (Tvir, lognH, gas_metallicity_host, specific_heating, volumetric_heating, normalized_heating, cooling_data["cooling_rate"][0], cooling_data_2["cooling_rate"][0], cooling_data_zeroheating["cooling_rate"][0])
-            #Output_SubhaloWake_Info.append(subhalowake_info)  
+            #print(cooling_data["cooling_time"])
+            #print(cooling_data_zeroheating["cooling_time"])
+            #print("cooling time ratio: ", cooling_data["cooling_time"]/cooling_data_zeroheating["cooling_time"])
+            #print("cooling rate ratio: ", cooling_data_zeroheating["cooling_rate"]/cooling_data["cooling_rate"])
+            cooling_rate_zeroheating = cooling_data_zeroheating["cooling_rate"][0].v.item()
+            
+            net_heating_flag = 0
+            if cooling_rate_zeroheating + normalized_heating <= 0:
+                #net cooling even with DF heating
+                net_heating_flag = -1
+                T_DF = Tvir
+                cooling_rate_TDF = cooling_rate_zeroheating
+                print("Net cooling even with DF heating")
+            else:
+                net_heating_flag = 1
+                
+                # T_DF = get_Grackle_TDF(Tvir, lognH, gas_metallicity_host, normalized_heating, current_redshift)
+                # print("Equilibrium Temperature:", T_DF if T_DF is not None else "No equilibrium found.")
+                # cooling_data_TDF = run_cool_rate(evolve_cooling,current_redshift,lognH, 0.0, 0.0, T_DF,gas_metallicity_host)
+                # cooling_rate_TDF = cooling_data_TDF["cooling_rate"][0].v.item()
+                
+                #for testing, set T_DF = -1
+                T_DF = -1
+                cooling_rate_TDF = -1
+                
+             
+            subhalowake_info = (Tvir, lognH, rho_g_wake, gas_metallicity_host, volume_wake_tdyn_cm3, heating, specific_heating, volumetric_heating, normalized_heating, net_heating_flag, T_DF, cooling_rate_zeroheating, cooling_rate_TDF, Mach_rel, vel_rel)
+            Output_SubhaloWake_Info.append(subhalowake_info)  
             print("\n\n")
             
+            if (i % max_output_len == 0 and i > 0) or i == test_num-1:
+                batch_num += 1
+                
+                output_filename = output_dir+f"Grackle_Cooling_SubhaloWake_TestCoolingMach_{batch_num}.h5"
+                with h5py.File(output_filename, 'w') as file:
+                    subhalowake_array = np.array(Output_SubhaloWake_Info, dtype=dtype_subhalowake)
+                    subhalowake_dataset = file.create_dataset('SubhaloWake', data=subhalowake_array)
+                
+                Output_SubhaloWake_Info = []
+            
+            if(i% 500 == 0):
+                print("\n\n")
+                print("Memory usage: ", tracemalloc.get_traced_memory())
+                print("Current time: ", datetime.datetime.now())
+                print("Current subhalo: ", i)
+                snapshot_new = tracemalloc.take_snapshot()
+                stats = snapshot_new.compare_to(snapshot1, 'lineno')
+                for stat in stats[:5]:
+                    print(stat)
+                print("\n\n")
             
     #output the results to a file
     if Model == 'Hosthalo':
@@ -267,35 +382,20 @@ if __name__ == "__main__":
             ('specific_heating', np.float64),
             ('volumetric_heating', np.float64),
             ('normalized_heating', np.float64),
-            ('cooling_rate_specific', np.float64),
-            ('cooling_rate_volumetric', np.float64),
-            ('cooling_rate_zeroheating', np.float64)
+            ('net_heating_flag', np.int32),
+            ('T_DF', np.float64),
+            ('cooling_rate_zeroheating', np.float64),
+            ('cooling_rate_TDF', np.float64)
         ])
         
-        # output_filename =  output_dir+"Grackle_Cooling_Hosthalo.h5"
+        # output_filename =  output_dir+"Grackle_Cooling_Hosthalo_new.h5"
         # with h5py.File(output_filename, 'w') as file:
         #     hosthalo_array = np.array(Output_Hosthalo_Info, dtype=dtype_hosthalo)
         #     hosthalo_dataset = file.create_dataset('HostHalo', data=hosthalo_array)
         
-    elif Model == 'SubhaloWake':
-        dtype_subhalowake = np.dtype([
-            ('Tvir', np.float64),
-            ('lognH', np.float64),
-            ('gas_metallicity_host', np.float64),
-            ('specific_heating', np.float64),
-            ('volumetric_heating', np.float64),
-            ('normalized_heating', np.float64),
-            ('cooling_rate_specific', np.float64),
-            ('cooling_rate_volumetric', np.float64),
-            ('cooling_rate_zeroheating', np.float64)
-        ])
-        
-        # output_filename = output_dir+"Grackle_Cooling_SubhaloWake.h5"
-        # with h5py.File(output_filename, 'w') as file:
-        #     subhalowake_array = np.array(Output_SubhaloWake_Info, dtype=dtype_subhalowake)
-        #     subhalowake_dataset = file.create_dataset('SubhaloWake', data=subhalowake_array)
         
     #read file
     # Halodata = read_hdf5_data(output_filename)
     # print(Halodata['HostHalo'].dtype.names)
     
+    print("End time: ", datetime.datetime.now())

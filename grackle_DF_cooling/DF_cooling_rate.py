@@ -10,7 +10,6 @@
 # The full license is in the file LICENSE, distributed with this
 # software.
 ########################################################################
-
 import numpy as np
 import os
 import sys
@@ -100,11 +99,11 @@ def run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetri
     # This container holds the solver parameters, units, and fields.
     
     #temperature = np.logspace(1, 9, 200)
-    max_iterations = 100000
-    if(specific_heating_rate != 0.0 or volumetric_heating_rate != 0.0):
-        print("Include DF Heating in Fluid Container")
-    else:
-        print("Zero Heating in Fluid Container") 
+    max_iterations = 10000
+    # if(specific_heating_rate != 0.0 or volumetric_heating_rate != 0.0):
+    #     print("Include DF Heating in Fluid Container")
+    # else:
+    #     print("Zero Heating in Fluid Container") 
     
     fc = setup_fluid_container(
         my_chemistry,
@@ -132,9 +131,9 @@ def run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetri
     else:    
         # get data arrays with symbolic units
         data = fc.finalize_data()
+    my_chemistry.__del__()
     
     return data
-
 
 
 def plot_single_cooling_rate(data, output_filename):
@@ -192,6 +191,7 @@ def read_hdf5_data(filepath):
     return data_dict
 
 def plot_multiple_cooling_rates(data_list, output_filename):
+    lognH_list = [-5, -2, 0, 1, 3]
     colors = ['red', 'orange', 'yellow', 'green', 'blue']
     fig = plt.figure(facecolor='white',figsize=(6,6))
     ax = fig.add_subplot(111)
@@ -205,7 +205,6 @@ def plot_multiple_cooling_rates(data_list, output_filename):
         
         ax.loglog(temperature[0:turning_point], cooling_rate[0:turning_point], color=colors[i], linestyle='--')
         ax.loglog(temperature[turning_point:], -cooling_rate[turning_point:], color=colors[i], linestyle='-', label=f"log(nH)={lognH_list[i]}")
-    
    
     ax.set_ylim(1e-29, 1e-21)    
     ax.set_xlabel('T [K]')
@@ -215,14 +214,57 @@ def plot_multiple_cooling_rates(data_list, output_filename):
     plt.tight_layout()
     
     plt.savefig(output_filename,dpi=300)
+    
+    #also plot cooling time
+    fig = plt.figure(facecolor='white',figsize=(6,6))
+    ax = fig.add_subplot(111)
+    
+    for i, data in enumerate(data_list):
+        temperature = data["data/temperature"]
+        cooling_time = data["data/cooling_time"]
+        turning_point = np.where(cooling_time<0)[0][0]
+        
+        ax.loglog(temperature[0:turning_point], cooling_time[0:turning_point], color=colors[i], linestyle='--')
+        ax.loglog(temperature[turning_point:], -cooling_time[turning_point:], color=colors[i], linestyle='-', label=f"log(nH)={lognH_list[i]}")
 
+    ax.set_xlabel('T [K]')
+    ax.set_ylabel('Cooling Time [s]')
+    ax.legend()
+    plt.tight_layout()    
+
+    plt.savefig(output_filename.replace('.png','_cooling_time.png'),dpi=300)
+
+
+    #plot cooling rate*cooling time
+    fig = plt.figure(facecolor='white',figsize=(6,6))
+    ax = fig.add_subplot(111)
+    
+    for i, data in enumerate(data_list):
+        temperature = data["data/temperature"]
+        cooling_time = data["data/cooling_time"]
+        cooling_rate = data["data/cooling_rate"]
+        turning_point = np.where(cooling_time<0)[0][0]
+        #cooling_rate = np.abs(cooling_rate)
+        
+        lognH = lognH_list[i]
+        nH = 10**lognH        
+        
+        ax.loglog(temperature[0:turning_point], nH**2*cooling_rate[0:turning_point]*cooling_time[0:turning_point], color=colors[i], linestyle='--')
+        ax.loglog(temperature[turning_point:], nH**2*cooling_rate[turning_point:]*cooling_time[turning_point:], color=colors[i], linestyle='-', label=f"log(nH)={lognH_list[i]}")
+
+    ax.set_xlabel('T [K]')
+    ax.set_ylabel('$\\Lambda \\times t_{cool}$ [erg cm$^{-3}$]')
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(output_filename.replace('.png','_cooling_rate_time.png'),dpi=300)
+    
 
 if __name__ == "__main__":
     
     # Lists of parameters
     data_name = 'zero_metallicity_noUVB'
-    current_redshift_list = [20.0]
-    #current_redshift_list = [20.0, 15.2, 15.0, 10.0, 0.0]
+    #current_redshift_list = [15.0]
+    current_redshift_list = [20.0, 15.2, 15.0, 10.0, 0.0]
     
     lognH_list = [-5, -2, 0, 1, 3]
     temperature = np.logspace(1, 9, 200)
@@ -242,12 +284,12 @@ if __name__ == "__main__":
             ds_name = output_filename + '.h5'
             im_name = output_filename + '.png'
             
-            #yt.save_as_dataset({}, ds_name, data)
+            yt.save_as_dataset({}, ds_name, data)
             
             #plot_single_cooling_rate(data, im_name) 
                    
     
-    '''
+    
     for current_redshift in current_redshift_list:
         file_list = []
         data_list = []
@@ -259,7 +301,6 @@ if __name__ == "__main__":
         
         output_filename = f'new_figures/{data_name}/DF_cooling_rate_z{current_redshift:.1f}.png'
         plot_multiple_cooling_rates(data_list, output_filename)
-    '''
     
     '''
     redshift = 15.2

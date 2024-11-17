@@ -366,10 +366,10 @@ def calculate_xray_emissivity(
 
 if __name__ == "__main__":
     TNG50_redshift_list = [20.05,14.99,11.98,10.98,10.00,9.39,9.00,8.45,8.01]
-    snapNum = 4
+    snapNum = 8
     current_redshift = TNG50_redshift_list[snapNum]
-    input_dir = "/Users/wuzhenyu/Desktop/PhD/21cm_project/grackle_DF_cooling/snap_"+str(snapNum)+"/"
-    output_dir = "/Users/wuzhenyu/Desktop/PhD/21cm_project/yt_Xray/snap_"+str(snapNum)+"/"
+    input_dir = "/home/zwu/21cm_project/grackle_DF_cooling/snap_"+str(snapNum)+"/"
+    output_dir = "/home/zwu/21cm_project/yt_Xray/snap_"+str(snapNum)+"/"
     
     model = 'SubhaloWake'
     if model == 'HostHalo':
@@ -402,6 +402,7 @@ if __name__ == "__main__":
     # max_T_DF_cooling = np.max(AllData['T_DF'][net_heating_flag == 1])
     # print("Max T_DF for net heating halos: ", max_T_DF_cooling)
     
+    '''
     for i in range(len(AllData)):
         if AllData['T_allheating'][i] > 1e7:
             print("T_allheating > 1e7: ", AllData['T_allheating'][i])
@@ -413,7 +414,7 @@ if __name__ == "__main__":
             print('normalized heating rate: ', normalized_heating[i])
             break
     exit()
-            
+    '''     
     
     num_display = 5
     
@@ -443,6 +444,35 @@ if __name__ == "__main__":
     plt.title('Histogram of Temperature, z = '+str(current_redshift))
     plt.savefig(output_dir+"histogram_Temperature_SubhaloWake.png",dpi=300)    
     
+    
+    #ratio between normalized_heating and cooling_rate_Tvir
+    ratio_heating_cooling_Tvir = normalized_heating / np.abs(cooling_rate_Tvir)
+    print(ratio_heating_cooling_Tvir)
+    print("max ratio_heating_cooling_Tvir: ", np.max(ratio_heating_cooling_Tvir))
+    print("min ratio_heating_cooling_Tvir: ", np.min(ratio_heating_cooling_Tvir))
+    
+    log_ratio_heating_cooling_Tvir = np.log10(ratio_heating_cooling_Tvir)
+    fig = plt.figure(figsize=(8, 6),facecolor='white')
+    plt.hist(log_ratio_heating_cooling_Tvir, color='blue', alpha=0.4, label='log(heating / cooling at Tvir)')
+    plt.xlabel('log(heating / cooling at Tvir)')
+    plt.ylabel('Count')
+    plt.legend()
+    plt.title('Histogram of log(heating / cooling at Tvir), z = '+str(current_redshift))
+    plt.savefig(output_dir+"histogram_heating_cooling_Tvir_ratio.png",dpi=300)
+    
+    
+    #log_ratio_heating_cooling_TDF  VS Tvir
+    fig = plt.figure(figsize=(8, 6),facecolor='white')
+    logTvir = np.log10(AllData['Tvir'])
+    plt.scatter(logTvir, log_ratio_heating_cooling_Tvir, color='blue', alpha=0.4, label='log(heating / cooling at Tvir)')
+    plt.xlabel('log(Tvir) [K]')
+    plt.ylabel('log(heating / cooling at Tvir)')
+    plt.legend()
+    plt.title('log(heating / cooling at Tvir) vs Tvir, z = '+str(current_redshift))
+    plt.savefig(output_dir+"scatter_heating_cooling_Tvir_ratio.png",dpi=300)
+    
+    
+    exit()
     
     #ratio between T_allheating and Tvir
     ratio_Tallheating_Tvir = AllData['T_allheating'] / AllData['Tvir']

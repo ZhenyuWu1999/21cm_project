@@ -17,6 +17,7 @@ import yt
 import argparse
 import h5py
 import matplotlib.pyplot as plt
+from scipy.optimize import brentq
 
 from pygrackle import \
     chemistry_data, \
@@ -134,6 +135,74 @@ def run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetri
     my_chemistry.__del__()
     
     return data
+
+
+
+#equilibrium temperature including DF heating, based on Grackle cooling rate
+def get_Grackle_TDF(initial_T, lognH, metallicity, normalized_heating, redshift):
+    # Define the net heating function
+    def net_DFheating(T, lognH, metallicity, normalized_heating, redshift):
+        cooling_data = run_cool_rate(False, redshift, lognH, 0.0, 0.0, T, metallicity)
+        cooling_rate = cooling_data["cooling_rate"][0].v.item()
+        return cooling_rate + normalized_heating
+    
+    def net_allheating(T, lognH, metallicity, normalized_heating, cooling_Tinit, redshift):
+        additional_heating = - cooling_Tinit
+        cooling_data = run_cool_rate(False, redshift, lognH, 0.0, 0.0, T, metallicity)
+        cooling_rate = cooling_data["cooling_rate"][0].v.item()
+        return cooling_rate + normalized_heating + additional_heating
+
+    net_heating_flag = 0
+    net_DFheating_Tinit = net_DFheating(initial_T, lognH, metallicity, normalized_heating, redshift)
+    cooling_Tinit = net_DFheating_Tinit - normalized_heating
+    
+    if net_DFheating_Tinit < 0:
+        net_heating_flag = -1
+    else:
+        net_heating_flag = 1
+    
+    # Set initial range and tolerances
+    T_low = initial_T
+    abs_tol = 100  # Absolute tolerance  100 K
+    rel_tol = 1e-3  # Relative tolerance
+    
+    T_tests = np.array([10,100,1000,1e4,1e5])*T_low
+    
+    T_high_DFheating = None
+    T_high_allheating = None
+    
+    for T_test in T_tests:
+        if(net_heating_flag == 1 and T_high_DFheating is None):
+            net_DFheating_Ttest = net_DFheating(T_test, lognH, metallicity, normalized_heating, redshift)
+            if net_DFheating_Ttest < 0:
+                T_high_DFheating = T_test
+        
+        if T_high_allheating is None:
+            net_allheating_Ttest = net_allheating(T_test, lognH, metallicity, normalized_heating, cooling_Tinit, redshift)
+            if net_allheating_Ttest < 0:
+                T_high_allheating = T_test
+    
+
+    if net_heating_flag == 1 and T_high_DFheating is not None:
+        T_DF_equilibrium = brentq(net_DFheating, T_low, T_high_DFheating, args=(lognH, metallicity, normalized_heating, redshift), xtol=abs_tol, rtol=rel_tol)
+        cooling_data_TDF = run_cool_rate(False, redshift, lognH, 0.0, 0.0, T_DF_equilibrium, metallicity)
+        cooling_rate_TDF = cooling_data_TDF["cooling_rate"][0].v.item()
+        
+    else:
+        T_DF_equilibrium = -1
+        cooling_rate_TDF = np.nan
+    
+    if T_high_allheating is not None:
+        T_allheating_equilibrium = brentq(net_allheating, T_low, T_high_allheating, args=(lognH, metallicity, normalized_heating, cooling_Tinit, redshift), xtol=abs_tol, rtol=rel_tol)
+        cooling_data_Tallheating = run_cool_rate(False, redshift, lognH, 0.0, 0.0, T_allheating_equilibrium, metallicity)
+        cooling_rate_Tallheating = cooling_data_Tallheating["cooling_rate"][0].v.item()
+    else:
+        T_allheating_equilibrium = -1
+        cooling_rate_Tallheating = np.nan
+    
+    return net_heating_flag, T_DF_equilibrium, T_allheating_equilibrium, cooling_Tinit, cooling_rate_TDF, cooling_rate_Tallheating
+    
+        
 
 
 def plot_single_cooling_rate(data, output_filename):
@@ -259,7 +328,36 @@ def plot_multiple_cooling_rates(data_list, output_filename):
     plt.savefig(output_filename.replace('.png','_cooling_rate_time.png'),dpi=300)
     
 
+
 if __name__ == "__main__":
+    
+    #test case
+    Tvir = 16038
+    lognH = -0.8758226072737602
+    nH = 10**lognH
+    metallicity= 6.1830604986055e-08
+    heating = 4.2557040478799565e+35
+    volumetric_heating = 1.567484510707363e-28 
+    normalized_heating = 8.848068425451179e-27
+    z = 10.0
+    cooling_data_Tvir = run_cool_rate(False,z,lognH,0.0, 0.0, Tvir,metallicity)
+    print(cooling_data_Tvir["cooling_rate"][0].v.item())
+    cooling_rate_Tvir = cooling_data_Tvir["cooling_rate"][0].v.item()
+    other_volumetric_heating = -cooling_rate_Tvir*nH**2
+    print("other_volumetric_heating",other_volumetric_heating)
+    print("evolve cooling")
+    cooling_data = run_cool_rate(True,z,lognH,0.0, (volumetric_heating+other_volumetric_heating), Tvir,metallicity)
+    print(cooling_data["cooling_rate"][0].v.item())
+    
+    #UV background ???
+    
+    #get_Grackle_TDF model
+    # net_heating_flag, T_DF, T_allheating,cooling_rate_Tvir, cooling_rate_TDF, cooling_rate_Tallheating = get_Grackle_TDF(Tvir, lognH, metallicity, normalized_heating, z)
+    # print("T_DF: ",T_DF)
+    # print("T_allheating: ",T_allheating)
+    # print("cooling_rate_TDF",cooling_rate_TDF)
+    
+    exit()
     
     # Lists of parameters
     data_name = 'zero_metallicity_noUVB'
@@ -286,7 +384,6 @@ if __name__ == "__main__":
             
             yt.save_as_dataset({}, ds_name, data)
             
-            #plot_single_cooling_rate(data, im_name) 
                    
     
     

@@ -18,7 +18,7 @@ import argparse
 import h5py
 import matplotlib.pyplot as plt
 from scipy.optimize import brentq
-
+from physical_constants import G_grav, mass_hydrogen_kg
 from pygrackle import \
     chemistry_data, \
     evolve_constant_density, \
@@ -34,7 +34,7 @@ from pygrackle.utilities.model_tests import \
     model_test_format_version
 
 
-def run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity):
+def run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity, UVB_flag=False, Compton_Xray_flag=False):
     '''
     print(f"Current redshift = {redshift}")
     print(f"nH = rho/mH [1/cm^3], log(nH) = {lognH}")
@@ -63,6 +63,9 @@ def run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetri
     my_chemistry.primordial_chemistry = 3
     my_chemistry.metal_cooling = 1
     my_chemistry.UVbackground = 0
+    if UVB_flag:
+        my_chemistry.UVbackground = 1
+    
     my_chemistry.self_shielding_method = 0
     my_chemistry.H2_self_shielding = 0
     my_chemistry.grackle_data_file = \
@@ -81,6 +84,8 @@ def run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetri
     my_chemistry.time_units = sec_per_Myr          # 1 Gyr in s
     my_chemistry.set_velocity_units()
     my_chemistry.Compton_xray_heating = 0
+    if Compton_Xray_flag:
+        my_chemistry.Compton_xray_heating = 1
     
     if redshift <= 6:
         state = "ionized"
@@ -101,10 +106,6 @@ def run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetri
     
     #temperature = np.logspace(1, 9, 200)
     max_iterations = 10000
-    # if(specific_heating_rate != 0.0 or volumetric_heating_rate != 0.0):
-    #     print("Include DF Heating in Fluid Container")
-    # else:
-    #     print("Zero Heating in Fluid Container") 
     
     fc = setup_fluid_container(
         my_chemistry,
@@ -125,7 +126,7 @@ def run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetri
     
     
     if evolve_cooling:
-        final_time = final_time = 100. # Myr
+        final_time = 30. # Myr
         data = evolve_constant_density(
             fc, final_time=final_time,
             safety_factor=0.01)
@@ -202,8 +203,60 @@ def get_Grackle_TDF(initial_T, lognH, metallicity, normalized_heating, redshift)
     
     return net_heating_flag, T_DF_equilibrium, T_allheating_equilibrium, cooling_Tinit, cooling_rate_TDF, cooling_rate_Tallheating
     
-        
-
+def test_CoolingCell(initial_T, lognH, metallicity, normalized_heating, redshift):
+    cooling_data_Tvir = run_cool_rate(False, redshift, lognH, 0.0, 0.0, initial_T, metallicity)
+    
+    cooling_rate_Tvir = cooling_data_Tvir["cooling_rate"][0].v.item()
+    heating_rate_Tvir = -cooling_rate_Tvir
+    
+    nH = 10**lognH
+    volumetric_Tvir_heating = heating_rate_Tvir*nH**2
+    volumetric_DF_heating = normalized_heating*nH**2
+    volumetric_All_heating = volumetric_Tvir_heating + volumetric_DF_heating
+    
+    evolve_cooling = True
+    
+    #dict_keys(['internal_energy', 'x_velocity', 'y_velocity', 'z_velocity', 'volumetric_heating_rate', 'specific_heating_rate', 'density', 'HI_density', 'HII_density', 'HeI_density', 'HeII_density', 'HeIII_density', 'e_density', 'H2I_density', 'H2II_density', 'HM_density', 'DI_density', 'DII_density', 'HDI_density', 'metal_density', 'cooling_time', 'dust_temperature', 'gamma', 'pressure', 'temperature', 'cooling_rate', 'mean_molecular_weight', 'time'])
+    print("noUVB_noCompton_noHeating ...")
+    cooling_data_noUVB_noCompton_noHeating = run_cool_rate(evolve_cooling, redshift, lognH, 0.0, 0.0, initial_T, metallicity)
+    
+    print("UVB_Compton_noHeating ...")
+    cooling_data_UVB_Compton_noHeating = run_cool_rate(evolve_cooling, redshift, lognH, 0.0, 0.0, initial_T, metallicity, UVB_flag=True, Compton_Xray_flag=True)
+    
+    
+    print("noUVB_noCompton_TvirHeating ...")
+    cooling_data_noUVB_noCompton_TvirHeating = run_cool_rate(evolve_cooling, redshift, lognH, 0.0, volumetric_Tvir_heating, initial_T, metallicity)
+    
+    print("UVB_Compton_TvirHeating ...")
+    cooling_data_UVB_Compton_TvirHeating = run_cool_rate(evolve_cooling, redshift, lognH, 0.0, volumetric_Tvir_heating, initial_T, metallicity, UVB_flag=True, Compton_Xray_flag=True)
+    
+    print("noUVB_noCompton_DFHeating ...")
+    cooling_data_noUVB_noCompton_DFHeating = run_cool_rate(evolve_cooling, redshift, lognH, 0.0, volumetric_DF_heating, initial_T, metallicity)
+    
+    print("UVB_Compton_DFHeating ...")
+    cooling_data_UVB_Compton_DFHeating = run_cool_rate(evolve_cooling, redshift, lognH, 0.0, volumetric_DF_heating, initial_T, metallicity, UVB_flag=True, Compton_Xray_flag=True)
+    
+    print("noUVB_noCompton_AllHeating ...")
+    cooling_data_noUVB_noCompton_AllHeating = run_cool_rate(evolve_cooling, redshift, lognH, 0.0, volumetric_All_heating, initial_T, metallicity)
+    
+    print("UVB_Compton_AllHeating ...")
+    cooling_data_UVB_Compton_AllHeating = run_cool_rate(evolve_cooling, redshift, lognH, 0.0, volumetric_All_heating, initial_T, metallicity, UVB_flag=True, Compton_Xray_flag=True)
+    
+    
+    result_list = [
+        cooling_data_Tvir,
+        cooling_data_noUVB_noCompton_noHeating,
+        cooling_data_UVB_Compton_noHeating,
+        cooling_data_noUVB_noCompton_TvirHeating,
+        cooling_data_UVB_Compton_TvirHeating,
+        cooling_data_noUVB_noCompton_DFHeating,
+        cooling_data_UVB_Compton_DFHeating,
+        cooling_data_noUVB_noCompton_AllHeating,
+        cooling_data_UVB_Compton_AllHeating
+    ]
+    
+    return result_list
+    
 
 def plot_single_cooling_rate(data, output_filename):
     fig = plt.figure(figsize=(8, 6),facecolor='white')
@@ -326,39 +379,8 @@ def plot_multiple_cooling_rates(data_list, output_filename):
     ax.legend()
     plt.tight_layout()
     plt.savefig(output_filename.replace('.png','_cooling_rate_time.png'),dpi=300)
-    
 
-
-if __name__ == "__main__":
-    
-    #test case
-    Tvir = 16038
-    lognH = -0.8758226072737602
-    nH = 10**lognH
-    metallicity= 6.1830604986055e-08
-    heating = 4.2557040478799565e+35
-    volumetric_heating = 1.567484510707363e-28 
-    normalized_heating = 8.848068425451179e-27
-    z = 10.0
-    cooling_data_Tvir = run_cool_rate(False,z,lognH,0.0, 0.0, Tvir,metallicity)
-    print(cooling_data_Tvir["cooling_rate"][0].v.item())
-    cooling_rate_Tvir = cooling_data_Tvir["cooling_rate"][0].v.item()
-    other_volumetric_heating = -cooling_rate_Tvir*nH**2
-    print("other_volumetric_heating",other_volumetric_heating)
-    print("evolve cooling")
-    cooling_data = run_cool_rate(True,z,lognH,0.0, (volumetric_heating+other_volumetric_heating), Tvir,metallicity)
-    print(cooling_data["cooling_rate"][0].v.item())
-    
-    #UV background ???
-    
-    #get_Grackle_TDF model
-    # net_heating_flag, T_DF, T_allheating,cooling_rate_Tvir, cooling_rate_TDF, cooling_rate_Tallheating = get_Grackle_TDF(Tvir, lognH, metallicity, normalized_heating, z)
-    # print("T_DF: ",T_DF)
-    # print("T_allheating: ",T_allheating)
-    # print("cooling_rate_TDF",cooling_rate_TDF)
-    
-    exit()
-    
+def generate_cooling_curves():
     # Lists of parameters
     data_name = 'zero_metallicity_noUVB'
     #current_redshift_list = [15.0]
@@ -384,8 +406,6 @@ if __name__ == "__main__":
             
             yt.save_as_dataset({}, ds_name, data)
             
-                   
-    
     
     for current_redshift in current_redshift_list:
         file_list = []
@@ -398,6 +418,88 @@ if __name__ == "__main__":
         
         output_filename = f'new_figures/{data_name}/DF_cooling_rate_z{current_redshift:.1f}.png'
         plot_multiple_cooling_rates(data_list, output_filename)
+    
+    
+
+if __name__ == "__main__":
+    
+    
+    
+    
+    
+    #test case
+    Tvir = 16038
+    lognH = -0.8758226072737602
+    nH = 10**lognH
+    metallicity= 6.1830604986055e-08
+    heating = 4.2557040478799565e+35
+    volumetric_heating = 1.567484510707363e-28 
+    normalized_heating = 8.848068425451179e-27
+    z = 10.0
+    rho_gas = nH*mass_hydrogen_kg
+    t_dyn = 1/np.sqrt(G_grav*rho_gas)
+    t_dyn_Myr = t_dyn/3.154e13
+    
+    result_list = test_CoolingCell(Tvir, lognH, metallicity, normalized_heating, z)
+    
+    cooling_data_Tvir = result_list[0]
+    cooling_data_noUVB_noCompton_noHeating = result_list[1]
+    cooling_data_UVB_Compton_noHeating = result_list[2]
+    cooling_data_noUVB_noCompton_TvirHeating = result_list[3]
+    cooling_data_UVB_Compton_TvirHeating = result_list[4]
+    cooling_data_noUVB_noCompton_DFHeating = result_list[5]
+    cooling_data_UVB_Compton_DFHeating = result_list[6]
+    cooling_data_noUVB_noCompton_AllHeating = result_list[7]
+    cooling_data_UVB_Compton_AllHeating = result_list[8]
+
+    #plot temperature evolution
+    
+    linestyles = ['k-^', 'k--^', 'b-o', 'b--o', 'g-', 'g--', 'r-', 'r--']
+    markers = ['^', '^', 'o', 'o', None, None, None, None] 
+    alpha_values = [0.9, 0.9, 0.7, 0.7, 1.0, 1.0, 1.0, 1.0]  
+
+    label_list = ['noUVB_noCompton_noHeating', 'UVB_Compton_noHeating', 'noUVB_noCompton_TvirHeating', 'UVB_Compton_TvirHeating',
+                'noUVB_noCompton_DFHeating', 'UVB_Compton_DFHeating', 'noUVB_noCompton_AllHeating', 'UVB_Compton_AllHeating']
+
+    fig = plt.figure(figsize=(8, 6), facecolor='white')
+
+    # Assume result_list is defined and contains your data for each scenario
+    for i in range(1, 9):
+        data = result_list[i - 1]  # Adjust index as Python indices start from 0
+        plt.plot(data["time"].to("Myr"),
+                np.log10(data["temperature"]),
+                linestyles[i - 1],
+                label=label_list[i - 1],
+                marker=markers[i - 1],
+                alpha=alpha_values[i - 1],
+                markevery=0.5,
+                markersize=2)  # Adjust markevery to control marker frequency
+
+    
+    
+    fig = plt.figure(figsize=(8, 6),facecolor='white')
+    
+    for i in range(1,9):
+        data = result_list[i]
+        plt.plot(data["time"].to("Myr"),
+                 np.log10(data["temperature"]),
+                 linestyles[i-1], label=label_list[i-1])
+    
+    plt.title(f"z={z:.1f}, Tvir={Tvir:.0f} K, t_dyn={t_dyn_Myr:.2f} Myr")
+    
+    plt.xlabel("Time [Myr]")
+    plt.ylabel("log10(T [K])")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("testCoolingCell/DF_cooling_cell_temperature_30Myr.png")
+    
+    
+    
+    
+        
+
+    
+    
     
     '''
     redshift = 15.2

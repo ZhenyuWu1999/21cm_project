@@ -362,74 +362,8 @@ def calculate_xray_emissivity(
     
     '''
 
-
-
-if __name__ == "__main__":
-    TNG50_redshift_list = [20.05,14.99,11.98,10.98,10.00,9.39,9.00,8.45,8.01]
-    snapNum = 8
-    current_redshift = TNG50_redshift_list[snapNum]
-    input_dir = "/home/zwu/21cm_project/grackle_DF_cooling/snap_"+str(snapNum)+"/"
-    output_dir = "/home/zwu/21cm_project/yt_Xray/snap_"+str(snapNum)+"/"
-    
-    model = 'SubhaloWake'
-    if model == 'HostHalo':
-        HaloData = read_hdf5_data(input_dir + "Grackle_Cooling_Hosthalo_new.h5")
-        AllData = HaloData['HostHalo']
-    elif model == 'SubhaloWake': 
-        HaloData = read_hdf5_data(input_dir + "Grackle_Cooling_SubhaloWake_FullModel_snap"+str(snapNum)+".h5")
-        AllData = HaloData['SubhaloWake']
-        
-    print(AllData.dtype.names)
-    
-    heating_rate = AllData['heating']
-    specific_heating = AllData['specific_heating']
-    volumetric_heating = AllData['volumetric_heating']
-    normalized_heating = AllData['normalized_heating']
-    
-    cooling_rate_Tvir = AllData['cooling_rate_Tvir']
-    cooling_rate_TDF = AllData['cooling_rate_TDF']
-    cooling_rate_Tallheating = AllData['cooling_rate_Tallheating']
-    net_heating_flag = AllData['net_heating_flag']
-    
-    volume_wake_tdyn_cm3 = AllData['volume_wake_tdyn_cm3']
-    # print(net_heating_flag)
-    # num_net_heating = np.sum(net_heating_flag == 1)
-    # num_net_cooling = np.sum(net_heating_flag == -1)
-    # print("Number of halos with net heating: ", num_net_heating)
-    # print("Number of halos with net cooling: ", num_net_cooling)
-    
-    #find max temperature for net heating halos
-    # max_T_DF_cooling = np.max(AllData['T_DF'][net_heating_flag == 1])
-    # print("Max T_DF for net heating halos: ", max_T_DF_cooling)
-    
-    '''
-    for i in range(len(AllData)):
-        if AllData['T_allheating'][i] > 1e7:
-            print("T_allheating > 1e7: ", AllData['T_allheating'][i])
-            print('lognH: ', AllData['lognH'][i])
-            print('Tvir: ', AllData['Tvir'][i])
-            print('metallicity: ', AllData['gas_metallicity_host'][i])
-            print('heating rate: ', heating_rate[i])
-            print('volumetric heating rate: ', volumetric_heating[i])
-            print('normalized heating rate: ', normalized_heating[i])
-            break
-    exit()
-    '''     
-    
-    num_display = 5
-    
-    print(f"\nTvir: {AllData['Tvir'][:num_display]} K")
-    print(f"T_DF: {AllData['T_DF'][:num_display]} K")
-    print(f"T_allheating: {AllData['T_allheating'][:num_display]} K")
-    #print("Specific heating rate: ", specific_heating[:num_display], "erg/g/s")
-    #print("Volumetric heating rate: ", volumetric_heating[:num_display], "erg/cm^3/s")
-    # print("Normalized heating rate: ", normalized_heating[:num_display], "erg cm^3 s^-1")
-    
-    # print("Cooling rate at Tvir: ", cooling_rate_Tvir[:num_display])
-    
-    # print("Cooling rate at T_DF: ", cooling_rate_TDF[:num_display])
-    # print("net DF heating: ", normalized_heating[:num_display] + cooling_rate_TDF[:num_display])
-    
+def plot_statistics(AllData, output_dir, current_redshift):
+     
     
     #histogram of Tvir, T_DF, T_allheating (temperature log scale)
     fig = plt.figure(figsize=(8, 6),facecolor='white')
@@ -444,6 +378,8 @@ if __name__ == "__main__":
     plt.title('Histogram of Temperature, z = '+str(current_redshift))
     plt.savefig(output_dir+"histogram_Temperature_SubhaloWake.png",dpi=300)    
     
+    normalized_heating = AllData['normalized_heating']
+    cooling_rate_Tvir = AllData['cooling_rate_Tvir']
     
     #ratio between normalized_heating and cooling_rate_Tvir
     ratio_heating_cooling_Tvir = normalized_heating / np.abs(cooling_rate_Tvir)
@@ -472,65 +408,114 @@ if __name__ == "__main__":
     plt.savefig(output_dir+"scatter_heating_cooling_Tvir_ratio.png",dpi=300)
     
     
-    exit()
+
+
+
+if __name__ == "__main__":
+    TNG50_redshift_list = [20.05,14.99,11.98,10.98,10.00,9.39,9.00,8.45,8.01]
+    snapNum = 8
+    current_redshift = TNG50_redshift_list[snapNum]
+    input_dir = "/home/zwu/21cm_project/grackle_DF_cooling/snap_"+str(snapNum)+"/"
+    output_dir = "/home/zwu/21cm_project/yt_Xray/snap_"+str(snapNum)+"/"
     
-    #ratio between T_allheating and Tvir
-    ratio_Tallheating_Tvir = AllData['T_allheating'] / AllData['Tvir']
+    model = 'SubhaloWake'
+    if model == 'SubhaloWake': 
+        HaloData = read_hdf5_data(input_dir + "Grackle_Cooling_SubhaloWake_FullModel_snap"+str(snapNum)+".h5")
+        AllData = HaloData['SubhaloWake']
+    elif model == 'SubhaloWakeNonEq':
+        pass
+        
+    print(AllData.dtype.names)
     
-    print("T_allheating / Tvir: ", ratio_Tallheating_Tvir)
-    print("max T_allheating / Tvir: ", np.max(ratio_Tallheating_Tvir))
+    heating_rate = AllData['heating']
+    specific_heating = AllData['specific_heating']
+    volumetric_heating = AllData['volumetric_heating']
+    normalized_heating = AllData['normalized_heating']
+    volume_wake_tdyn_cm3 = AllData['volume_wake_tdyn_cm3']
     
-    '''
-    fig = plt.figure(figsize=(8, 6),facecolor='white')
-    plt.hist(ratio_Tallheating_Tvir, color='blue', alpha=0.4, label='T_allheating / Tvir')
-    plt.xlabel('T_allheating / Tvir')
-    plt.ylabel('Count')
-    plt.legend()
-    plt.title('Histogram of T_allheating / Tvir, z = '+str(current_redshift))
-    plt.savefig(output_dir+"histogram_Tallheating_Tvir_ratio.png",dpi=300)
-    '''
+    cooling_rate_Tvir = AllData['cooling_rate_Tvir']
+    
+    if model == 'SubhaloWake':
+        cooling_rate_TDF = AllData['cooling_rate_TDF']
+        cooling_rate_Tallheating = AllData['cooling_rate_Tallheating']
+        net_heating_flag = AllData['net_heating_flag']
+    elif model == 'SubhaloWakeNonEq':
+        pass    
+  
+    
+    num_display = 5
+    
+    print(f"\nTvir: {AllData['Tvir'][:num_display]} K")
+    print(f"T_DF: {AllData['T_DF'][:num_display]} K")
+    print(f"T_allheating: {AllData['T_allheating'][:num_display]} K")
+    #print("Specific heating rate: ", specific_heating[:num_display], "erg/g/s")
+    #print("Volumetric heating rate: ", volumetric_heating[:num_display], "erg/cm^3/s")
+    # print("Normalized heating rate: ", normalized_heating[:num_display], "erg cm^3 s^-1")
+    
+    # print("Cooling rate at Tvir: ", cooling_rate_Tvir[:num_display])
+    
+    # print("Cooling rate at T_DF: ", cooling_rate_TDF[:num_display])
+    # print("net DF heating: ", normalized_heating[:num_display] + cooling_rate_TDF[:num_display])
+   
+  
+
     
     total_heating_rate = np.sum(heating_rate)
-    total_heating_rate_2 = np.sum(volume_wake_tdyn_cm3 * volumetric_heating)
-    print("Total heating rate: ", total_heating_rate, total_heating_rate_2)
+    # total_heating_rate_2 = np.sum(volume_wake_tdyn_cm3 * volumetric_heating)
+    
     
     #X-ray emissivity at Tvir
     
     use_metallicity = True
-    
     normalized_heating = YTArray(normalized_heating, "erg*cm**3/s")
+    
+    
     #do not consider redshift here
     emissivity_Tvir_cloudy = calculate_xray_emissivity(AllData, 'Tvir', 0.5, 2.0, use_metallicity, redshift=0.0, table_type="cloudy", data_dir=".", cosmology=None, dist=None)
     print("Emissivity at Tvir: ", emissivity_Tvir_cloudy)
     print(np.sum(YTArray(volume_wake_tdyn_cm3, "cm**3") * emissivity_Tvir_cloudy))
     
-    emissivity_apec = calculate_xray_emissivity(AllData, 'Tvir', 0.5, 2.0, use_metallicity, redshift=0.0, table_type="apec", data_dir=".", cosmology=None, dist=None)
-    print(np.sum(YTArray(volume_wake_tdyn_cm3, "cm**3") * emissivity_apec))
+    emissivity_Tvir_apec = calculate_xray_emissivity(AllData, 'Tvir', 0.5, 2.0, use_metallicity, redshift=0.0, table_type="apec", data_dir=".", cosmology=None, dist=None)
+    print(np.sum(YTArray(volume_wake_tdyn_cm3, "cm**3") * emissivity_Tvir_apec))
     
+    if model == 'SubhaloWake':
+        emissivity_Tallheating_cloudy = calculate_xray_emissivity(AllData, 'T_allheating', 0.5, 2.0, use_metallicity, redshift=0.0, table_type="cloudy", data_dir=".", cosmology=None, dist=None)
+        print("Emissivity at T_allheating: ", emissivity_Tallheating_cloudy)
+        print(np.sum(YTArray(volume_wake_tdyn_cm3, "cm**3") * emissivity_Tallheating_cloudy))
+        
+        emissivity_Tallheating_apec = calculate_xray_emissivity(AllData, 'T_allheating', 0.5, 2.0, use_metallicity, redshift=0.0, table_type="apec", data_dir=".", cosmology=None, dist=None)
+        print(np.sum(YTArray(volume_wake_tdyn_cm3, "cm**3") * emissivity_Tallheating_apec))
     
-    emissivity_Tallheating_cloudy = calculate_xray_emissivity(AllData, 'T_allheating', 0.5, 2.0, use_metallicity, redshift=0.0, table_type="cloudy", data_dir=".", cosmology=None, dist=None)
-    print("Emissivity at T_allheating: ", emissivity_Tallheating_cloudy)
-    print(np.sum(YTArray(volume_wake_tdyn_cm3, "cm**3") * emissivity_Tallheating_cloudy))
-    
-    emissivity_Tallheating_apec = calculate_xray_emissivity(AllData, 'T_allheating', 0.5, 2.0, use_metallicity, redshift=0.0, table_type="apec", data_dir=".", cosmology=None, dist=None)
-    print(np.sum(YTArray(volume_wake_tdyn_cm3, "cm**3") * emissivity_Tallheating_apec))
-    
-    #write the emissivity to file (heating rate, emissivity_Tvir_cloudy, emissivity_Tallheating_cloudy)
-    output_filename = output_dir + "Xray_emissivity_snap"+str(snapNum)+".h5"
-    with h5py.File(output_filename, 'w') as f:
-        f.create_dataset('heating_rate', data=heating_rate)
-        f.create_dataset('emissivity_Tvir_cloudy', data=emissivity_Tvir_cloudy)
-        f.create_dataset('emissivity_apec', data=emissivity_apec)
-        f.create_dataset('emissivity_Tallheating_cloudy', data=emissivity_Tallheating_cloudy)
-        f.create_dataset('emissivity_Tallheating_apec', data=emissivity_Tallheating_apec)
-        f.create_dataset('volume_wake_tdyn_cm3', data=volume_wake_tdyn_cm3)
-        f.create_dataset('Tvir', data=AllData['Tvir'])
-        f.create_dataset('T_DF', data=AllData['T_DF'])
-        f.create_dataset('T_allheating', data=AllData['T_allheating'])
-    
+    elif model == 'SubhaloWakeNonEq':
+        pass
         
         
-    exit()
+    #write to file
+    if model == 'SubhaloWake':
+        output_filename = output_dir + "Xray_emissivity_snap"+str(snapNum)+".h5"
+        with h5py.File(output_filename, 'w') as f:
+            f.create_dataset('heating_rate', data=heating_rate)
+            f.create_dataset('emissivity_Tvir_cloudy', data=emissivity_Tvir_cloudy)
+            f.create_dataset('emissivity_Tvir_apec', data=emissivity_Tvir_apec)
+            f.create_dataset('emissivity_Tallheating_cloudy', data=emissivity_Tallheating_cloudy)
+            f.create_dataset('emissivity_Tallheating_apec', data=emissivity_Tallheating_apec)
+            f.create_dataset('volume_wake_tdyn_cm3', data=volume_wake_tdyn_cm3)
+            f.create_dataset('Tvir', data=AllData['Tvir'])
+            f.create_dataset('T_DF', data=AllData['T_DF'])
+            f.create_dataset('T_allheating', data=AllData['T_allheating'])
+    elif model == 'SubhaloWakeNonEq':
+        pass    
+            
+            
+
+
+
+
+
+
+
+
+
     
     '''
     # Plot the histogram of X-ray fraction at Tvir
@@ -623,17 +608,3 @@ if __name__ == "__main__":
     '''
     
     
-    
-    
-    
-    
-    '''
-    my_si = XrayEmissivityIntegrator("cloudy", data_dir='.', redshift=0.0)
-    
-    e_min = 0.5; e_max = 2.0
-    em_0 = my_si.get_interpolator("primordial", e_min, e_max)
-    emp_0 = my_si.get_interpolator("primordial", e_min, e_max, energy=False)
-    #if metallicity is not None:
-    em_Z = my_si.get_interpolator("metals", e_min, e_max)
-    emp_Z = my_si.get_interpolator("metals", e_min, e_max, energy=False)
-    '''

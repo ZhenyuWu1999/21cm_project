@@ -413,20 +413,23 @@ def plot_statistics(AllData, output_dir, current_redshift):
 
 if __name__ == "__main__":
     TNG50_redshift_list = [20.05,14.99,11.98,10.98,10.00,9.39,9.00,8.45,8.01]
-    snapNum = 8
+    snapNum = 2
     current_redshift = TNG50_redshift_list[snapNum]
     input_dir = "/home/zwu/21cm_project/grackle_DF_cooling/snap_"+str(snapNum)+"/"
     output_dir = "/home/zwu/21cm_project/yt_Xray/snap_"+str(snapNum)+"/"
     
-    model = 'SubhaloWake'
+    model = 'SubhaloWakeNonEq'
     if model == 'SubhaloWake': 
         HaloData = read_hdf5_data(input_dir + "Grackle_Cooling_SubhaloWake_FullModel_snap"+str(snapNum)+".h5")
+        display_hdf5_contents(input_dir + "Grackle_Cooling_SubhaloWake_FullModel_snap"+str(snapNum)+".h5")
+        
         AllData = HaloData['SubhaloWake']
     elif model == 'SubhaloWakeNonEq':
-        pass
+        input_filename = input_dir + "Grackle_Cooling_SubhaloWake_NonEq_snap"+str(snapNum)+".h5"
+        HaloData = read_hdf5_data(input_filename)
+        AllData = HaloData['SubhaloWakeNonEq']
         
-    print(AllData.dtype.names)
-    
+        
     heating_rate = AllData['heating']
     specific_heating = AllData['specific_heating']
     volumetric_heating = AllData['volumetric_heating']
@@ -435,40 +438,35 @@ if __name__ == "__main__":
     
     cooling_rate_Tvir = AllData['cooling_rate_Tvir']
     
+    
     if model == 'SubhaloWake':
         cooling_rate_TDF = AllData['cooling_rate_TDF']
         cooling_rate_Tallheating = AllData['cooling_rate_Tallheating']
         net_heating_flag = AllData['net_heating_flag']
     elif model == 'SubhaloWakeNonEq':
-        pass    
-  
-    
+        cooling_rate_TDF_NonEq = AllData['cooling_rate_TDF_NonEq']
+        tfinal = AllData['tfinal']
+        T_DF_NonEq = AllData['T_DF_NonEq']
+           
     num_display = 5
     
     print(f"\nTvir: {AllData['Tvir'][:num_display]} K")
-    print(f"T_DF: {AllData['T_DF'][:num_display]} K")
-    print(f"T_allheating: {AllData['T_allheating'][:num_display]} K")
+    #print(f"T_DF: {AllData['T_DF'][:num_display]} K")
+    # print(f"T_allheating: {AllData['T_allheating'][:num_display]} K")
     #print("Specific heating rate: ", specific_heating[:num_display], "erg/g/s")
     #print("Volumetric heating rate: ", volumetric_heating[:num_display], "erg/cm^3/s")
     # print("Normalized heating rate: ", normalized_heating[:num_display], "erg cm^3 s^-1")
     
     # print("Cooling rate at Tvir: ", cooling_rate_Tvir[:num_display])
-    
     # print("Cooling rate at T_DF: ", cooling_rate_TDF[:num_display])
     # print("net DF heating: ", normalized_heating[:num_display] + cooling_rate_TDF[:num_display])
    
-  
-
-    
     total_heating_rate = np.sum(heating_rate)
     # total_heating_rate_2 = np.sum(volume_wake_tdyn_cm3 * volumetric_heating)
     
-    
     #X-ray emissivity at Tvir
-    
     use_metallicity = True
     normalized_heating = YTArray(normalized_heating, "erg*cm**3/s")
-    
     
     #do not consider redshift here
     emissivity_Tvir_cloudy = calculate_xray_emissivity(AllData, 'Tvir', 0.5, 2.0, use_metallicity, redshift=0.0, table_type="cloudy", data_dir=".", cosmology=None, dist=None)
@@ -487,9 +485,15 @@ if __name__ == "__main__":
         print(np.sum(YTArray(volume_wake_tdyn_cm3, "cm**3") * emissivity_Tallheating_apec))
     
     elif model == 'SubhaloWakeNonEq':
-        pass
         
+        emissivity_TDF_NonEq_cloudy = calculate_xray_emissivity(AllData, 'T_DF_NonEq', 0.5, 2.0, use_metallicity, redshift=0.0, table_type="cloudy", data_dir=".", cosmology=None, dist=None)
+        print("Emissivity at T_DF_NonEq: ", emissivity_TDF_NonEq_cloudy)
+        print(np.sum(YTArray(volume_wake_tdyn_cm3, "cm**3") * emissivity_TDF_NonEq_cloudy))
         
+        emissivity_TDF_NonEq_apec = calculate_xray_emissivity(AllData, 'T_DF_NonEq', 0.5, 2.0, use_metallicity, redshift=0.0, table_type="apec", data_dir=".", cosmology=None, dist=None)
+        print(np.sum(YTArray(volume_wake_tdyn_cm3, "cm**3") * emissivity_TDF_NonEq_apec))
+        
+    exit()
     #write to file
     if model == 'SubhaloWake':
         output_filename = output_dir + "Xray_emissivity_snap"+str(snapNum)+".h5"
@@ -504,7 +508,20 @@ if __name__ == "__main__":
             f.create_dataset('T_DF', data=AllData['T_DF'])
             f.create_dataset('T_allheating', data=AllData['T_allheating'])
     elif model == 'SubhaloWakeNonEq':
-        pass    
+        output_filename = output_dir + "Xray_emissivity_NonEq_snap"+str(snapNum)+".h5" 
+        with h5py.File(output_filename, 'w') as f:
+            f.create_dataset('heating_rate', data=heating_rate)
+            f.create_dataset("normalized_heating", data=normalized_heating)
+            f.create_dataset("cooling_rate_Tvir", data=cooling_rate_Tvir)
+            f.create_dataset('emissivity_Tvir_cloudy', data=emissivity_Tvir_cloudy)
+            f.create_dataset('emissivity_Tvir_apec', data=emissivity_Tvir_apec)
+            f.create_dataset('emissivity_TDF_NonEq_cloudy', data=emissivity_TDF_NonEq_cloudy)
+            f.create_dataset('emissivity_TDF_NonEq_apec', data=emissivity_TDF_NonEq_apec)
+            f.create_dataset('volume_wake_tdyn_cm3', data=volume_wake_tdyn_cm3)
+            f.create_dataset('Tvir', data=AllData['Tvir'])
+            f.create_dataset('T_DF_NonEq', data=AllData['T_DF_NonEq'])
+            f.create_dataset('tfinal', data=tfinal)
+              
             
             
 

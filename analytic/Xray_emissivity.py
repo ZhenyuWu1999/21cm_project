@@ -93,7 +93,26 @@ if __name__ == '__main__':
         # print(f"tot_heating_rate = {tot_heating_rate:.2e} erg/s")
         # print(f"tot_Xray_Tvir = {tot_Xray_Tvir:.2e} erg/s")
         # print(f"tot_Xray_allheating = {tot_Xray_allheating:.2e} erg/s")
-        
+    
+    
+    #NonEq models
+    snapNum = 1
+    filename = "/home/zwu/21cm_project/yt_Xray/snap_1/Xray_emissivity_NonEq_snap1.h5"
+    data_dict = read_hdf5_data(filename)
+    NonEq_redshift = TNG50_redshift_list[snapNum]
+    tot_Xray_TDF_NonEq_cloudy = np.sum(data_dict['emissivity_TDF_NonEq_cloudy']*data_dict['volume_wake_tdyn_cm3'])
+    tot_Xray_TDF_NonEq_apec = np.sum(data_dict['emissivity_TDF_NonEq_apec']*data_dict['volume_wake_tdyn_cm3'])
+    #select only heating ratio > 0.01 
+    Tvir = data_dict['Tvir']
+    normalized_heating = data_dict['normalized_heating']
+    cooling_rate_Tvir = data_dict['cooling_rate_Tvir']
+    tfinal = data_dict['tfinal']
+    heating_ratio = normalized_heating/np.abs(cooling_rate_Tvir)
+    sec_per_Myr  = 31.5576e12
+    mask = (heating_ratio > 0.01) 
+    selected_TDF_NonEq_cloudy = np.sum(data_dict['emissivity_TDF_NonEq_cloudy'][mask]*data_dict['volume_wake_tdyn_cm3'][mask])
+    print(selected_TDF_NonEq_cloudy)
+    
     tot_heating_rate_list = np.array(tot_heating_rate_list)
     tot_Xray_Tvir_list = np.array(tot_Xray_Tvir_list)
     tot_Xray_allheating_list = np.array(tot_Xray_allheating_list)
@@ -106,6 +125,9 @@ if __name__ == '__main__':
     tot_Xray_allheating_list /= comoving_boxsize
     tot_Xray_Tvir_apec_list /= comoving_boxsize
     tot_Xray_allheating_apec_list /= comoving_boxsize
+    tot_Xray_TDF_NonEq_cloudy /= comoving_boxsize
+    tot_Xray_TDF_NonEq_apec /= comoving_boxsize
+    selected_TDF_NonEq_cloudy /= comoving_boxsize
     
     '''
     z_list = np.linspace(0,30,100)
@@ -177,6 +199,11 @@ if __name__ == '__main__':
     plt.scatter(TNG50_selected_redshifts,np.log10(tot_Xray_Tvir_apec_list),c='b',marker='^',label='X-ray Tvir_apec (apec)')
     
     plt.scatter(TNG50_selected_redshifts,np.log10(tot_heating_rate_list),c='g',label='DF heating rate')
+    
+    plt.scatter(NonEq_redshift,np.log10(tot_Xray_TDF_NonEq_cloudy),c='m',marker='o',label='X-ray NonEq (cloudy)')
+    plt.scatter(NonEq_redshift,np.log10(tot_Xray_TDF_NonEq_apec),c='m',marker='^',label='X-ray NonEq (apec)')
+    plt.scatter(NonEq_redshift,np.log10(selected_TDF_NonEq_cloudy),c='m',marker='x',label='masked X-ray NonEq')
+    
     
     plt.xlabel('z',fontsize=14)
     plt.ylabel(r'log$_{10}$[X-ray emissivity (erg s$^{-1}$ cMpc$^{-3}$)]',fontsize=14)

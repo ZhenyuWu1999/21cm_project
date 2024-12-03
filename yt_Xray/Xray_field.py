@@ -493,7 +493,6 @@ if __name__ == "__main__":
         emissivity_TDF_NonEq_apec = calculate_xray_emissivity(AllData, 'T_DF_NonEq', 0.5, 2.0, use_metallicity, redshift=0.0, table_type="apec", data_dir=".", cosmology=None, dist=None)
         print(np.sum(YTArray(volume_wake_tdyn_cm3, "cm**3") * emissivity_TDF_NonEq_apec))
         
-    exit()
     #write to file
     if model == 'SubhaloWake':
         output_filename = output_dir + "Xray_emissivity_snap"+str(snapNum)+".h5"

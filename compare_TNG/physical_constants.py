@@ -1,6 +1,6 @@
 import numpy as np
 from colossus.cosmology import cosmology
-cosmo = cosmology.setCosmology('planck15')
+cosmo = cosmology.setCosmology('planck18')
 
 T0_CMB = 2.7255
 h_planck = 6.62607015e-34

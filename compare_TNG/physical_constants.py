@@ -33,7 +33,7 @@ Mpc = 3.086e22
 
 #Furlanetto 2006; Barkana 2001, Tvir = 10^4 K
 Tvir_crit = 1e4
-mu = 1.22 #mean molecular weight for neutral primordial gas  !invalid for ionised gas
+mu = 1.23 #mean molecular weight for neutral primordial gas  !invalid for ionised gas
 
 #Power_Spectrum
 rho_crit_z0_kgm3 = 3*H0_s**2/(8*np.pi*G_grav)

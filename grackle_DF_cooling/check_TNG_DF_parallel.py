@@ -48,7 +48,7 @@ def setup_logging(output_dir):
     process_id = current_process().pid
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    log_filename = f"{output_dir}/log_{process_id}_{timestamp}.log"
+    log_filename = f"{output_dir}/Volume0.1/log_{process_id}_{timestamp}.log"
     log_file = open(log_filename, "a")
     sys.stdout = log_file
     sys.stderr = log_file  # Optional: Redirect stderr to the same file
@@ -93,7 +93,7 @@ def read_hdf5_data(filepath):
     return data_dict
 
 
-def process_subhalo(i, Sub_data, current_redshift, shm_name, loop_num, dtype_subhalowake):
+def process_subhalo(i, Sub_data, current_redshift, shm_name, loop_num, dtype_subhalowake, start_idx=None):
     logging.info(f"Subhalo {i}")
     Tvir = Sub_data['Tvir_host'][i]
     
@@ -138,8 +138,12 @@ def process_subhalo(i, Sub_data, current_redshift, shm_name, loop_num, dtype_sub
     existing_shm = shared_memory.SharedMemory(name=shm_name)
     shared_array = np.ndarray(loop_num, dtype=dtype_subhalowake, buffer=existing_shm.buf)
     
+    i_memory = i
+    if start_idx is not None:
+        i_memory -= start_idx
+    
     for field in result._fields:
-        shared_array[i][field] = getattr(result, field)
+        shared_array[i_memory][field] = getattr(result, field)
     
     existing_shm.close()
     
@@ -148,7 +152,7 @@ def process_subhalo(i, Sub_data, current_redshift, shm_name, loop_num, dtype_sub
     #return subhalowake_info
 
 # @profile
-def process_subhalo_NonEq(i, Sub_data, current_redshift, shm_name, loop_num, dtype_subhalowake):
+def process_subhalo_NonEq(i, Sub_data, current_redshift, shm_name, loop_num, dtype_subhalowake,start_idx=None):
     
     try:
         logging.info(f"Subhalo {i} ...")
@@ -163,6 +167,7 @@ def process_subhalo_NonEq(i, Sub_data, current_redshift, shm_name, loop_num, dty
         #logging.info("Zhost: ", gas_metallicity_host, "Zsun")
         Mach_rel = Sub_data['Mach_rel'][i]
         vel_rel = Sub_data['vel_rel'][i] #m/s
+        
         
         heating = Sub_data['DF_heating'][i]
         heating *= 1e7 #convert to erg/s
@@ -183,7 +188,7 @@ def process_subhalo_NonEq(i, Sub_data, current_redshift, shm_name, loop_num, dty
         specific_heating = heating/(Mgas_wake*1e3) #erg/s/g
         evolve_cooling = True
         
-        #logging.info(f"\nTvir: {Tvir} K, lognH: {lognH}")
+        #logging.info(f"\nTvir;: {Tvir} K, lognH: {lognH}")
         #logging.info("Normalized heating rate: ", normalized_heating, "erg cm^3/s")
         
         tfinal, T_DF_NonEq, cooling_rate_TDF_NonEq, cooling_rate_Tvir = get_Grackle_TDF_nonEquilibrium(Tvir, lognH, gas_metallicity_host, normalized_heating, current_redshift)
@@ -195,8 +200,12 @@ def process_subhalo_NonEq(i, Sub_data, current_redshift, shm_name, loop_num, dty
         existing_shm = shared_memory.SharedMemory(name=shm_name)
         shared_array = np.ndarray(loop_num, dtype=dtype_subhalowake, buffer=existing_shm.buf)
         
+        i_memory = i
+        if start_idx is not None:
+            i_memory -= start_idx
+        
         for field in result._fields:
-            shared_array[i][field] = getattr(result, field)
+            shared_array[i_memory][field] = getattr(result, field)
         
         #return subhalowake_info
         #shared_array[i] = result
@@ -224,8 +233,16 @@ def main():
     
     
     TNG50_redshift_list = [20.05,14.99,11.98,10.98,10.00,9.39,9.00,8.45,8.01]
-    snapNum = 7
+    snapNum = 1
+    max_batch_number = None
+    current_batch_number = None
     output_dir = "/home/zwu/21cm_project/grackle_DF_cooling/snap_"+str(snapNum)+"/"
+    if max_batch_number is not None:
+        output_dir = output_dir + f"batch_{current_batch_number}/"
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+    
+    
     filepath = "/home/zwu/21cm_project/compare_TNG/results/TNG50-1/snap_"+str(snapNum)+"/"
     current_redshift = TNG50_redshift_list[snapNum]
     
@@ -234,7 +251,7 @@ def main():
     
     #find the hdf5 file starting with "DF_heating_snap"
     for file in os.listdir(filepath):
-        if file.startswith("DF_heating_snap"):
+        if file.startswith("DF_heating_Volume0.1_snap"):
             filename = filepath + file
             break
     data_dict = read_hdf5_data(filename)
@@ -294,11 +311,25 @@ def main():
     # manager = Manager()
     # Output_SubhaloWake_Info = manager.list()
     
-    Num_processes = 32
-    #pool = Pool(processes=Num_processes)
+    Num_processes = 10
     pool = Pool(processes=Num_processes, initializer=setup_logging, initargs=(output_dir,))
     
-    loop_num = len(Sub_data['Tvir_host'])
+    if max_batch_number is None:
+        loop_num = len(Sub_data['Tvir_host'])
+        loop_range = range(loop_num)
+        start_idx = None
+    else:
+        total_halos = len(Sub_data['Tvir_host'])
+        base_batch_size = total_halos // max_batch_number
+        start_idx = current_batch_number * base_batch_size
+        if current_batch_number == max_batch_number - 1:
+            end_idx = total_halos
+        else:
+            end_idx = (current_batch_number + 1) * base_batch_size
+        
+        loop_range = range(start_idx, end_idx)
+        loop_num = end_idx - start_idx
+    
     # bytes_per_element = dtype_subhalowake.itemsize
     # buffer = sharedctypes.RawArray(ctypes.c_byte, loop_num * bytes_per_element)  
     # shared_array = np.frombuffer(buffer, dtype=dtype_subhalowake)
@@ -309,17 +340,7 @@ def main():
     
     logging.info(f"Number of subhalos: {loop_num}")
     
-    # test_result = ResultNonEq(0,10,10,10,
-    #                10,10,10,10,
-    #                10,10,10,10,
-    #                10,10,10,-5.)
-    # for field in test_result._fields:
-    #     shared_array[0][field] = getattr(test_result, field)
-        
-    # print("shared_array[0]: ", shared_array[0])
-    # print("shared_array[0].dtype: ", shared_array[0].dtype)
-    # print("shared_array: ", shared_array)
-    
+
 
     # for i in range(loop_num):
     #     if Model == 'SubhaloWake':
@@ -328,11 +349,11 @@ def main():
     #         pool.apply_async(process_subhalo_NonEq, args=(i, Sub_data, current_redshift), callback=lambda result: Output_SubhaloWake_Info.append(result))
                   
             
-    for i in range(loop_num):
+    for i in loop_range:
         if Model == 'SubhaloWake':
-            pool.apply_async(process_subhalo, args=(i, Sub_data, current_redshift, shm.name, loop_num, dtype_subhalowake))
+            pool.apply_async(process_subhalo, args=(i, Sub_data, current_redshift, shm.name, loop_num, dtype_subhalowake, start_idx))
         elif Model == 'SubhaloWakeNonEq':
-            pool.apply_async(process_subhalo_NonEq, args=(i, Sub_data, current_redshift, shm.name, loop_num, dtype_subhalowake))
+            pool.apply_async(process_subhalo_NonEq, args=(i, Sub_data, current_redshift, shm.name, loop_num, dtype_subhalowake, start_idx))
 
     pool.close()
     pool.join()
@@ -341,23 +362,17 @@ def main():
     
     if Model == 'SubhaloWake':
         output_filename = output_dir+f"Grackle_Cooling_SubhaloWake_FullModel_snap"+str(snapNum)+".h5"
-        # with h5py.File(output_filename, 'w') as file:
-        #     subhalowake_array = np.array(Output_SubhaloWake_Info, dtype=dtype_subhalowake)
-        #     subhalowake_dataset = file.create_dataset('SubhaloWake', data=subhalowake_array)
-        with h5py.File(output_filename, 'w') as file:
-            subhalowake_array = np.array(shared_array, dtype=dtype_subhalowake)
-            subhalowake_dataset = file.create_dataset('SubhaloWake', data=subhalowake_array)
-
-
+        dataset_name = 'SubhaloWake'
     elif Model == 'SubhaloWakeNonEq':
+        output_filename = output_dir+f"Grackle_Cooling_SubhaloWake_NonEq_Volume0.1_snap"+str(snapNum)+".h5"
+        dataset_name = 'SubhaloWakeNonEq'
         
-        output_filename = output_dir+f"Grackle_Cooling_SubhaloWake_NonEq_snap"+str(snapNum)+".h5"
-        # with h5py.File(output_filename, 'w') as file:
-        #     subhalowake_array = np.array(Output_SubhaloWake_Info, dtype=dtype_subhalowake)
-        #     subhalowake_dataset = file.create_dataset('SubhaloWakeNonEq', data=subhalowake_array)
-        with h5py.File(output_filename, 'w') as file:
-            subhalowake_array = np.array(shared_array, dtype=dtype_subhalowake)
-            subhalowake_dataset = file.create_dataset('SubhaloWakeNonEq', data=subhalowake_array)
+    if max_batch_number is not None:
+        output_filename = output_filename.replace(".h5", f"_batch_{current_batch_number}.h5")
+    
+    with h5py.File(output_filename, 'w') as file:
+        subhalowake_array = np.array(shared_array, dtype=dtype_subhalowake)
+        subhalowake_dataset = file.create_dataset(dataset_name, data=subhalowake_array)
 
 
 

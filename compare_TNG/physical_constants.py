@@ -30,6 +30,7 @@ G_grav = 6.674e-11
 
 Msun = 1.988e30
 Mpc = 3.086e22
+Myr = 3.1536e13 #seconds
 
 #Furlanetto 2006; Barkana 2001, Tvir = 10^4 K
 Tvir_crit = 1e4

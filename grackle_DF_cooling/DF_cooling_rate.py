@@ -571,6 +571,7 @@ if __name__ == "__main__":
     Host_data = data_dict["HostHalo"]
     Sub_data = data_dict["SubHalo"]
     
+
     test_index = 317
     Tvir = Sub_data['Tvir_host'][test_index]
     print(f"Tvir = {Tvir}")
@@ -615,7 +616,7 @@ if __name__ == "__main__":
     T_DF = temperatures[-1].v.item()
     cooling_rate_TDF = cooling_rates[-1].v.item()
     
-    print(f"tfinal = {tfinal}, T_DF = {T_DF}, cooling_rate_TDF = {cooling_rate_TDF}, cooling_rate_Tvir = {cooling_rate_Tvir}")
+    print(f"tfinal = {tfinal}, T_DF = {T_DF}, cooling_rate_TDF = {cooling_rate_TDF}, cooling_rate_Tvir = {cooling_rate_Tvir}, normalized_heating = {normalized_heating}")
     
     # run equilibruim cooling rate
     evolve_cooling = False
@@ -623,7 +624,10 @@ if __name__ == "__main__":
     print(len(T_list))
     cooling_data_equilibrium = run_cool_rate(evolve_cooling, current_redshift, lognH, 0.0, 0.0, T_list, gas_metallicity_host)
     cooling_rate_equilibrium = cooling_data_equilibrium["cooling_rate"]
+    
+    print(f"cooling_rate_equilibrium = {cooling_rate_equilibrium}")
 
+    times = times.to("Myr")
     #plot temperature evolution
     fig = plt.figure(figsize=(8, 6),facecolor='white')
        

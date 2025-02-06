@@ -15,6 +15,8 @@ from scipy.integrate import nquad
 from scipy.optimize import curve_fit
 from colossus.lss import mass_function
 from DF_cooling_rate import run_cool_rate, get_Grackle_TDF, get_Grackle_TDF_nonEquilibrium
+from dfnumerical_subsonic import *
+
 
 def Vel_Virial_analytic(M_vir_in_Msun, z):  #van den Bosch Lecture 11
     #M_vir in solar mass, return virial velocity in m/s    
@@ -385,15 +387,13 @@ def plot_Anumber_analytic(output_filename, z, ratio=1e-2, n_bins=50):
             
             
             
-def analytic_T_DF(ln_m_over_M, logM, z):
+def analytic_T_DF_singlevolume(ln_m_over_M, logM, z):
     M = 10**logM
-    
     m_over_M = np.exp(ln_m_over_M)
     m = m_over_M * M
     rho_halo = 200 * rho_m0*(1+z)**3 *Msun/Mpc**3
     R_host = (3*M*Msun/h_Hubble/(4*np.pi*rho_halo))**(1/3) #in m
     r_sub = R_host * m_over_M**(1/3)
-    
     rho_g = 200 * rho_b0*(1+z)**3 *Msun/Mpc**3
     
     Tvir_host_analytic = Temperature_Virial_analytic(M/h_Hubble, z)
@@ -405,7 +405,6 @@ def analytic_T_DF(ln_m_over_M, logM, z):
     tcross = r_sub/Cs_host
     
     gas_metallicity = 0.0
-    
 
     #compare the length scales: (r_sub, R_host, v*t, Cs*t)
     print(f"r_sub: {r_sub:.5e}")
@@ -430,6 +429,84 @@ def analytic_T_DF(ln_m_over_M, logM, z):
     evolve_cooling = True
     tfinal, T_DF_NonEq, cooling_rate_TDF_NonEq, cooling_rate_Tvir = get_Grackle_TDF_nonEquilibrium(Tvir_host_analytic, lognH, gas_metallicity, normalized_heating, z)
     return tfinal, T_DF_NonEq, cooling_rate_TDF_NonEq, cooling_rate_Tvir
+
+def analytic_temperature_profile_subsonic(ln_m_over_M, logM, z, mach):
+    #based on dfnumerical_subsonic.py profile and use Grackle to calculate the temperature profile
+    M = 10**logM
+    m_over_M = np.exp(ln_m_over_M)
+    m = m_over_M * M
+    rho_halo = 200 * rho_m0*(1+z)**3 *Msun/Mpc**3
+    R_host = (3*M*Msun/h_Hubble/(4*np.pi*rho_halo))**(1/3) #in m
+    r_sub = R_host * m_over_M**(1/3)
+    rho_g = 200 * rho_b0*(1+z)**3 *Msun/Mpc**3
+    
+    Tvir_host_analytic = Temperature_Virial_analytic(M/h_Hubble, z)
+    Cs_host = np.sqrt(5.0/3.0 *kB *Tvir_host_analytic/(mu*mp)) #sound speed in m/s
+    vel = Vel_Virial_analytic(M/h_Hubble, z)
+    
+    freefall_factor = np.sqrt(3 * np.pi / 32)
+    t_dyn = freefall_factor/np.sqrt(G_grav*rho_halo)
+    tcross = r_sub/Cs_host
+    
+    gas_metallicity = 0.0
+    
+    #debug: change to density profile later
+    rho_g_wake = rho_g #debug: set wake density = background density
+    nH = rho_g_wake/mass_hydrogen_kg
+    nH_cm3 = nH/1e6
+    lognH = np.log10(nH_cm3)
+    
+    #debug: temporary set r_orbit = 0.5* R_host, and t_evaluate = 2 * r_orbit / vel
+    r_orbit = 0.5*R_host
+    t_evaluate = 2 * r_orbit / vel
+    
+    r_list = np.linspace(1.0*r_sub, 10*r_sub, 20)
+    x_list = r_list/(Cs_host*t_evaluate)
+    
+    print("calculate I_df, volume, and heating rate ...")
+    I_fdf_x = np.array([fdf_subsonic_from_xinn_to_xout(xout=xval, xinn=0.0, mach=mach) for xval in x_list])
+    volume_x = np.array([volume_integral_subsonic(x, mach) for x in x_list])
+    
+    DF_heating =  4 * np.pi * (G_grav * m *Msun/h_Hubble) ** 2 / vel *rho_g
+    
+    #calculate heating rate in each shell
+    dI = np.diff(I_fdf_x)
+    dV = np.diff(volume_x)
+    
+    print("dI: ", dI)
+    print("dV: [(Cs t)^3]", dV)
+    
+    dV_physical = dV * (Cs_host*t_evaluate)**3
+    
+    r_list_center = (r_list[:-1] + r_list[1:])/2
+    DF_heating_profile = DF_heating * dI
+    
+    normalized_heating_profile = DF_heating_profile/dV_physical/nH_cm3**2 #erg cm^3 s^-1
+    #use Grackle to calculate the temperature profile
+    evolve_cooling = True
+    
+    print("calculate temperature profile ...")
+    t_final_list = []
+    T_DF_NonEq_profile = []
+    for normalized_heating in normalized_heating_profile:
+        
+        
+        tfinal, T_DF_NonEq, cooling_rate_TDF_NonEq, cooling_rate_Tvir = get_Grackle_TDF_nonEquilibrium(Tvir_host_analytic, lognH, gas_metallicity, normalized_heating, z)
+        print(f"t: {tfinal}, T_DF_NonEq: {T_DF_NonEq}")
+        t_final_list.append(tfinal)
+        T_DF_NonEq_profile.append(T_DF_NonEq)
+    
+    #plot the temperature profile
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.plot(r_list_center, T_DF_NonEq_profile, 'b-', label='T_DF_NonEq')
+    ax.set_xlabel('r [m]', fontsize=14)
+    ax.set_ylabel('T [K]', fontsize=14)
+    ax.set_title(f'Temperature Profile (Mach = {mach}, lgM = {logM}), m/M = {m_over_M:.2e}', fontsize=16)
+    ax.legend(fontsize=13)
+    plt.tight_layout()
+    plt.savefig(f"subsonic_T_profile_Mach{mach}_lgM{logM}_moverM{m_over_M:.2e}.png", dpi=300)
+    
+    
 
 
 '''
@@ -951,14 +1028,22 @@ def Analytic_model():
     print("output_filename: ",output_filename)
     
     #calculate number density of subhalos in each host halo mass bin
-    histogram2D_filename = output_dir+f"2D_histogram_snap{snapNum}_z{current_redshift:.2f}.png"
-    plot_2D_histogram_analytic(histogram2D_filename,z_value,1e-3,50)
+    # histogram2D_filename = output_dir+f"2D_histogram_snap{snapNum}_z{current_redshift:.2f}.png"
+    # plot_2D_histogram_analytic(histogram2D_filename,z_value,1e-3,50)
     
-    Anumber_filename = output_dir+f"A_number_snap{snapNum}_z{current_redshift:.2f}.png"
-    plot_Anumber_analytic(Anumber_filename,z_value,1e-3,50)
+    # Anumber_filename = output_dir+f"A_number_snap{snapNum}_z{current_redshift:.2f}.png"
+    # plot_Anumber_analytic(Anumber_filename,z_value,1e-3,50)
     
     
-        
+    #now test temperature profile
+    mach_test = 0.5
+    
+    ln_m_over_M = np.log(1e-3)
+    logM = 7.5
+    analytic_temperature_profile_subsonic(ln_m_over_M, logM, z_value, mach_test)
+    
+    
+    
     
     #test temperature T_DF_NonEq
     # logM_test = np.linspace(lgM_limits[0], lgM_limits[1],10)
@@ -967,13 +1052,13 @@ def Analytic_model():
     # for i, logM in enumerate(logM_test):
     #     ln_m_over_M_list = np.linspace(ln_m_over_M_min_test[i],ln_m_over_M_max_test[i],10)
     #     for j, ln_m_over_M in enumerate(ln_m_over_M_list):
-    #         tfinal, T_DF_NonEq, cooling_rate_TDF_NonEq, cooling_rate_Tvir = analytic_T_DF(ln_m_over_M, logM, z_value)
+    #         tfinal, T_DF_NonEq, cooling_rate_TDF_NonEq, cooling_rate_Tvir = analytic_T_DF_singlevolume(ln_m_over_M, logM, z_value)
     #         m_over_M = np.exp(ln_m_over_M)
     #         print(f"\nlogM: {logM}, m_over_M: {m_over_M}, T_DF_NonEq: {T_DF_NonEq}")
     #         print(f"tfinal: {tfinal/Myr} Myr")
         
         
-    
+
     
 SHMF_model = 'Bosch2016'
 if __name__ == "__main__":

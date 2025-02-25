@@ -2,13 +2,15 @@ import numpy as np
 import illustris_python as il
 import os
 import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
 
 from physical_constants import *
 from HaloProperties import *
 from Config import snapNum, simulation_set
 from DF_Ostriker99_wake_structure import Idf_Ostriker99_wrapper
-from TNG_plots import plot_2D_histogram
 from TNGDataHandler import *
+import Xray_field as xray
+from HaloMassFunction import plot_hmf, fitFunc_lg_dNdlgx
 
 
 def load_tng_data(basePath, snapNum):
@@ -59,19 +61,33 @@ def load_tng_data(basePath, snapNum):
     
     return header, halos, subhalos
 
-
-
-def TNG_model():    
-
+def get_simulation_resolution_old(simulation_set):
     if simulation_set == 'TNG50-1':
-        gas_resolution = 4.5e5 * h_Hubble #convert from Msun to Msun/h
-        dark_matter_resolution = 8.5e4 * h_Hubble
+        gas_resolution = 8.5e4 * h_Hubble #convert from Msun to Msun/h
+        dark_matter_resolution = 4.5e5 * h_Hubble
     elif simulation_set == 'TNG100-1':
         gas_resolution = 1.4e6 * h_Hubble  
         dark_matter_resolution = 7.5e6 * h_Hubble  
     elif simulation_set == 'TNG300-1':
         gas_resolution = 1.1e7 * h_Hubble
         dark_matter_resolution = 5.9e7 * h_Hubble
+
+def get_simulation_resolution(simulation_set):
+    #resolution in units of Msun/h, https://www.tng-project.org/data/docs/background/
+    if simulation_set == 'TNG50-1':
+        gas_resolution = 5.7e4
+        dark_matter_resolution = 3.1e5 
+    elif simulation_set == 'TNG100-1':
+        gas_resolution = 9.4e5  
+        dark_matter_resolution = 5.1e6  
+    elif simulation_set == 'TNG300-1':
+        gas_resolution = 7.6e6
+        dark_matter_resolution = 4.0e7 
+    return gas_resolution, dark_matter_resolution
+
+def TNG_model():    
+
+    gas_resolution, dark_matter_resolution = get_simulation_resolution(simulation_set)
     
     basePath = '/home/zwu/21cm_project/TNG_data/'+simulation_set+'/output'
     output_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'+simulation_set+'/'
@@ -89,7 +105,7 @@ def TNG_model():
     scale_factor = header['Time']
     print(scale_factor)
     print("box size: ", header['BoxSize']," ckpc/h")  
-    volume = (header['BoxSize']/1e3 * scale_factor) **3  # (Mpc/h)^3
+    simulation_volume = (header['BoxSize']/1e3 * scale_factor) **3  # (Mpc/h)^3
 
     print(header.keys())
     print(halos.keys())
@@ -171,7 +187,7 @@ def TNG_model():
         for j in sub_indices:
             subhalo_mass = subhalos['SubhaloMass'][j] * 1e10 # Msun/h
             host_mass = M_all[i]
-            if (subhalo_mass >= 100 * dark_matter_resolution) and (subhalo_mass / host_mass < 1):
+            if (subhalo_mass >= 50*dark_matter_resolution) and (subhalo_mass/host_mass < 1):
                 all_subhalo_indices.append(j)
                 host_indices_for_subs.append(i)
                 
@@ -232,6 +248,14 @@ def TNG_model():
     rho_g_analytic_200 = 200 *rho_g_analytic
     DF_heating_withoutIDF = 4 * np.pi * (G_grav * sub_mass_all * Msun/h_Hubble) ** 2 / rel_vel_mag_all * rho_g_analytic_200
     
+
+    #plot full hmf and selected halos
+    hmf_filename = os.path.join(output_dir, 'analysis', f'HMF_snap_{snapNum}.png')
+    if not os.path.exists(os.path.join(output_dir, 'analysis')):
+        os.makedirs(os.path.join(output_dir, 'analysis'))
+
+    plot_hmf(halos, index_selected, current_redshift, dark_matter_resolution, simulation_volume, hmf_filename)
+
     #add to AllTNGData
     AllTNGData.add_subhalo_quantity('SubMass', sub_mass_all, 'Msun/h', 'Subhalo mass')
     AllTNGData.add_subhalo_quantity('SubHalfmassRad', sub_halfrad_all, 'm', 'Half-mass radius')
@@ -258,12 +282,283 @@ def TNG_model():
     #     'rho_matter_analytic': float(rho_m_analytic),
     #     'rho_gas_200': float(rho_g_analytic_200)
     # })
-        
+
     processed_file = os.path.join(output_dir, f'processed_halos_snap_{snapNum}.h5')
     save_processed_data(processed_file, AllTNGData)
+
+def plot_Mratio_dN_dlogMratio():
+
+    base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
+    processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
+                                f'processed_halos_snap_{snapNum}.h5')
+    data = load_processed_data(processed_file)
+    output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}','analysis')
+
+    # Get required quantities
+    sub_masses = data.subhalo_data['SubMass'].value  # Msun/h
+    host_indices = data.subhalo_data['host_index'].value
+    host_masses = data.halo_data['GroupMass'].value[host_indices]  # Msun/h
+    mass_ratios = sub_masses / host_masses
+    host_logM = np.log10(host_masses)
+
+    # Get simulation parameters
+    current_redshift = data.header['Redshift']
+    gas_resolution, dark_matter_resolution = get_simulation_resolution(simulation_set)
+
+    # Divide the host halos into 5 mass bins, and plot the distribution of m/M for each bin respectively
+    logM_min = np.min(host_logM)
+    logM_max = np.max(host_logM)
+    num_M_bins = 5
+    logM_bins = np.linspace(logM_min, logM_max, num=num_M_bins+1)
+
+    #initialize lists
+    sub_host_Mratio_list = []
+    num_host_list = []
+    critical_ratio_list = []
+    subhalo_resolution = 50*dark_matter_resolution 
+
+    # Loop over mass bins
+    for i in range(num_M_bins):
+        mask = (host_logM >= logM_bins[i]) & (host_logM < logM_bins[i+1])
+        sub_host_Mratio_list.append(mass_ratios[mask])
+        unique_hosts = len(np.unique(host_indices[mask]))
+        num_host_list.append(unique_hosts)
+        #define critical ratio = subhalo_resolution/Mhost(left edge of bin)
+        critical_ratio_list.append(subhalo_resolution/10**logM_bins[i])
+        print(f"Number of host halos in bin {i}: {unique_hosts}")
+        print(f"number of subhalos in bin {i}: {len(mass_ratios[mask])}")
     
+    tot_num_host = len(np.unique(host_indices))
+    print(f"Total number of host halos: {tot_num_host}")  #plot tot distribution separately
+
+    colors = plt.cm.rainbow(np.linspace(0, 1, num_M_bins))
+    labels = [f'[{logM_bins[i]:.2f}, {logM_bins[i+1]:.2f}]' for i in range(num_M_bins)]
+
+
+    # Create histogram bins
+    bins = np.linspace(-5, 0, 50)
+    log_bin_widths = bins[1] - bins[0]
+    artificial_small = 1e-10
+    min_number_density = 1e10 #used to set the lower limit of y-axis for plotting
+
+    # Plot mass ratio distributions
+    fig = plt.figure(facecolor='white')
+    number_density_list = []
+    for i in range(num_M_bins):
+        counts, bin_edges = np.histogram(np.log10(sub_host_Mratio_list[i]), bins=bins)
+        number_density = counts/log_bin_widths/num_host_list[i]
+        min_number_density = min(min_number_density, np.min(number_density[number_density > 0]))
+        
+        # Handle zero counts
+        mask = number_density == 0
+        number_density[mask] = artificial_small
+        
+        plt.step(bin_edges[:-1], number_density, where='post', 
+                color=colors[i], label=labels[i])
+                
+        
+        number_density_list.append(number_density)
+        plt.axvline(np.log10(critical_ratio_list[i]), 
+                    color=colors[i], linestyle='--')
+        
+    # Add van den Bosch+ 2016 fitting
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    p_evolved = [0.86, 50/np.log(10), 4, np.log10(0.065)]
+    JB16_evolved_lg_number_density = fitFunc_lg_dNdlgx(bin_centers, *p_evolved)
+    plt.plot(bin_centers, 10**JB16_evolved_lg_number_density, linestyle='-',
+             color='grey', label='Jiang & van den Bosch 2016, evolved')
     
+    p_unevolved = [0.91, 6/np.log(10), 3, np.log10(0.22)]
+    JB16_unevolved_lg_number_density = fitFunc_lg_dNdlgx(bin_centers, *p_unevolved)
+    plt.plot(bin_centers, 10**JB16_unevolved_lg_number_density, linestyle='--',
+             color='grey', label='Jiang & van den Bosch 2016, unevolved')
+    #no
+    # w calculate bestfit parameters with fitFunc_lg_dNdlgx
+    #combine data points from all bins with mass ratio > their critical ratio and exclude artificial small
+    all_bin_centers = []
+    all_number_density = []
+    for i in range(num_M_bins):
+        number_density = number_density_list[i]
+        fit_mask = (10**bin_centers > critical_ratio_list[i]) & (number_density > artificial_small)
+        all_bin_centers.extend(bin_centers[fit_mask])
+        all_number_density.extend(number_density[fit_mask])
+    all_bin_centers = np.array(all_bin_centers)
+    all_number_density = np.array(all_number_density)
+    #sort the data points
+    sort_indices = np.argsort(all_bin_centers)
+    all_bin_centers_sorted = all_bin_centers[sort_indices]
+    all_number_density_sorted = all_number_density[sort_indices]
+    #fit the data points
+    p_bestfit, pcov = curve_fit(fitFunc_lg_dNdlgx, all_bin_centers_sorted, np.log10(all_number_density_sorted), p0=p_unevolved)
+    print("BestFit parameters: ",p_bestfit)
+    bestfit_lg_number_density = fitFunc_lg_dNdlgx(bin_centers, *p_bestfit)
+    plt.plot(bin_centers, 10**bestfit_lg_number_density, linestyle='-',color='black',label='BestFit')
+
+
+    # Finalize plot
+    plt.ylim(bottom=min_number_density/10)
+    #xlim: > 1e-4 or > 1e-5
+    plt.xlim([-5,0])
+    plt.legend(loc='lower left')
+    plt.xlabel(r'$\lg$($\psi$) = $\lg$(m/M)',fontsize=14)
+    plt.ylabel(r'dN/d$\lg(\psi)$',fontsize=14)
+    plt.yscale('log')
+    plt.tight_layout()
     
+    # Save plot
+    plt.savefig(os.path.join(output_dir, f'SHMF_snap_{snapNum}.png'), dpi=300)
+    
+'''
+def plot_Mratio_dN_dlogMratio_old(All_sub_host_M,dark_matter_resolution,filename):
+    print("total number of subhalos: ",len(All_sub_host_M))
+    All_sub_host_Mratio = All_sub_host_M[:,0]
+    All_host_M = All_sub_host_M[:,1]
+    All_host_index = All_sub_host_M[:,2]
+    All_host_logM = np.log10(All_host_M)
+    #divide the host halos into 5 mass bins, and plot the distribution of m/M for each bin respectively
+    logM_min = np.min(All_host_logM)
+    logM_max = np.max(All_host_logM)
+    num_M_bins = 5
+    logM_bins = np.linspace(logM_min, logM_max, num=num_M_bins+1)
+    sub_host_Mratio_list = []
+    num_host_list = []
+    for i in range(num_M_bins):
+        mask = (All_host_logM >= logM_bins[i]) & (All_host_logM < logM_bins[i+1])
+        sub_host_Mratio_list.append(All_sub_host_Mratio[mask])
+        host_index = All_host_index[mask]
+        num_host = len(set(host_index))
+        num_host_list.append(num_host)
+        print(f"number of host halos in bin {i}: {num_host}")
+    tot_num_host = len(set(All_host_index))
+    print(f"total number of host halos: {tot_num_host}")
+    num_host_list.append(tot_num_host)
+
+    #threshold for small halos
+    critical_ratio_list = []
+    subhalo_resolution = 50*dark_matter_resolution
+    for i in range(num_M_bins):
+        critical_ratio = subhalo_resolution/10**logM_bins[i]
+        critical_ratio_list.append(critical_ratio)
+    
+    colors = ['r','orange','y','g','b']
+    labels = [f'[{logM_bins[i]:.2f}, {logM_bins[i+1]:.2f}]' for i in range(num_M_bins)]
+
+    colors = np.append(colors,'black')
+    labels.append('All')
+    sub_host_Mratio_list.append(All_sub_host_Mratio)   
+
+    bins = np.linspace(-5,0,50)
+    log_bin_widths = bins[1] - bins[0]
+    min_number_density = 1e10
+
+    number_density_list = []
+    fig = plt.figure(facecolor='white')
+    for i in range(num_M_bins+1):
+        counts, bin_edges = np.histogram(np.log10(sub_host_Mratio_list[i]), bins=bins)
+        counts = np.append(counts,counts[-1])
+        number_density = counts/log_bin_widths
+        #divide by num of host halos
+        number_density /= num_host_list[i]
+        #min nonzero number density
+        min_number_density = min(min_number_density,np.min(number_density[number_density > 0])) 
+        #exclude zero counts, set to an artificial small number
+        mask = number_density == 0
+        artificial_small = 1e-10
+        number_density[mask] = artificial_small
+        plt.step(bin_edges, number_density, where='post',color=colors[i],label=labels[i])
+        if (i< num_M_bins):
+            number_density_list.append(number_density)
+            plt.axvline(np.log10(critical_ratio_list[i]),color = colors[i],linestyle='--')
+
+        print("sum counts: ",np.sum(counts))
+        #plt.hist(np.log10(sub_host_Mratio_list[i]), bins=bins, histtype='step',color=colors[i],label=labels[i])
+    
+    #plot the initial guess fitting
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    p_guess = [0.86, 50/np.log(10),4 ,np.log10(0.065)]
+    fit_lg_number_density = fitFunc_lg_dNdlgx(bin_centers,*p_guess)
+    plt.plot(bin_centers,10**fit_lg_number_density,linestyle='-',color='grey',label='van den Bosch+ 2016')
+
+    plt.ylim(bottom=min_number_density/10)
+    plt.legend(loc='lower left')
+    plt.title(f'Subhalo m/M Distribution, z={current_redshift:.2f}')
+    plt.xlabel(r'log10($\psi$) = log10(m/M)')
+    plt.ylabel(r'$\frac{dN}{d\log_{10}(\psi)}$')
+    plt.yscale('log')
+    plt.tight_layout()
+    plt.savefig(filename,dpi=300)
+
+    #use >resolution data to fit the distribution
+    fig = plt.figure(facecolor='white')
+
+    all_fitting_params = []
+    for i in range(3,5):
+        number_density = number_density_list[i]
+        #fitFunc_lg_dNdlgx(lgx,alpha,beta_ln10, omega, lgA)
+        #p_guess = [0.86, 50/np.log(10),4 ,np.log10(0.065)]
+        try:
+            if current_redshift > 10:
+                fit_mask = (bin_centers > np.log10(2.0*critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
+            else:
+                fit_mask = (bin_centers > np.log10(critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
+            popt, pcov = curve_fit(fitFunc_lg_dNdlgx, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p_guess, maxfev= 1000)
+            alpha = popt[0]
+            beta_ln10 = popt[1]
+            omega = popt[2]
+
+            #if (alpha < 0 and beta_ln10>0):
+            if (False):
+                print("i = {}: fit failed, increase critical ratio".format(i))
+                popt, pcov = curve_fit(fitFunc_lg_dNdlgx, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p_guess, maxfev= 1000)
+            #elif(beta_ln10 <= 0 or omega > 10):
+            elif(True):
+                print("i = {}: fit failed, increase critical ratio and fix the exponential slope".format(i))
+                fit_mask = (bin_centers > np.log10(2.0*critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
+                p0_fixomega = [0.86, np.log10(0.065)]
+                popt, pcov = curve_fit(fitFunc_lg_dNdlgx_fixomega, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p0_fixomega, maxfev= 1000)
+                alpha = popt[0];  lgA = popt[1]
+                popt = [alpha,50/np.log(10),4,lgA]
+
+        except:
+            print("i = {}: fit failed, increase critical ratio and fix the exponential slope".format(i))
+            fit_mask = (bin_centers > np.log10(2.0*critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
+            p0_fixomega = [0.86, np.log10(0.065)]
+            popt, pcov = curve_fit(fitFunc_lg_dNdlgx_fixomega, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p0_fixomega, maxfev= 1000)
+            alpha = popt[0];  lgA = popt[1]
+            popt = [alpha,50/np.log(10),4,lgA]
+
+        
+
+
+            #popt = advanced_fit(bin_centers[fit_mask],number_density[:-1][fit_mask],p_guess)
+
+        print("fit parameters: ",popt)
+        all_fitting_params.append([snapNum,i,logM_bins[i],logM_bins[i+1],*popt])
+
+        fit_lg_number_density = fitFunc_lg_dNdlgx(bin_centers[fit_mask],*popt)
+        plt.step(bin_edges, np.log10(number_density), where='post',color=colors[i],label=labels[i])
+        plt.plot(bin_centers[fit_mask],fit_lg_number_density,linestyle='-.',color=colors[i])
+        plt.axvline(np.log10(critical_ratio_list[i]),color = colors[i],linestyle='--')
+
+        param_text = r'$\alpha$: {:.2f} $\beta/\ln10$: {:.1f} $\omega$: {:.1f} lgA: {:.1f}'.format(popt[0], popt[1], popt[2], popt[3])
+        plt.text(-4.5, -3+i/4, param_text, fontsize=10, color=colors[i])
+    
+    #plot the initial guess fitting
+    p_guess = [0.86, 50/np.log(10),4 ,np.log10(0.065)]
+    fit_lg_number_density = fitFunc_lg_dNdlgx(bin_centers,*p_guess)
+
+    plt.plot(bin_centers,fit_lg_number_density,linestyle='-',color='grey',label='van den Bosch+ 2016')
+    plt.ylim(bottom=np.log10(min_number_density/10))
+    plt.xlabel(r'log10($\psi$) = log10(m/M)')
+    plt.ylabel(r'log10[$\frac{dN}{d\log_{10}(\psi)}$]')
+    plt.legend(loc='lower left')
+    plt.savefig(filename.replace('.png','_fit.png'),dpi=300)
+
+    #write_SHMF_fit_parameters(filename.replace('.png','_fit_parameters.txt'),all_fitting_params)
+    write_SHMF_fit_parameters(filename.replace('.png','_2paramfit_parameters.txt'),all_fitting_params)
+    '''
+
+
 def analyze_processed_data():
     # Construct the path
     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
@@ -272,6 +567,8 @@ def analyze_processed_data():
     
     # Load the data
     data = load_processed_data(processed_file)
+    redshift = data.header['Redshift']
+    print(f"Redshift: {redshift}")
     
     # Example: Access host halo properties
     print("\nHost Halo Statistics:")
@@ -285,6 +582,35 @@ def analyze_processed_data():
     print(f"Mass range: {data.subhalo_data['SubMass'].value.min():.2e} - "
           f"{data.subhalo_data['SubMass'].value.max():.2e} {data.subhalo_data['SubMass'].units}")
     
+    exit()
+
+    #now calculate X-ray emissivity
+    lognH = get_gas_lognH(redshift)
+    print("lognH: ", lognH)
+    host_indices = data.subhalo_data['host_index'].value
+    
+    host_Tvir = data.halo_data['GroupTvir'].value[host_indices]
+    host_gasmetallicity = data.halo_data['GroupGasMetallicity'].value[host_indices]
+    gas_metallicity_Zsun = host_gasmetallicity / Zsun
+
+    e_min = 0.5 # keV
+    e_max = 2.0 # keV
+
+    xray_emissivity = xray.calculate_xray_emissivity(lognH, host_Tvir, gas_metallicity_Zsun, 
+                                   e_min, e_max, use_metallicity=True, redshift=0.,
+                                   table_type='cloudy', data_dir=".", cosmology=None, dist=None)
+
+    print("xray_emissivity: ", xray_emissivity)
+
+    subhalo_volumes = 4/3 * np.pi * data.subhalo_data['SubHalfmassRad'].value**3 #in unit m^3
+    subhalo_volumes_cm3 = subhalo_volumes * 1e6
+
+    tot_xray_emissivity = np.sum(xray_emissivity.value * subhalo_volumes_cm3)
+    comoving_boxsize = 51.7**3  # cMpc^3
+    tot_xray_emissivity_per_cMpc3 = tot_xray_emissivity / comoving_boxsize
+    print(f"Total X-ray emissivity: {tot_xray_emissivity_per_cMpc3:.2e} erg/s/cMpc^3")
+
+
 def find_abnormal_mach():
     #load the processed data
     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
@@ -356,8 +682,9 @@ def find_abnormal_mach():
     
 
 if __name__ == '__main__':
-    #TNG_model()
-    #analyze_processed_data()
-    find_abnormal_mach()
-    
+    # TNG_model()
+    # find_abnormal_mach()
+    # analyze_processed_data()
+
+    plot_Mratio_dN_dlogMratio()  
     

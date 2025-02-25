@@ -1,6 +1,6 @@
 import numpy as np
 from colossus.cosmology import cosmology
-cosmo = cosmology.setCosmology('planck18')
+cosmo = cosmology.setCosmology('planck15') # Planck 2015 cosmology as used in TNG
 
 T0_CMB = np.float64(2.7255)
 h_planck = np.float64(6.62607015e-34)
@@ -29,6 +29,8 @@ G_grav = np.float64(6.674e-11)
 Msun = np.float64(1.988e30)
 Mpc = np.float64(3.086e22)
 Myr = np.float64(3.1536e13)  # seconds
+Zsun = 0.01295 # solar metallicity, grackle default
+#Zsun = 0.0127 # solar metallicity, according to TNG data specifications
 
 Tvir_crit = np.float64(1e4)
 mu = np.float64(1.23)  # mean molecular weight for neutral primordial gas

@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 import os
 from TNGDataHandler import load_processed_data
+from physical_constants import Zsun
 
 
 
@@ -72,8 +73,35 @@ def fit_maxwell_boltzmann(data, bins, range_fit=None, initial_guess=None):
     
     return popt, pcov, x_fit, y_fit
     
+def plot_host_halo_properties(data, snapNum, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
 
-def plot_2D_histogram(data, output_dir):
+    group_Tvir = data.halo_data['GroupTvir'].value
+    group_metallicity = data.halo_data['GroupGasMetallicity'].value
+    group_metallicity_Zsun = group_metallicity / Zsun
+    #set lower limit of metallicity to be 1e-10 Zsun to avoid -inf in log10
+    group_metallicity_Zsun[group_metallicity_Zsun < 1e-10] = 1e-10
+
+    #plot host halo Tvir 1D histogram
+    fig = plt.figure(figsize=(8, 6), facecolor='w')
+    plt.hist(np.log10(group_Tvir), bins=50, histtype='step', linewidth=2)
+    plt.xlabel(r'log$_{10}$(T$_{vir}$ [K])', fontsize=14)
+    plt.ylabel('Counts', fontsize=14)
+    plt.savefig(os.path.join(output_dir, f'host_Tvir_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+    plt.close()
+
+    #plot 2D histogram of host halo Tvir vs metallicity
+    fig = plt.figure(figsize=(8, 6), facecolor='w')
+    plt.hist2d(np.log10(group_Tvir), np.log10(group_metallicity_Zsun), bins=50)
+    plt.colorbar(label='Counts')
+    plt.xlabel(r'log$_{10}$(T$_{vir}$ [K])', fontsize=14)
+    plt.ylabel(r'log$_{10}$($\max(Z_{gas}/Z_{\odot}, 1e-10)$)', fontsize=14)
+    plt.savefig(os.path.join(output_dir, f'host_Tvir_metallicity_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+
+def plot_2D_histogram(data, snapNum, output_dir):
     """
     Create 2D histograms of various TNG simulation properties.
     
@@ -81,6 +109,8 @@ def plot_2D_histogram(data, output_dir):
     -----------
     data : ProcessedTNGData
         Processed TNG data container
+    snapNum : int
+        Snapshot number
     output_dir : str
         Directory to save the output plots
     """
@@ -103,14 +133,15 @@ def plot_2D_histogram(data, output_dir):
     vmaxrad_tcross = data.subhalo_data['vmaxrad_tcross'].value
     host_tff = data.subhalo_data['host_t_ff'].value
     a_number = data.subhalo_data['A_number'].value
-    
-    # Total mass vs subhalo mass
+
+ 
+    # Total hosthalo mass vs subhalo mass
     fig = plt.figure(figsize=(8, 6), facecolor='w')
     plt.hist2d(np.log10(host_mass), np.log10(subhalo_mass), bins=50)
     plt.colorbar(label='Counts')
     plt.xlabel(r'log$_{10}$(M$_{host}$ [Msun/h])', fontsize=14)
     plt.ylabel(r'log$_{10}$(M$_{sub}$ [Msun/h])', fontsize=14)
-    plt.savefig(os.path.join(output_dir, 'Mtot_Msub.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'Mtot_Msub_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
     # M200 vs subhalo mass
@@ -119,25 +150,25 @@ def plot_2D_histogram(data, output_dir):
     plt.colorbar(label='Counts')
     plt.xlabel(r'log$_{10}$(M$_{200}$ [Msun/h])', fontsize=14)
     plt.ylabel(r'log$_{10}$(M$_{sub}$ [Msun/h])', fontsize=14)
-    plt.savefig(os.path.join(output_dir, 'M200_Msub.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'M200_Msub_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
-    # R200 vs halfmass radius
+    # R200 vs subhalo halfmass radius
     fig = plt.figure(figsize=(8, 6), facecolor='w')
     plt.hist2d(np.log10(host_R200), np.log10(halfmass_radius), bins=50)
     plt.colorbar(label='Counts')
     plt.xlabel(r'log$_{10}$(R$_{200}$ [m])', fontsize=14)
     plt.ylabel(r'log$_{10}$(r$_{sub,halfmass}$ [m])', fontsize=14)
-    plt.savefig(os.path.join(output_dir, 'R200_rsubhalfmass.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'R200_rsubhalfmass_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
-    # R200 vs Vmax radius
+    # R200 vs subhalo Vmax radius
     fig = plt.figure(figsize=(8, 6), facecolor='w')
     plt.hist2d(np.log10(host_R200), np.log10(vmaxrad), bins=50)
     plt.colorbar(label='Counts')
     plt.xlabel(r'log$_{10}$(R$_{200}$ [m])', fontsize=14)
     plt.ylabel(r'log$_{10}$(r$_{sub,VmaxRad}$ [m])', fontsize=14)
-    plt.savefig(os.path.join(output_dir, 'R200_subhaloVmaxRad.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'R200_subhaloVmaxRad_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
     # Free-fall time vs crossing time
@@ -146,7 +177,7 @@ def plot_2D_histogram(data, output_dir):
     plt.colorbar(label='Counts')
     plt.xlabel(r'log$_{10}$(t$_{ff,host}$ [s])', fontsize=14)
     plt.ylabel(r'log$_{10}$(t$_{cross}$ [s])', fontsize=14)
-    plt.savefig(os.path.join(output_dir, 'tff_tcross.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'tff_tcross_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
     # M200 vs Mach number
@@ -155,7 +186,7 @@ def plot_2D_histogram(data, output_dir):
     plt.colorbar(label='Counts')
     plt.xlabel(r'log$_{10}$(M$_{200}$ [Msun/h])', fontsize=14)
     plt.ylabel(r'Mach number', fontsize=14)
-    plt.savefig(os.path.join(output_dir, 'M200_Mach.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'M200_Mach_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
     # M200 vs A number
@@ -164,7 +195,7 @@ def plot_2D_histogram(data, output_dir):
     plt.colorbar(label='Counts')
     plt.xlabel(r'log$_{10}$(M$_{200}$ [Msun/h])', fontsize=14)
     plt.ylabel(r'log$_{10}$(A number)', fontsize=14)
-    plt.savefig(os.path.join(output_dir, 'M200_Anumber.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'M200_Anumber_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
     #plot Mach number in different bins of M200 (1D plot, divide M200 into 5 bins)
@@ -200,7 +231,7 @@ def plot_2D_histogram(data, output_dir):
     plt.xlabel('Mach Number', fontsize=14)
     plt.ylabel('Probability Density', fontsize=14)
     plt.legend()
-    plt.savefig(os.path.join(output_dir, 'M200_Mach_bins.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'M200_Mach_bins_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
        
@@ -282,7 +313,7 @@ def compare_mach_numbers(simulation_set, snapNums):
 if __name__ == '__main__':
     simulation_set = 'TNG50-1'
     
-    snapNum = 13
+    snapNum = 2
     
     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
     processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
@@ -290,7 +321,8 @@ if __name__ == '__main__':
     data = load_processed_data(processed_file)
     # Create plots
     output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
-    plot_2D_histogram(data, output_dir)
+    plot_2D_histogram(data, snapNum, output_dir)
+    plot_host_halo_properties(data, snapNum, output_dir)
     
     # Compare Mach numbers across snapshots
     # snapNums = [2, 3, 4, 6, 8, 11, 13]

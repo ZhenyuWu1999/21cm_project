@@ -484,8 +484,8 @@ def calculate_wake_volume(M, H_over_R0 = 2.0):
             return  np.pi/ (M**2 - 1) * (4.0*H_over_R0 - 16.0/3.0)
         else:
             return np.pi/3.0 * H_over_R0**3 / (M**2 - 1) 
-        
- #correction factor for DF force in gaseous medium
+
+#correction factor for DF force in gaseous medium
 def I_Ostriker99(Mach, V, t, rmin):
     delta = 0.05
     if Mach > 1 - delta and Mach <= 1:
@@ -500,6 +500,9 @@ def I_Ostriker99(Mach, V, t, rmin):
         I_supersonic =  0.5*np.log(1 - 1/Mach**2) + np.log(V*t/rmin)
         I_lowlimit = 0.5*np.log((Mach+1)/(Mach -1))
         I = np.maximum(I_supersonic, I_lowlimit)
+        if (I_supersonic < I_lowlimit):
+            print("I too low, reset to lower limit")
+            I = I_lowlimit
         return I
 
 
@@ -553,7 +556,7 @@ if __name__ == "__main__":
     #snapNum = 99
     #get snapNum as a parameter when running the file
     #snapNum = int(sys.argv[1])
-    snapNum = 4
+    snapNum = 1
     output_dir = '/home/zwu/21cm_project/compare_TNG/results/'+simulation_set+'/'
     output_dir += f'snap_{snapNum}/'
     #mkdir for this snapshot
@@ -704,7 +707,8 @@ if __name__ == "__main__":
             M = halos['GroupMass'][host]*1e10  #Msun/h
             M_crit200 = halos['Group_M_Crit200'][host]*1e10 #Msun/h
             if(M_crit200 == 0):
-                print("Warning: M_crit200 = 0, missing data")
+                
+                #print("Warning: M_crit200 = 0, missing data")
                 continue
             
             M_gas = halos['GroupMassType'][host][0]*1e10  #Msun/h
@@ -718,7 +722,9 @@ if __name__ == "__main__":
             rho_g_analytic_200 = 200 *rho_g_analytic
             rho_m_analytic_200 = 200 *rho_m_analytic
             group_vel = halos['GroupVel'][host]*1e3/scale_factor  #km/s/a to m/s
+            #bug: should use M200 instead of M because we set Delta = 200 in the analytic model; mu should be 1.23 instead of 0.59
             vel_analytic = Vel_Virial(M/h_Hubble, current_redshift)
+            
             gas_metallicity_host = halos['GroupGasMetallicity'][host]
 
             #exclude small halos not resolved
@@ -846,7 +852,14 @@ if __name__ == "__main__":
                 R0cube_Coeff_list.append(R0cube_Coeff)
                 Volume_wake = R0cube_Coeff * R0_m**3
                 Volume_filling_factor = Volume_wake/(4/3*np.pi*R_crit200_m**3)
-                # print("Wake Volume filling factor: ",Volume_filling_factor)
+                print("\nWake Volume filling factor: ",Volume_filling_factor)
+                print("R_crit200_m: ",R_crit200_m)
+                print("subhalo radius: ",subhalo_radius)
+                
+                t_100Myr = 100*1e6*3.15e7  #s
+                print("t_dyn in Myr: ",t_dyn/1e6/3.15e7)
+                print("Cs 100 Myr sphere filling factor: ",(4/3*np.pi*(Cs_host*t_100Myr)**3)/(4/3*np.pi*R_crit200_m**3))
+                
                 Wake_Volume_filling_factor_list.append(Volume_filling_factor)
                 
                 wake_overdensity = 1.0
@@ -913,6 +926,7 @@ if __name__ == "__main__":
     # plt.tight_layout()
     # plt.savefig(output_dir+f'GroupGasMetallicity_snap{snapNum}_z{current_redshift:.2f}.png',dpi=300)
     
+    exit(0)
     
     #write results to hdf5 file
     output_filename = output_dir+f"DF_heating_snap{snapNum}_z{current_redshift:.2f}.hdf5"
@@ -969,7 +983,6 @@ if __name__ == "__main__":
         #hosthalo_dataset.attrs['description'] = 'Properties of hosthalos including critical mass, gas content, and metallicity'
 
     
-    exit(0)
     
     
     

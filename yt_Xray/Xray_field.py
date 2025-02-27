@@ -133,6 +133,48 @@ class XrayEmissivityIntegrator:
             )
 
         return emiss
+    
+    def get_sed_interpolator(self, data_type, e_min, e_max, energy=True):
+        """Similar to get_interpolator but returns spectral data for each energy bin"""
+        data = getattr(self, f"emissivity_{data_type}")
+        if not energy:
+            data = data[..., :] / self.emid.v
+            
+        e_min = YTQuantity(e_min, "keV") * (1.0 + self.redshift)
+        e_max = YTQuantity(e_max, "keV") * (1.0 + self.redshift)
+        
+        if (e_min - self.ebin[0]) / e_min < -1e-3 or (
+            e_max - self.ebin[-1]
+        ) / e_max > 1e-3:
+            raise EnergyBoundsException(self.ebin[0], self.ebin[-1])
+            
+        e_is, e_ie = np.digitize([e_min, e_max], self.ebin)
+        e_is = np.clip(e_is - 1, 0, self.ebin.size - 1)
+        e_ie = np.clip(e_ie, 0, self.ebin.size - 1)
+        
+        my_dE = self.dE[e_is:e_ie].copy()
+        # clip edge bins if the requested range is smaller
+        my_dE[0] -= e_min - self.ebin[e_is]
+        my_dE[-1] -= self.ebin[e_ie] - e_max
+        
+        # Instead of summing over energy bins, we keep the spectral dimension
+        if data.ndim == 2:
+            return {
+                'data': data[:, e_is:e_ie],
+                'energy_bins': self.ebin[e_is:e_ie+1],
+                'energy_mids': self.emid[e_is:e_ie],
+                'dE': self.dE[e_is:e_ie],
+                'log_T': self.log_T
+            }
+        else:
+            return {
+                'data': data[:, :, e_is:e_ie],
+                'energy_bins': self.ebin[e_is:e_ie+1],
+                'energy_mids': self.emid[e_is:e_ie],
+                'dE': self.dE[e_is:e_ie],
+                'log_nH': self.log_nH,
+                'log_T': self.log_T
+            }
 
 
 def calculate_xray_emissivity(
@@ -362,6 +404,250 @@ def calculate_xray_emissivity(
     
     '''
 
+def calculate_xray_sed(
+    lognH,
+    Temperature,
+    gas_metallicity_Zsun,
+    e_min,
+    e_max,
+    use_metallicity=False,
+    redshift=0.0,
+    table_type="cloudy",
+    data_dir=None,
+):
+    """Calculate X-ray SED for given temperature and density values.
+    
+    Parameters
+    ----------
+    lognH : float or array
+        Log10 of the hydrogen number density in cm^-3
+    Temperature : float or array
+        Gas temperature in Kelvin
+    gas_metallicity_Zsun : float or array
+        Gas metallicity in solar units
+    e_min : float
+        Minimum energy in keV
+    e_max : float
+        Maximum energy in keV
+    use_metallicity : bool, optional
+        Whether to include metal contribution
+    redshift : float, optional
+        Cosmological redshift
+    table_type : str, optional
+        Type of emissivity table ("cloudy" or "apec")
+    data_dir : str, optional
+        Directory containing the emissivity tables
+        
+    Returns
+    -------
+    dict
+        Dictionary containing energy bins and spectral emissivity values
+    """
+    #lognH = data['lognH']
+    #temperature_model = 'T_DF_NonEq'
+    #Temperature = data['T_DF_NonEq']
+    #gas_metallicity_Zsun = data['gas_metallicity_host']
+    lognH = np.array(lognH)
+    nH = 10**lognH
+    if table_type == "cloudy":
+        norm_field = YTArray(nH**2, "cm**-6")
+    elif table_type == "apec":
+        ne = nH  # assume fully ionized
+        norm_field = YTArray(nH*ne, "cm**-6")
+    
+    logT = np.array(np.log10(Temperature))
+    
+    my_si = XrayEmissivityIntegrator(table_type, data_dir=data_dir, redshift=redshift)
+    
+    # Get spectral data for primordial composition
+    sed_0 = my_si.get_sed_interpolator("primordial", e_min, e_max)
+    
+    # Interpolate primordial emissivity for each energy bin
+    spectral_emissivity = np.zeros(sed_0['data'].shape[-1])
+    
+    for i in range(sed_0['data'].shape[-1]):
+        if sed_0['data'].ndim == 2:
+            interpolator = UnilinearFieldInterpolator(
+                np.log10(sed_0['data'][..., i]),
+                [sed_0['log_T'][0], sed_0['log_T'][-1]],
+                "log_T",
+                truncate=True
+            )
+            dd = {"log_T": np.atleast_1d(logT)}
+        else:
+            interpolator = BilinearFieldInterpolator(
+                np.log10(sed_0['data'][..., i]),
+                [sed_0['log_nH'][0], sed_0['log_nH'][-1],
+                 sed_0['log_T'][0], sed_0['log_T'][-1]],
+                ["log_nH", "log_T"],
+                truncate=True
+            )
+            dd = {
+                "log_nH": np.atleast_1d(lognH),
+                "log_T": np.atleast_1d(logT)
+            }
+            
+        result = interpolator(dd)
+        if np.isscalar(logT):
+            spectral_emissivity[i] = 10**float(result)
+        else:
+            spectral_emissivity[i] = 10**result
+    
+    # Add metallicity contribution if requested
+    if use_metallicity:
+        gas_metallicity_Zsun = np.array(gas_metallicity_Zsun)
+        sed_Z = my_si.get_sed_interpolator("metals", e_min, e_max)
+        
+        metal_spectral_emissivity = np.zeros(sed_Z['data'].shape[-1])
+        for i in range(sed_Z['data'].shape[-1]):
+            if sed_Z['data'].ndim == 2:
+                interpolator = UnilinearFieldInterpolator(
+                    np.log10(sed_Z['data'][..., i]),
+                    [sed_Z['log_T'][0], sed_Z['log_T'][-1]],
+                    "log_T",
+                    truncate=True
+                )
+                dd = {"log_T": np.atleast_1d(logT)}
+            else:
+                interpolator = BilinearFieldInterpolator(
+                    np.log10(sed_Z['data'][..., i]),
+                    [sed_Z['log_nH'][0], sed_Z['log_nH'][-1],
+                     sed_Z['log_T'][0], sed_Z['log_T'][-1]],
+                    ["log_nH", "log_T"],
+                    truncate=True
+                )
+                dd = {
+                    "log_nH": np.atleast_1d(lognH),
+                    "log_T": np.atleast_1d(logT)
+                }
+                
+            result = interpolator(dd)
+            if np.isscalar(logT):
+                metal_spectral_emissivity[i] = gas_metallicity_Zsun * 10**float(result)
+            else:
+                metal_spectral_emissivity[i] = gas_metallicity_Zsun * 10**result
+        
+        spectral_emissivity += metal_spectral_emissivity
+    
+    # Apply normalization
+    spectral_emissivity = spectral_emissivity * norm_field
+    
+    return {
+        'energy_bins': sed_0['energy_bins'],
+        'energy_mids': sed_0['energy_mids'],
+        'dE': sed_0['dE'],
+        'spectral_emissivity': YTArray(spectral_emissivity, "erg/cm**3/s") #erg/cm**3/s/keV
+    }
+    
+def calculate_xray_sed_batch(
+    AllData,
+    e_min,
+    e_max,
+    use_metallicity=False,
+    redshift=0.0,
+    table_type="cloudy",
+    data_dir=None,
+):
+    lognH = np.array(AllData['lognH'])
+    Temperature = np.array(AllData['T_DF_NonEq'])
+    logT = np.log10(Temperature)
+    
+    nH = 10**lognH
+    if table_type == "cloudy":
+        norm_field = YTArray(nH**2, "cm**-6")
+    elif table_type == "apec":
+        ne = nH  # assume fully ionized
+        norm_field = YTArray(nH*ne, "cm**-6")
+    
+    my_si = XrayEmissivityIntegrator(table_type, data_dir=data_dir, redshift=redshift)
+    
+    # Get spectral data for primordial composition
+    sed_0 = my_si.get_sed_interpolator("primordial", e_min, e_max)
+    n_ebins = sed_0['data'].shape[-1]
+    
+    # Initialize array to store total spectral emissivity with proper units
+    total_spectral_emissivity = np.zeros(n_ebins)
+    
+    # Create interpolators once for all energy bins
+    if sed_0['data'].ndim == 2:
+        # Temperature-only case
+        for i in range(n_ebins):
+            interpolator = UnilinearFieldInterpolator(
+                np.log10(sed_0['data'][..., i]),
+                [sed_0['log_T'][0], sed_0['log_T'][-1]],
+                "log_T",
+                truncate=True
+            )
+            dd = {"log_T": logT}
+            result = interpolator(dd)
+            # Convert to YTArray before summing
+            emiss = YTArray(10**result * norm_field, "erg/cm**3/s")
+            total_spectral_emissivity[i] = np.sum(emiss)
+    else:
+        # Temperature and density case
+        for i in range(n_ebins):
+            interpolator = BilinearFieldInterpolator(
+                np.log10(sed_0['data'][..., i]),
+                [sed_0['log_nH'][0], sed_0['log_nH'][-1],
+                 sed_0['log_T'][0], sed_0['log_T'][-1]],
+                ["log_nH", "log_T"],
+                truncate=True
+            )
+            dd = {
+                "log_nH": lognH,
+                "log_T": logT
+            }
+            result = interpolator(dd)
+            emiss = YTArray(10**result * norm_field, "erg/cm**3/s")
+            total_spectral_emissivity[i] = np.sum(emiss)
+    
+    # Convert total_spectral_emissivity to YTArray before metallicity contribution
+    total_spectral_emissivity = YTArray(total_spectral_emissivity, "erg/cm**3/s")
+    
+    # Add metallicity contribution if requested
+    if use_metallicity:
+        gas_metallicity_Zsun = np.array(AllData['gas_metallicity_host'])
+        sed_Z = my_si.get_sed_interpolator("metals", e_min, e_max)
+        
+        if sed_Z['data'].ndim == 2:
+            # Temperature-only case
+            for i in range(n_ebins):
+                interpolator = UnilinearFieldInterpolator(
+                    np.log10(sed_Z['data'][..., i]),
+                    [sed_Z['log_T'][0], sed_Z['log_T'][-1]],
+                    "log_T",
+                    truncate=True
+                )
+                dd = {"log_T": logT}
+                result = interpolator(dd)
+                # Convert to YTArray with proper units before adding
+                metal_emiss = YTArray(gas_metallicity_Zsun * 10**result * norm_field, "erg/cm**3/s")
+                total_spectral_emissivity[i] += np.sum(metal_emiss)
+        else:
+            # Temperature and density case
+            for i in range(n_ebins):
+                interpolator = BilinearFieldInterpolator(
+                    np.log10(sed_Z['data'][..., i]),
+                    [sed_Z['log_nH'][0], sed_Z['log_nH'][-1],
+                     sed_Z['log_T'][0], sed_Z['log_T'][-1]],
+                    ["log_nH", "log_T"],
+                    truncate=True
+                )
+                dd = {
+                    "log_nH": lognH,
+                    "log_T": logT
+                }
+                result = interpolator(dd)
+                metal_emiss = YTArray(gas_metallicity_Zsun * 10**result * norm_field, "erg/cm**3/s")
+                total_spectral_emissivity[i] += np.sum(metal_emiss)
+    
+    return {
+        'energy_bins': sed_0['energy_bins'],
+        'energy_mids': sed_0['energy_mids'],
+        'dE': sed_0['dE'],
+        'spectral_emissivity': total_spectral_emissivity
+    }
+
 def plot_statistics(AllData, output_dir, current_redshift):
      
     
@@ -413,7 +699,7 @@ def plot_statistics(AllData, output_dir, current_redshift):
 
 if __name__ == "__main__":
     TNG50_redshift_list = [20.05,14.99,11.98,10.98,10.00,9.39,9.00,8.45,8.01]
-    snapNum = 2
+    snapNum = 1
     current_redshift = TNG50_redshift_list[snapNum]
     input_dir = "/home/zwu/21cm_project/grackle_DF_cooling/snap_"+str(snapNum)+"/"
     output_dir = "/home/zwu/21cm_project/yt_Xray/snap_"+str(snapNum)+"/"
@@ -425,11 +711,12 @@ if __name__ == "__main__":
         
         AllData = HaloData['SubhaloWake']
     elif model == 'SubhaloWakeNonEq':
-        input_filename = input_dir + "Grackle_Cooling_SubhaloWake_NonEq_snap"+str(snapNum)+".h5"
+        input_filename = input_dir + "Grackle_Cooling_SubhaloWake_NonEq_Volume0.1_snap"+str(snapNum)+".h5"
         HaloData = read_hdf5_data(input_filename)
+        print("keys: ", HaloData.keys())
         AllData = HaloData['SubhaloWakeNonEq']
         
-        
+    
     heating_rate = AllData['heating']
     specific_heating = AllData['specific_heating']
     volumetric_heating = AllData['volumetric_heating']
@@ -451,6 +738,15 @@ if __name__ == "__main__":
     num_display = 5
     
     print(f"\nTvir: {AllData['Tvir'][:num_display]} K")
+    
+    
+    #find index where Tvir > 1e5 K and T_DF_NonEq > 2* Tvir
+    # mask = (AllData['Tvir'] > 1e5) & (AllData['T_DF_NonEq'] > 2*AllData['Tvir'])
+    # test_index = np.where(mask)[0]
+    # test_index = test_index[0]
+  
+    
+    
     #print(f"T_DF: {AllData['T_DF'][:num_display]} K")
     # print(f"T_allheating: {AllData['T_allheating'][:num_display]} K")
     #print("Specific heating rate: ", specific_heating[:num_display], "erg/g/s")
@@ -465,8 +761,97 @@ if __name__ == "__main__":
     # total_heating_rate_2 = np.sum(volume_wake_tdyn_cm3 * volumetric_heating)
     
     #X-ray emissivity at Tvir
-    use_metallicity = True
-    normalized_heating = YTArray(normalized_heating, "erg*cm**3/s")
+    use_metallicity = True  #do not consider metallicity here
+    
+    normalized_heating = YTArray(normalized_heating, "erg*cm**3/s")  
+    
+    print(AllData['T_DF_NonEq'])
+    '''
+    #test SED
+    T = 10**7.0
+    lognH = -0.39
+    nH = 10**lognH
+    gas_metallicity_Zsun = 0.0
+    e_min = 0.5 
+    e_max = 2.0
+    redshift = 0.0
+    table_type = "cloudy"
+    data_dir = "."
+    SED = calculate_xray_sed(lognH, T, gas_metallicity_Zsun, e_min, e_max, use_metallicity, redshift, table_type, data_dir)
+    
+    
+    # print("emid: ", SED['energy_mids'])
+    
+
+    # plot
+    fig = plt.figure(figsize=(8, 6),facecolor='white')
+    plt.plot(SED['energy_mids'].in_units("keV"), SED['spectral_emissivity'], color='blue')
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.xlabel('Energy [keV]')
+    plt.ylabel(r'Spectral emissivity [erg/cm$^3$/s/keV]')
+    plt.grid()
+    plt.title(f'X-ray SED at T = {T:.1e} K, lognH = {lognH}')
+    filename = f"SED/Xray_SED_T_{T:.1e}_nH_{lognH}.png"
+    plt.savefig(filename,dpi=300)
+    
+    fig = plt.figure(figsize=(8, 6),facecolor='white')
+    plt.plot(SED['energy_mids'].in_units("keV"), SED['spectral_emissivity']/nH**2, color='blue')
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.xlabel('Energy [keV]')
+    plt.ylabel(r'Spectral emissivity/nH$^2$ [erg cm$^3$/s/keV]')
+    plt.grid()
+    plt.title(f'X-ray SED at T = {T:.1e} K, lognH = {lognH}')
+    filename = f"SED/Xray_normalizedSED_T_{T:.1e}_nH_{lognH}.png"
+    plt.savefig(filename,dpi=300)
+    '''
+    
+    #SED
+    '''
+    #plot SED at T_DF_NonEq
+    e_min = 0.5
+    e_max = 2.0
+    redshift = 0.0
+    table_type = "cloudy"
+    data_dir = "."
+    
+    All_SED = calculate_xray_sed(AllData, e_min, e_max, use_metallicity, redshift, table_type, data_dir)
+    energy_mids = All_SED['energy_mids']
+    total_spectral_emissivity = All_SED['spectral_emissivity']
+    print("emid: ", energy_mids)
+    print("total_spectral_emissivity: ", total_spectral_emissivity)
+    #plot
+    fig = plt.figure(figsize=(8, 6),facecolor='white')
+    plt.plot(energy_mids.in_units("keV"), total_spectral_emissivity, color='blue', alpha=0.4, label='T_DF_NonEq')
+    plt.yscale('log')
+    plt.xlabel('Energy [keV]')
+    plt.ylabel('Spectral emissivity [erg/cm^3/s/keV]')
+    plt.legend()
+    plt.title('X-ray SED at T_DF_NonEq')
+    plt.savefig(output_dir+"Xray_SED_T_DF_NonEq.png",dpi=300)
+    
+    '''  
+    
+    
+    # AllResult = calculate_xray_sed_batch(AllData, 0.5, 2.0, use_metallicity, redshift=0.0, table_type="cloudy", data_dir=".")
+    # #plot the total SED
+    # fig = plt.figure(figsize=(8, 6),facecolor='white')
+    # energy_mids = AllResult['energy_mids']
+    # total_spectral_emissivity = AllResult['spectral_emissivity']
+    # plt.plot(energy_mids.in_units("keV"), total_spectral_emissivity, color='blue', alpha=0.4, label='Total')
+    # plt.xscale('log')
+    # plt.yscale('log')
+    # plt.xlabel('Energy [keV]')
+    # plt.ylabel('Spectral emissivity [erg/cm^3/s/keV]')
+    # plt.title('X-ray SED at T_DF_NonEq')
+    # plt.savefig(output_dir+"Xray_SED_T_DF_NonEq.png",dpi=300)
+    
+    
+    
+    
+    
+    #X-ray Emissivity
     
     #do not consider redshift here
     emissivity_Tvir_cloudy = calculate_xray_emissivity(AllData, 'Tvir', 0.5, 2.0, use_metallicity, redshift=0.0, table_type="cloudy", data_dir=".", cosmology=None, dist=None)
@@ -503,12 +888,15 @@ if __name__ == "__main__":
             f.create_dataset('emissivity_Tallheating_cloudy', data=emissivity_Tallheating_cloudy)
             f.create_dataset('emissivity_Tallheating_apec', data=emissivity_Tallheating_apec)
             f.create_dataset('volume_wake_tdyn_cm3', data=volume_wake_tdyn_cm3)
+            f.create_dataset('Mach_rel', data=AllData['Mach_rel'])
+            f.create_dataset('vel_rel', data=AllData['vel_rel'])
             f.create_dataset('Tvir', data=AllData['Tvir'])
             f.create_dataset('T_DF', data=AllData['T_DF'])
             f.create_dataset('T_allheating', data=AllData['T_allheating'])
     elif model == 'SubhaloWakeNonEq':
-        output_filename = output_dir + "Xray_emissivity_NonEq_snap"+str(snapNum)+".h5" 
+        output_filename = output_dir + "Xray_emissivity_NonEq_Volume0.1_snap"+str(snapNum)+".h5" 
         with h5py.File(output_filename, 'w') as f:
+            f.create_dataset('index', data=AllData['index'])
             f.create_dataset('heating_rate', data=heating_rate)
             f.create_dataset("normalized_heating", data=normalized_heating)
             f.create_dataset("cooling_rate_Tvir", data=cooling_rate_Tvir)
@@ -517,6 +905,8 @@ if __name__ == "__main__":
             f.create_dataset('emissivity_TDF_NonEq_cloudy', data=emissivity_TDF_NonEq_cloudy)
             f.create_dataset('emissivity_TDF_NonEq_apec', data=emissivity_TDF_NonEq_apec)
             f.create_dataset('volume_wake_tdyn_cm3', data=volume_wake_tdyn_cm3)
+            f.create_dataset('Mach_rel', data=AllData['Mach_rel'])
+            f.create_dataset('vel_rel', data=AllData['vel_rel'])
             f.create_dataset('Tvir', data=AllData['Tvir'])
             f.create_dataset('T_DF_NonEq', data=AllData['T_DF_NonEq'])
             f.create_dataset('tfinal', data=tfinal)

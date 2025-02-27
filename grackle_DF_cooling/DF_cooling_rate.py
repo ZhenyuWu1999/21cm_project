@@ -18,7 +18,7 @@ import argparse
 import h5py
 import matplotlib.pyplot as plt
 from scipy.optimize import brentq
-from physical_constants import G_grav, mass_hydrogen_kg
+from physical_constants import G_grav, mp
 from pygrackle import \
     chemistry_data, \
     evolve_constant_density, \
@@ -137,7 +137,7 @@ def run_cool_rate(evolve_cooling,redshift,lognH,specific_heating_rate, volumetri
             fc, final_time=final_time,
             safety_factor=0.01)
         else:
-            final_time = 1000. #implement dynamic final time
+            final_time = 15. #implement dynamic final time
             data = evolve_constant_density_dynamic_tfinal(
             fc, final_temperature=None,final_time=final_time, safety_factor=0.01, convergence_check_interval=50)
 
@@ -572,7 +572,7 @@ if __name__ == "__main__":
     Sub_data = data_dict["SubHalo"]
     
 
-    test_index = 317
+    test_index = 100206
     Tvir = Sub_data['Tvir_host'][test_index]
     print(f"Tvir = {Tvir}")
     
@@ -592,7 +592,7 @@ if __name__ == "__main__":
     rho_g = Sub_data['rho_g'][test_index]
     overdensity = 1.0
     rho_g_wake = rho_g*(1+overdensity)
-    nH = rho_g_wake/mass_hydrogen_kg
+    nH = rho_g_wake/mp
     nH_cm3 = nH/1e6
     lognH = np.log10(nH_cm3)
     
@@ -661,7 +661,7 @@ if __name__ == "__main__":
     volumetric_heating = 1.567484510707363e-28 
     normalized_heating = 8.848068425451179e-27
     z = 10.0
-    rho_gas = nH*mass_hydrogen_kg
+    rho_gas = nH*mp
     t_dyn = 1/np.sqrt(G_grav*rho_gas)
     t_dyn_Myr = t_dyn/3.154e13
     

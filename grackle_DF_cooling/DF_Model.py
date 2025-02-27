@@ -415,7 +415,7 @@ def analytic_T_DF_singlevolume(ln_m_over_M, logM, z):
     print(f"Cs*t_cross: {Cs_host*tcross:.5e}")
     
     rho_g_wake = rho_g #debug: set wake density = background density
-    nH = rho_g_wake/mass_hydrogen_kg
+    nH = rho_g_wake/mp
     nH_cm3 = nH/1e6
     lognH = np.log10(nH_cm3)
     
@@ -452,7 +452,7 @@ def analytic_temperature_profile_subsonic(ln_m_over_M, logM, z, mach):
     
     #debug: change to density profile later
     rho_g_wake = rho_g #debug: set wake density = background density
-    nH = rho_g_wake/mass_hydrogen_kg
+    nH = rho_g_wake/mp
     nH_cm3 = nH/1e6
     lognH = np.log10(nH_cm3)
     
@@ -481,7 +481,11 @@ def analytic_temperature_profile_subsonic(ln_m_over_M, logM, z, mach):
     r_list_center = (r_list[:-1] + r_list[1:])/2
     DF_heating_profile = DF_heating * dI
     
-    normalized_heating_profile = DF_heating_profile/dV_physical/nH_cm3**2 #erg cm^3 s^-1
+    #now test density profile
+    nH_cm3_profile = np.linspace(10*nH_cm3, 0.1*nH_cm3, len(r_list_center))
+    #nH_cm3_profile = nH_cm3 * np.ones(len(r_list_center))
+    
+    normalized_heating_profile = DF_heating_profile/dV_physical/nH_cm3_profile**2 #erg cm^3 s^-1
     #use Grackle to calculate the temperature profile
     evolve_cooling = True
     
@@ -533,7 +537,7 @@ def process_subhalo_NonEq(i, Sub_data, current_redshift, shm_name, loop_num, dty
         rho_g = Sub_data['rho_g'][i]
         overdensity = 1.0
         rho_g_wake = rho_g*(1+overdensity)
-        nH = rho_g_wake/mass_hydrogen_kg
+        nH = rho_g_wake/mp
         nH_cm3 = nH/1e6
         lognH = np.log10(nH_cm3)
         
@@ -1039,7 +1043,7 @@ def Analytic_model():
     mach_test = 0.5
     
     ln_m_over_M = np.log(1e-3)
-    logM = 7.5
+    logM = 8.0
     analytic_temperature_profile_subsonic(ln_m_over_M, logM, z_value, mach_test)
     
     

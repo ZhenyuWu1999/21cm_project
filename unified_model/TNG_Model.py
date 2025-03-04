@@ -6,12 +6,18 @@ from scipy.optimize import curve_fit
 
 from physical_constants import *
 from HaloProperties import *
-from Config import snapNum, simulation_set
+from Config import simulation_set, snapNum
 from DF_Ostriker99_wake_structure import Idf_Ostriker99_wrapper
 from TNGDataHandler import *
 import Xray_field as xray
 from HaloMassFunction import plot_hmf, fitFunc_lg_dNdlgx
 
+# import argparse
+# parser = argparse.ArgumentParser(description="Run TNG_model with a specified snapNum.")
+# parser.add_argument("snapNum", type=int, help="The snapshot number to process.")
+# args = parser.parse_args()
+# snapNum = args.snapNum
+# print(f"Processing snapNum = {snapNum}")
 
 def load_tng_data(basePath, snapNum):
     print("loading header ...")
@@ -336,13 +342,14 @@ def plot_Mratio_dN_dlogMratio():
 
 
     # Create histogram bins
-    bins = np.linspace(-5, 0, 50)
+    bins = np.linspace(-5, 0, 50) #(-4, 0) for high-z, (-5, 0) for low-z
     log_bin_widths = bins[1] - bins[0]
     artificial_small = 1e-10
     min_number_density = 1e10 #used to set the lower limit of y-axis for plotting
 
     # Plot mass ratio distributions
     fig = plt.figure(facecolor='white')
+    ax = fig.gca()
     number_density_list = []
     for i in range(num_M_bins):
         counts, bin_edges = np.histogram(np.log10(sub_host_Mratio_list[i]), bins=bins)
@@ -398,165 +405,41 @@ def plot_Mratio_dN_dlogMratio():
     # Finalize plot
     plt.ylim(bottom=min_number_density/10)
     #xlim: > 1e-4 or > 1e-5
-    plt.xlim([-5,0])
+    if snapNum <= 13:
+        plt.xlim([-4,0])
+    else:
+        plt.xlim([-5,0])
     plt.legend(loc='lower left')
     plt.xlabel(r'$\lg$($\psi$) = $\lg$(m/M)',fontsize=14)
     plt.ylabel(r'dN/d$\lg(\psi)$',fontsize=14)
     plt.yscale('log')
+    ax.tick_params(direction='in', which='both', labelsize=12)
     plt.tight_layout()
     
     # Save plot
     plt.savefig(os.path.join(output_dir, f'SHMF_snap_{snapNum}.png'), dpi=300)
-    
-'''
-def plot_Mratio_dN_dlogMratio_old(All_sub_host_M,dark_matter_resolution,filename):
-    print("total number of subhalos: ",len(All_sub_host_M))
-    All_sub_host_Mratio = All_sub_host_M[:,0]
-    All_host_M = All_sub_host_M[:,1]
-    All_host_index = All_sub_host_M[:,2]
-    All_host_logM = np.log10(All_host_M)
-    #divide the host halos into 5 mass bins, and plot the distribution of m/M for each bin respectively
-    logM_min = np.min(All_host_logM)
-    logM_max = np.max(All_host_logM)
-    num_M_bins = 5
-    logM_bins = np.linspace(logM_min, logM_max, num=num_M_bins+1)
-    sub_host_Mratio_list = []
-    num_host_list = []
-    for i in range(num_M_bins):
-        mask = (All_host_logM >= logM_bins[i]) & (All_host_logM < logM_bins[i+1])
-        sub_host_Mratio_list.append(All_sub_host_Mratio[mask])
-        host_index = All_host_index[mask]
-        num_host = len(set(host_index))
-        num_host_list.append(num_host)
-        print(f"number of host halos in bin {i}: {num_host}")
-    tot_num_host = len(set(All_host_index))
-    print(f"total number of host halos: {tot_num_host}")
-    num_host_list.append(tot_num_host)
 
-    #threshold for small halos
-    critical_ratio_list = []
-    subhalo_resolution = 50*dark_matter_resolution
-    for i in range(num_M_bins):
-        critical_ratio = subhalo_resolution/10**logM_bins[i]
-        critical_ratio_list.append(critical_ratio)
-    
-    colors = ['r','orange','y','g','b']
-    labels = [f'[{logM_bins[i]:.2f}, {logM_bins[i+1]:.2f}]' for i in range(num_M_bins)]
+    # Save bestfit parameters
+    bestfit_params_file = os.path.join(output_dir, f'SNMF_BestFit_params_snap_{snapNum}.txt')
+    with open(bestfit_params_file, 'w') as f:
+        header = ['alpha', 'beta/ln10', 'omega', 'lgA', 'beta', 'A']
+        column_width = 12
+        formatted_header = ' '.join(f'{h:<{column_width}}' for h in header)
 
-    colors = np.append(colors,'black')
-    labels.append('All')
-    sub_host_Mratio_list.append(All_sub_host_Mratio)   
+        alpha = p_bestfit[0]
+        beta_ln10 = p_bestfit[1]
+        omega = p_bestfit[2]
+        lgA = p_bestfit[3]
+        beta = p_bestfit[1] * np.log(10)
+        A = 10 ** p_bestfit[3]
 
-    bins = np.linspace(-5,0,50)
-    log_bin_widths = bins[1] - bins[0]
-    min_number_density = 1e10
+        values = [alpha, beta_ln10, omega, lgA, beta, A]
+        formatted_values = ' '.join(f'{v:{column_width}.5e}' for v in values)
+        f.write('BestFit parameters:\n')  
+        f.write(formatted_header + '\n') 
+        f.write(formatted_values + '\n')  
 
-    number_density_list = []
-    fig = plt.figure(facecolor='white')
-    for i in range(num_M_bins+1):
-        counts, bin_edges = np.histogram(np.log10(sub_host_Mratio_list[i]), bins=bins)
-        counts = np.append(counts,counts[-1])
-        number_density = counts/log_bin_widths
-        #divide by num of host halos
-        number_density /= num_host_list[i]
-        #min nonzero number density
-        min_number_density = min(min_number_density,np.min(number_density[number_density > 0])) 
-        #exclude zero counts, set to an artificial small number
-        mask = number_density == 0
-        artificial_small = 1e-10
-        number_density[mask] = artificial_small
-        plt.step(bin_edges, number_density, where='post',color=colors[i],label=labels[i])
-        if (i< num_M_bins):
-            number_density_list.append(number_density)
-            plt.axvline(np.log10(critical_ratio_list[i]),color = colors[i],linestyle='--')
-
-        print("sum counts: ",np.sum(counts))
-        #plt.hist(np.log10(sub_host_Mratio_list[i]), bins=bins, histtype='step',color=colors[i],label=labels[i])
-    
-    #plot the initial guess fitting
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    p_guess = [0.86, 50/np.log(10),4 ,np.log10(0.065)]
-    fit_lg_number_density = fitFunc_lg_dNdlgx(bin_centers,*p_guess)
-    plt.plot(bin_centers,10**fit_lg_number_density,linestyle='-',color='grey',label='van den Bosch+ 2016')
-
-    plt.ylim(bottom=min_number_density/10)
-    plt.legend(loc='lower left')
-    plt.title(f'Subhalo m/M Distribution, z={current_redshift:.2f}')
-    plt.xlabel(r'log10($\psi$) = log10(m/M)')
-    plt.ylabel(r'$\frac{dN}{d\log_{10}(\psi)}$')
-    plt.yscale('log')
-    plt.tight_layout()
-    plt.savefig(filename,dpi=300)
-
-    #use >resolution data to fit the distribution
-    fig = plt.figure(facecolor='white')
-
-    all_fitting_params = []
-    for i in range(3,5):
-        number_density = number_density_list[i]
-        #fitFunc_lg_dNdlgx(lgx,alpha,beta_ln10, omega, lgA)
-        #p_guess = [0.86, 50/np.log(10),4 ,np.log10(0.065)]
-        try:
-            if current_redshift > 10:
-                fit_mask = (bin_centers > np.log10(2.0*critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
-            else:
-                fit_mask = (bin_centers > np.log10(critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
-            popt, pcov = curve_fit(fitFunc_lg_dNdlgx, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p_guess, maxfev= 1000)
-            alpha = popt[0]
-            beta_ln10 = popt[1]
-            omega = popt[2]
-
-            #if (alpha < 0 and beta_ln10>0):
-            if (False):
-                print("i = {}: fit failed, increase critical ratio".format(i))
-                popt, pcov = curve_fit(fitFunc_lg_dNdlgx, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p_guess, maxfev= 1000)
-            #elif(beta_ln10 <= 0 or omega > 10):
-            elif(True):
-                print("i = {}: fit failed, increase critical ratio and fix the exponential slope".format(i))
-                fit_mask = (bin_centers > np.log10(2.0*critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
-                p0_fixomega = [0.86, np.log10(0.065)]
-                popt, pcov = curve_fit(fitFunc_lg_dNdlgx_fixomega, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p0_fixomega, maxfev= 1000)
-                alpha = popt[0];  lgA = popt[1]
-                popt = [alpha,50/np.log(10),4,lgA]
-
-        except:
-            print("i = {}: fit failed, increase critical ratio and fix the exponential slope".format(i))
-            fit_mask = (bin_centers > np.log10(2.0*critical_ratio_list[i])) & (number_density[:-1] != artificial_small)
-            p0_fixomega = [0.86, np.log10(0.065)]
-            popt, pcov = curve_fit(fitFunc_lg_dNdlgx_fixomega, bin_centers[fit_mask], np.log10(number_density[:-1][fit_mask]), p0=p0_fixomega, maxfev= 1000)
-            alpha = popt[0];  lgA = popt[1]
-            popt = [alpha,50/np.log(10),4,lgA]
-
-        
-
-
-            #popt = advanced_fit(bin_centers[fit_mask],number_density[:-1][fit_mask],p_guess)
-
-        print("fit parameters: ",popt)
-        all_fitting_params.append([snapNum,i,logM_bins[i],logM_bins[i+1],*popt])
-
-        fit_lg_number_density = fitFunc_lg_dNdlgx(bin_centers[fit_mask],*popt)
-        plt.step(bin_edges, np.log10(number_density), where='post',color=colors[i],label=labels[i])
-        plt.plot(bin_centers[fit_mask],fit_lg_number_density,linestyle='-.',color=colors[i])
-        plt.axvline(np.log10(critical_ratio_list[i]),color = colors[i],linestyle='--')
-
-        param_text = r'$\alpha$: {:.2f} $\beta/\ln10$: {:.1f} $\omega$: {:.1f} lgA: {:.1f}'.format(popt[0], popt[1], popt[2], popt[3])
-        plt.text(-4.5, -3+i/4, param_text, fontsize=10, color=colors[i])
-    
-    #plot the initial guess fitting
-    p_guess = [0.86, 50/np.log(10),4 ,np.log10(0.065)]
-    fit_lg_number_density = fitFunc_lg_dNdlgx(bin_centers,*p_guess)
-
-    plt.plot(bin_centers,fit_lg_number_density,linestyle='-',color='grey',label='van den Bosch+ 2016')
-    plt.ylim(bottom=np.log10(min_number_density/10))
-    plt.xlabel(r'log10($\psi$) = log10(m/M)')
-    plt.ylabel(r'log10[$\frac{dN}{d\log_{10}(\psi)}$]')
-    plt.legend(loc='lower left')
-    plt.savefig(filename.replace('.png','_fit.png'),dpi=300)
-
-    #write_SHMF_fit_parameters(filename.replace('.png','_fit_parameters.txt'),all_fitting_params)
-    write_SHMF_fit_parameters(filename.replace('.png','_2paramfit_parameters.txt'),all_fitting_params)
-    '''
+   
 
 
 def analyze_processed_data():
@@ -585,7 +468,7 @@ def analyze_processed_data():
     exit()
 
     #now calculate X-ray emissivity
-    lognH = get_gas_lognH(redshift)
+    lognH = get_gas_lognH_analytic(redshift)
     print("lognH: ", lognH)
     host_indices = data.subhalo_data['host_index'].value
     
@@ -611,78 +494,8 @@ def analyze_processed_data():
     print(f"Total X-ray emissivity: {tot_xray_emissivity_per_cMpc3:.2e} erg/s/cMpc^3")
 
 
-def find_abnormal_mach():
-    #load the processed data
-    base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
-    processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
-                                f'processed_halos_snap_{snapNum}.h5')
-    data = load_processed_data(processed_file)
-    
-    mach_numbers = data.subhalo_data['mach_number'].value
-    host_indices = data.subhalo_data['host_index'].value
-    GroupCs_subhalo = data.halo_data['GroupCs'].value[host_indices]
-    host_vel_mag = data.halo_data['GroupVelMag'].value[host_indices]
-    rel_vel_mag = data.subhalo_data['relative_velocity_magnitude'].value
-    sub_vel = data.subhalo_data['SubVel'].value
-    sub_vel_mag = np.sqrt(np.sum(sub_vel**2, axis=1))
-    
-    #print some statistics
-    print(f"Number of subhalos: {len(mach_numbers)}")
-    print(f"Number of subhalos with Mach number > 5: {np.sum(mach_numbers>5)}")
-    print("GroupCs_subhalo: ", GroupCs_subhalo)
-    print("rel_vel_mag: ", rel_vel_mag)
-    print("sub_vel_mag: ", sub_vel_mag)
-    print("host_vel_mag: ", host_vel_mag)
-    
-    print("\n\ncheck mach numbers > 5 ...")
-    mask = mach_numbers > 5
-    print("mach_numbers[mask]: ", mach_numbers[mask])
-    print("host_indices[mask]: ", host_indices[mask])
-    print("GroupCs_subhalo[mask]: ", GroupCs_subhalo[mask])
-    print("rel_vel_mag[mask]: ", rel_vel_mag[mask])
-    print("sub_vel_mag[mask]: ", sub_vel_mag[mask])
-    print("host_vel_mag[mask]: ", host_vel_mag[mask])
-    
-    #plot the Cs, vel distribution of normal cases and abnormal cases (1D histogram)
-    mask_normal = ~mask
-    mask_abnormal = mask
-    
-    #Cs distribution
-    fig = plt.figure(figsize=(8, 6), facecolor='white')
-    plt.hist(GroupCs_subhalo[mask_normal]/1e3, bins=50, alpha=0.5, density='True',label='Normal cases')
-    plt.hist(GroupCs_subhalo[mask_abnormal]/1e3, bins=50, alpha=0.5,density='True',label='Abnormal cases')
-    plt.xlabel('Cs (km/s)')
-    plt.ylabel('PDF')
-    plt.legend()
-    plt.title('Sound speed distribution')
-    plt.tight_layout()
-    plt.savefig('debug/Cs_distribution.png')
-    
-    #relative velocity distribution
-    fig = plt.figure(figsize=(8, 6), facecolor='white')
-    plt.hist(rel_vel_mag[mask_normal]/1e3, bins=50, alpha=0.5,label='Normal cases')
-    plt.hist(rel_vel_mag[mask_abnormal]/1e3, bins=50, alpha=0.5,label='Abnormal cases')
-    plt.xlabel('Relative velocity (km/s)')
-    plt.ylabel('counts')
-    plt.legend()
-    plt.title('Relative velocity distribution')
-    plt.tight_layout()
-    plt.savefig('debug/rel_vel_distribution_counts.png')
-    
-    fig = plt.figure(figsize=(8, 6), facecolor='white')
-    plt.hist(rel_vel_mag[mask_normal]/1e3, bins=50, alpha=0.5,density='True',label='Normal cases')
-    plt.hist(rel_vel_mag[mask_abnormal]/1e3, bins=50, alpha=0.5,density='True',label='Abnormal cases')
-    plt.xlabel('Relative velocity (km/s)')
-    plt.ylabel('PDF')
-    plt.legend()
-    plt.title('Relative velocity distribution')
-    plt.tight_layout()
-    plt.savefig('debug/rel_vel_distribution.png')
-    
-    
-
 if __name__ == '__main__':
-    # TNG_model()
+    TNG_model()
     # find_abnormal_mach()
     # analyze_processed_data()
 

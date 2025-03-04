@@ -38,3 +38,23 @@ def get_A_number(mPert,Cs,rSoft):
 def crossing_time(Cs,rSoft):
     tCross = rSoft/Cs
     return tCross
+
+def get_gas_lognH_analytic(z):
+    #assume 200 times critical density
+    #return lognH in cm^-3
+    rho  = 200 * rho_b0*(1+z)**3 *Msun/Mpc**3
+    nH = rho/mp
+    nH_cm3 = nH/1.0e6
+    lognH = np.log10(nH_cm3)
+    return lognH
+
+def get_gas_lognH_numerical(M_vir_in_Msun, R_vir_Mpc):
+    #M_vir in solar mass, R_vir in Mpc
+    #return lognH in cm^-3
+    R_vir_m = R_vir_Mpc * Mpc
+    Mgas = Omega_b/Omega_m * M_vir_in_Msun
+    rho = Mgas*Msun/(4/3*np.pi*R_vir_m**3)
+    nH = rho/mp
+    nH_cm3 = nH/1.0e6
+    lognH = np.log10(nH_cm3)
+    return lognH

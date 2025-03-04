@@ -4,7 +4,8 @@ from scipy.optimize import curve_fit
 import os
 from TNGDataHandler import load_processed_data
 from physical_constants import Zsun
-
+from HaloMassFunction import plot_hmf_redshift_evolution
+from TNG_Model import get_simulation_resolution
 
 
 def maxwell_boltzmann_pdf(x, sigma):
@@ -310,21 +311,36 @@ def compare_mach_numbers(simulation_set, snapNums):
                 dpi=300, bbox_inches='tight')
     plt.close()
 
+def run_hmf_redshift_evolution():
+    TNG_snaplist_file = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/TNG_fullsnapshot_redshifts.txt'
+    #snapNum, scale factor, redshift
+    snaplist = np.loadtxt(TNG_snaplist_file, skiprows=1)
+    snapNums = snaplist[:,0].astype(int)
+    redshifts = snaplist[:,2]
+
+    #add snapNum 0 and 1 before the list
+    snapNums = np.insert(snapNums, 0, 1)
+    redshifts = np.insert(redshifts, 0, 15.0)
+
+    gas_resolution, dark_matter_resolution = get_simulation_resolution(simulation_set)
+    plot_hmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution)    
+
+
 if __name__ == '__main__':
     simulation_set = 'TNG50-1'
     
-    snapNum = 2
+    # snapNum = 2
+    # base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
+    # processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
+    #                             f'processed_halos_snap_{snapNum}.h5')
+    # data = load_processed_data(processed_file)
+    # # Create plots
+    # output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
+    # plot_2D_histogram(data, snapNum, output_dir)
+    # plot_host_halo_properties(data, snapNum, output_dir)
     
-    base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
-    processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
-                                f'processed_halos_snap_{snapNum}.h5')
-    data = load_processed_data(processed_file)
-    # Create plots
-    output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
-    plot_2D_histogram(data, snapNum, output_dir)
-    plot_host_halo_properties(data, snapNum, output_dir)
-    
+
     # Compare Mach numbers across snapshots
     # snapNums = [2, 3, 4, 6, 8, 11, 13]
-    
     # compare_mach_numbers(simulation_set, snapNums)
+

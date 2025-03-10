@@ -2,6 +2,32 @@ import h5py
 import numpy as np
 from dataclasses import dataclass
 from typing import Dict, Optional, Any
+'''
+def get_simulation_resolution_old(simulation_set):
+    if simulation_set == 'TNG50-1':
+        gas_resolution = 8.5e4 * h_Hubble #convert from Msun to Msun/h
+        dark_matter_resolution = 4.5e5 * h_Hubble
+    elif simulation_set == 'TNG100-1':
+        gas_resolution = 1.4e6 * h_Hubble  
+        dark_matter_resolution = 7.5e6 * h_Hubble  
+    elif simulation_set == 'TNG300-1':
+        gas_resolution = 1.1e7 * h_Hubble
+        dark_matter_resolution = 5.9e7 * h_Hubble
+'''
+
+def get_simulation_resolution(simulation_set):
+    #resolution in units of Msun/h, https://www.tng-project.org/data/docs/background/
+    if simulation_set == 'TNG50-1':
+        gas_resolution = 5.7e4
+        dark_matter_resolution = 3.1e5 
+    elif simulation_set == 'TNG100-1':
+        gas_resolution = 9.4e5  
+        dark_matter_resolution = 5.1e6  
+    elif simulation_set == 'TNG300-1':
+        gas_resolution = 7.6e6
+        dark_matter_resolution = 4.0e7 
+    return gas_resolution, dark_matter_resolution
+
 
 @dataclass  # Decorator to automatically generate __init__ and __repr__ and __eq__ methods
 class PhysicalQuantity:

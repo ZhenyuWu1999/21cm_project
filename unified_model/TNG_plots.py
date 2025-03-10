@@ -3,9 +3,8 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 import os
 from TNGDataHandler import load_processed_data
-from physical_constants import Zsun
-from HaloMassFunction import plot_hmf_redshift_evolution
-from TNG_Model import get_simulation_resolution
+from physical_constants import Zsun, Myr, kpc
+
 
 
 def maxwell_boltzmann_pdf(x, sigma):
@@ -102,7 +101,7 @@ def plot_host_halo_properties(data, snapNum, output_dir):
 
 
 
-def plot_2D_histogram(data, snapNum, output_dir):
+def plot_2D_histogram(data, snapNum, output_dir, fig_options):
     """
     Create 2D histograms of various TNG simulation properties.
     
@@ -135,107 +134,128 @@ def plot_2D_histogram(data, snapNum, output_dir):
     host_tff = data.subhalo_data['host_t_ff'].value
     a_number = data.subhalo_data['A_number'].value
 
- 
     # Total hosthalo mass vs subhalo mass
-    fig = plt.figure(figsize=(8, 6), facecolor='w')
-    plt.hist2d(np.log10(host_mass), np.log10(subhalo_mass), bins=50)
-    plt.colorbar(label='Counts')
-    plt.xlabel(r'log$_{10}$(M$_{host}$ [Msun/h])', fontsize=14)
-    plt.ylabel(r'log$_{10}$(M$_{sub}$ [Msun/h])', fontsize=14)
-    plt.savefig(os.path.join(output_dir, f'Mtot_Msub_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
-    plt.close()
-    
+    if 'Mtot_msub' in fig_options:
+        fig = plt.figure(figsize=(8, 6), facecolor='w')
+        plt.hist2d(np.log10(host_mass), np.log10(subhalo_mass), bins=50)
+        plt.colorbar(label='Counts')
+        plt.xlabel(r'log$_{10}$(M$_{\mathrm{host}}$ [M$_{\odot}$/h])', fontsize=14)
+        plt.ylabel(r'log$_{10}$(m$_{\mathrm{sub}}$ [M$_{\odot}$/h])', fontsize=14)
+        plt.savefig(os.path.join(output_dir, f'Mtot_msub_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
     # M200 vs subhalo mass
-    fig = plt.figure(figsize=(8, 6), facecolor='w')
-    plt.hist2d(np.log10(host_M200), np.log10(subhalo_mass), bins=50)
-    plt.colorbar(label='Counts')
-    plt.xlabel(r'log$_{10}$(M$_{200}$ [Msun/h])', fontsize=14)
-    plt.ylabel(r'log$_{10}$(M$_{sub}$ [Msun/h])', fontsize=14)
-    plt.savefig(os.path.join(output_dir, f'M200_Msub_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
-    plt.close()
+    if 'M200_msub' in fig_options:
+        fig = plt.figure(figsize=(8, 6), facecolor='w')
+        plt.hist2d(np.log10(host_M200), np.log10(subhalo_mass), bins=50)
+        plt.colorbar(label='Counts')
+        plt.xlabel(r'log$_{10}$(M$_{200}$ [M$_{\odot}$/h])', fontsize=14)
+        plt.ylabel(r'log$_{10}$(m$_{\mathrm{sub}}$ [M$_{\odot}$/h])', fontsize=14)
+        plt.savefig(os.path.join(output_dir, f'M200_msub_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        plt.close()
     
     # R200 vs subhalo halfmass radius
-    fig = plt.figure(figsize=(8, 6), facecolor='w')
-    plt.hist2d(np.log10(host_R200), np.log10(halfmass_radius), bins=50)
-    plt.colorbar(label='Counts')
-    plt.xlabel(r'log$_{10}$(R$_{200}$ [m])', fontsize=14)
-    plt.ylabel(r'log$_{10}$(r$_{sub,halfmass}$ [m])', fontsize=14)
-    plt.savefig(os.path.join(output_dir, f'R200_rsubhalfmass_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
-    plt.close()
+    if 'R200_rsubhalfmass' in fig_options:
+        valid_indices = (host_R200 > 0) & (halfmass_radius > 0)
+        print(f"Number of valid indices: {np.sum(valid_indices)}")
+        print(f"Number of total indices: {len(valid_indices)}")
+        host_R200_selected = host_R200[valid_indices]
+        halfmass_radius_selected = halfmass_radius[valid_indices]
+        fig = plt.figure(figsize=(8, 6), facecolor='w')
+        plt.hist2d(np.log10(host_R200_selected*1.0e3), np.log10(halfmass_radius_selected/kpc), bins=50)
+        plt.colorbar(label='Counts')
+        plt.xlabel(r'log$_{10}$(R$_{200}$ [kpc])', fontsize=14)
+        plt.ylabel(r'log$_{10}$(r$_{\mathrm{sub,halfmass}}$ [kpc])', fontsize=14)
+        plt.savefig(os.path.join(output_dir, f'R200_rsubhalfmass_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        plt.close()
     
     # R200 vs subhalo Vmax radius
-    fig = plt.figure(figsize=(8, 6), facecolor='w')
-    plt.hist2d(np.log10(host_R200), np.log10(vmaxrad), bins=50)
-    plt.colorbar(label='Counts')
-    plt.xlabel(r'log$_{10}$(R$_{200}$ [m])', fontsize=14)
-    plt.ylabel(r'log$_{10}$(r$_{sub,VmaxRad}$ [m])', fontsize=14)
-    plt.savefig(os.path.join(output_dir, f'R200_subhaloVmaxRad_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
-    plt.close()
+    if 'R200_subhaloVmaxRad' in fig_options:
+        fig = plt.figure(figsize=(8, 6), facecolor='w')
+        plt.hist2d(np.log10(host_R200*1.0e3), np.log10(vmaxrad/kpc), bins=50)
+        plt.colorbar(label='Counts')
+        plt.xlabel(r'log$_{10}$(R$_{200}$ [kpc])', fontsize=14)
+        plt.ylabel(r'log$_{10}$(r$_{\mathrm{sub,VmaxRad}}$ [kpc])', fontsize=14)
+        plt.savefig(os.path.join(output_dir, f'R200_subhaloVmaxRad_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        plt.close()
     
     # Free-fall time vs crossing time
-    fig = plt.figure(figsize=(8, 6), facecolor='w')
-    plt.hist2d(np.log10(host_tff), np.log10(vmaxrad_tcross), bins=50)
-    plt.colorbar(label='Counts')
-    plt.xlabel(r'log$_{10}$(t$_{ff,host}$ [s])', fontsize=14)
-    plt.ylabel(r'log$_{10}$(t$_{cross}$ [s])', fontsize=14)
-    plt.savefig(os.path.join(output_dir, f'tff_tcross_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
-    plt.close()
-    
+    if 'tff_tcross' in fig_options:
+        fig = plt.figure(figsize=(8, 6), facecolor='w')
+        plt.hist2d(np.log10(host_tff/Myr), np.log10(vmaxrad_tcross/Myr), bins=50)
+        plt.colorbar(label='Counts')
+        plt.xlabel(r'log$_{10}$(t$_{\mathrm{ff,host}}$ [Myr])', fontsize=14)
+        plt.ylabel(r'log$_{10}$(t$_{\mathrm{cross}}$ [Myr])', fontsize=14)
+        plt.savefig(os.path.join(output_dir, f'tff_tcross_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
     # M200 vs Mach number
-    fig = plt.figure(figsize=(8, 6), facecolor='w')
-    plt.hist2d(np.log10(host_M200), mach_number, bins=50)
-    plt.colorbar(label='Counts')
-    plt.xlabel(r'log$_{10}$(M$_{200}$ [Msun/h])', fontsize=14)
-    plt.ylabel(r'Mach number', fontsize=14)
-    plt.savefig(os.path.join(output_dir, f'M200_Mach_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
-    plt.close()
+    if 'M200_Mach' in fig_options:
+        fig = plt.figure(figsize=(8, 6), facecolor='w')
+        plt.hist2d(np.log10(host_M200), mach_number, bins=50)
+        plt.colorbar(label='Counts')
+        plt.xlabel(r'log$_{10}$(M$_{200}$ [M$_{\odot}$/h])', fontsize=14)
+        plt.ylabel(r'$\mathcal{M}$', fontsize=14)
+        plt.savefig(os.path.join(output_dir, f'M200_Mach_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        plt.close()
     
     # M200 vs A number
-    fig = plt.figure(figsize=(8, 6), facecolor='w')
-    plt.hist2d(np.log10(host_M200), np.log10(a_number), bins=50)
-    plt.colorbar(label='Counts')
-    plt.xlabel(r'log$_{10}$(M$_{200}$ [Msun/h])', fontsize=14)
-    plt.ylabel(r'log$_{10}$(A number)', fontsize=14)
-    plt.savefig(os.path.join(output_dir, f'M200_Anumber_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
-    plt.close()
+    if 'M200_Anumber' in fig_options:
+        valid_indices = (host_M200 > 0) & (a_number > 0) & np.isfinite(a_number)
+        host_M200_selected = host_M200[valid_indices]
+        a_number_selected = a_number[valid_indices]
+        print(f"Number of valid indices: {len(host_M200_selected)}")
+        print(f"Number of total indices: {len(host_M200)}")
+        fig = plt.figure(figsize=(8, 6), facecolor='w')
+        plt.hist2d(np.log10(host_M200_selected), np.log10(a_number_selected), bins=50)
+        plt.colorbar(label='Counts')
+        plt.xlabel(r'log$_{10}$(M$_{200}$ [M$_{\odot}$/h])', fontsize=14)
+        plt.ylabel(r'log$_{10} \mathcal{A}$', fontsize=14)
+        plt.savefig(os.path.join(output_dir, f'M200_Anumber_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        plt.close()
 
-    #plot Mach number in different bins of M200 (1D plot, divide M200 into 5 bins)
-    fig = plt.figure(figsize=(8, 6), facecolor='w')
-    min_M200 = np.min(host_M200)
-    max_M200 = np.max(host_M200)
-    log_min_M200 = np.log10(min_M200)
-    log_max_M200 = np.log10(max_M200)
-    M200_bins = np.logspace(log_min_M200, log_max_M200, 6)
+    if 'Mach_fit' in fig_options:
+        #plot Mach number in different bins of M200 (1D plot, divide M200 into 5 bins)
+        #cut off at Mach = 5 to avoid outliers
+        mach_number_max = 5
+        mach_selected_fraction = len(mach_number[mach_number < mach_number_max]) / len(mach_number)
+        fig = plt.figure(figsize=(8, 6), facecolor='w')
+        min_M200 = np.min(host_M200)
+        max_M200 = np.max(host_M200)
+        log_min_M200 = np.log10(min_M200)
+        log_max_M200 = np.log10(max_M200)
+        M200_bins = np.logspace(log_min_M200, log_max_M200, 6)
 
-    #save best fit sigma to a file
-    with open(os.path.join(output_dir, 'best_fit_Mach_sigma.txt'), 'w') as f:
-        f.write("M200_min, M200_max, Best Fit Sigma\n")
+        #save best fit sigma to a file
+        with open(os.path.join(output_dir, 'best_fit_Mach_sigma.txt'), 'w') as f:
+            f.write(f"threshold Mach number: {mach_number_max}, fraction of Mach number < {mach_number_max}: {mach_selected_fraction}\n")
+            f.write("M200_min, M200_max, Best Fit Sigma\n")
 
-    colors = plt.cm.plasma(np.linspace(0, 1, 5)) #color map for different bins
+        colors = plt.cm.plasma(np.linspace(0, 1, 5)) #color map for different bins
 
-    for i in range(5):
-        mask = (host_M200 > M200_bins[i]) & (host_M200 < M200_bins[i+1])
-        plt.hist(mach_number[mask], bins=50, histtype='step', linewidth=2, density=True, color=colors[i],label=f'{M200_bins[i]:.2e} - {M200_bins[i+1]:.2e}')
-    
-        #fit Maxwell-Boltzmann distribution
-        popt, pcov, x_fit, y_fit = fit_maxwell_boltzmann(
-            data=mach_number[mask],
-            bins=50,
-            range_fit=(0, 5),
-            initial_guess=1.0
-        )
-        plt.plot(x_fit, y_fit, linestyle='--', color=colors[i])
+        for i in range(5):
+            mask = (host_M200 > M200_bins[i]) & (host_M200 < M200_bins[i+1]) & (mach_number < mach_number_max)
+            plt.hist(mach_number[mask], bins=50, histtype='step', linewidth=2, density=True, color=colors[i],label=f'{M200_bins[i]:.2e} - {M200_bins[i+1]:.2e}')
+        
+            #fit Maxwell-Boltzmann distribution
+            popt, pcov, x_fit, y_fit = fit_maxwell_boltzmann(
+                data=mach_number[mask],
+                bins=50,
+                range_fit=(0, 5),
+                initial_guess=1.0
+            )
+            plt.plot(x_fit, y_fit, linestyle='--', color=colors[i])
 
-        with open(os.path.join(output_dir, 'best_fit_Mach_sigma.txt'), 'a') as f:
-            f.write(f"{M200_bins[i]:.2e}, {M200_bins[i+1]:.2e}, {popt[0]}\n")
+            with open(os.path.join(output_dir, 'best_fit_Mach_sigma.txt'), 'a') as f:
+                f.write(f"{M200_bins[i]:.2e}, {M200_bins[i+1]:.2e}, {popt[0]}\n")
 
-    plt.xlabel('Mach Number', fontsize=14)
-    plt.ylabel('Probability Density', fontsize=14)
-    plt.legend()
-    plt.savefig(os.path.join(output_dir, f'M200_Mach_bins_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
-    plt.close()
-    
-       
+        plt.xlabel('$\mathcal{M}$', fontsize=14)
+        plt.ylabel('Probability Density', fontsize=14)
+        plt.legend()
+        plt.savefig(os.path.join(output_dir, f'M200_Mach_bins_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        
     
 
 def compare_mach_numbers(simulation_set, snapNums):
@@ -311,34 +331,28 @@ def compare_mach_numbers(simulation_set, snapNums):
                 dpi=300, bbox_inches='tight')
     plt.close()
 
-def run_hmf_redshift_evolution():
-    TNG_snaplist_file = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/TNG_fullsnapshot_redshifts.txt'
-    #snapNum, scale factor, redshift
-    snaplist = np.loadtxt(TNG_snaplist_file, skiprows=1)
-    snapNums = snaplist[:,0].astype(int)
-    redshifts = snaplist[:,2]
-
-    #add snapNum 0 and 1 before the list
-    snapNums = np.insert(snapNums, 0, 1)
-    redshifts = np.insert(redshifts, 0, 15.0)
-
-    gas_resolution, dark_matter_resolution = get_simulation_resolution(simulation_set)
-    plot_hmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution)    
 
 
 if __name__ == '__main__':
     simulation_set = 'TNG50-1'
     
-    # snapNum = 2
-    # base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
-    # processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
-    #                             f'processed_halos_snap_{snapNum}.h5')
-    # data = load_processed_data(processed_file)
-    # # Create plots
-    # output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
-    # plot_2D_histogram(data, snapNum, output_dir)
-    # plot_host_halo_properties(data, snapNum, output_dir)
-    
+    snapNum_list = [0, 1, 2, 3, 4, 6, 8, 11, 13,
+                    17,21,25,33,40,50,59,67,72,78,84,91,99]
+   
+    for snapNum in snapNum_list:
+        print(f"Processing snapshot {snapNum} ...")
+        base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
+        processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
+                                    f'processed_halos_snap_{snapNum}.h5')
+        data = load_processed_data(processed_file)
+        # Create plots
+        output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
+        # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass', 
+        # 'R200_subhaloVmaxRad', 'tff_tcross', 'M200_Mach', 'M200_Anumber', 'Mach_fit']
+        fig_options_2Dhistogram = ['R200_rsubhalfmass', 'R200_subhaloVmaxRad']  
+        plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
+        plot_host_halo_properties(data, snapNum, output_dir)
+        
 
     # Compare Mach numbers across snapshots
     # snapNums = [2, 3, 4, 6, 8, 11, 13]

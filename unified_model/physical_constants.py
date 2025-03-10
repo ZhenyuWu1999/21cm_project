@@ -10,6 +10,7 @@ kB = np.float64(1.380649e-23)
 sigma_T = np.float64(6.65e-29)  # Thomson scattering cross section
 mp = np.float64(1.67262192e-27)
 sigma_SB = np.float64(5.670374419e-8)  # Stefan-Boltzmann constant
+eV = np.float64(1.60217662e-19) # electronvolt in Joules
 
 H0 = np.float64(cosmo.H0)
 H0_s = np.float64(H0 / 3.086e19)  # Convert H0 from km/s/Mpc to s^(-1)
@@ -28,6 +29,7 @@ G_grav = np.float64(6.674e-11)
 
 Msun = np.float64(1.988e30)
 Mpc = np.float64(3.086e22)
+kpc = np.float64(3.086e19)
 Myr = np.float64(3.1536e13)  # seconds
 Zsun = 0.01295 # solar metallicity, grackle default
 #Zsun = 0.0127 # solar metallicity, according to TNG data specifications

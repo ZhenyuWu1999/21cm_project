@@ -2,10 +2,15 @@ from physical_constants import *
 from colossus.lss import mass_function
 from scipy.special import gamma, expm1
 import numpy as np
-from Config import SHMF_model
+from Config import SHMF_model, simulation_set, hmf_ratio_params, \
+p_evolved, p_unevolved, alpha_z_params, lgA_z_params, omega_z, beta_ln10_z
 import matplotlib.pyplot as plt
 import os
 from scipy.optimize import curve_fit
+from TNGDataHandler import get_simulation_resolution
+from matplotlib.lines import Line2D
+import matplotlib.patches as mpatches
+import matplotlib
 
 #output dn/dM in the unit of [(Mpc/h)^(-3) (Msun/h)^(-1)]
 #input M in the unit of Msun/h
@@ -94,10 +99,6 @@ def plot_hmf(halos, index_selected, current_redshift, dark_matter_resolution, si
         for i in range(len(bin_centers)):
             f.write(str(bin_edges[i]) + ' ' + str(bin_edges[i+1]) + ' ' + str(bin_centers[i]) + ' ' + str(number_density[i]) + ' ' + str(number_density_selected[i]) + '\n')
 
-
-# def fitFunc_hmf_ratio(lgM, q, p):
-#     return 1.0/(1.0+p**(-(lgM-q)))
-
 def fitFunc_hmf_ratio_2D(input_data, a, b, c, d, e, f):
     # Unpack the data
     lg_mass, redshift = input_data
@@ -153,8 +154,6 @@ def plot_hmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
     ax.tick_params(direction='in', which='both', labelsize=12)
     plt.tight_layout()
     plt.savefig(output_filename,dpi=300)
-
-
 
 
     #then plot the ratio between selected and all halos
@@ -245,71 +244,23 @@ def plot_hmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
     plt.tight_layout()
     plt.savefig(output_ratio_fit_filename,dpi=300)
 
-    '''
-    output_ratio_filename = os.path.join(output_dir, 'HMF_redshift_evolution_ratio.png')
-    popt_list = []
-    for i in range(len(hmf_data_list)):
-        hmf_data = hmf_data_list[i]
-        redshift = redshifts[i]
-        scale_factor = scale_factor_list[i]
-        comoving_factor = scale_factor**3
+def run_hmf_redshift_evolution():
+    TNG_snaplist_file = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/TNG_fullsnapshot_redshifts.txt'
+    #snapNum, scale factor, redshift
+    snaplist = np.loadtxt(TNG_snaplist_file, skiprows=1)
+    snapNums = snaplist[:,0].astype(int)
+    redshifts = snaplist[:,2]
 
-        bin_centers = hmf_data[:,2]
-        number_density_all = hmf_data[:,3]
-        number_density_selected = hmf_data[:,4]
-        #avoid zero division
-        mask = number_density_all > 0
-        ratio_masked = number_density_selected[mask]/number_density_all[mask]
-        bin_centers_masked = bin_centers[mask]
+    #add snapNum 1 before the list
+    snapNums = np.insert(snapNums, 0, 1)
+    redshifts = np.insert(redshifts, 0, 15.0)
 
-        # plt.scatter(bin_centers_masked,ratio_masked, c='none', edgecolor=colors[i], marker='o',label=labels[i])
-        #fit the ratio
-        popt, pcov = curve_fit(fitFunc_hmf_ratio, np.log10(bin_centers_masked), ratio_masked, p0=[8.0, np.e])
-        lgM_list = np.linspace(np.log10(min(bin_centers_masked)), np.log10(max(bin_centers_masked)),100)
-        ratio_fit = fitFunc_hmf_ratio(lgM_list, *popt)
-        print(f'z={redshift}, q={popt[0]}, p={popt[1]}')
-        print("max error: ", np.max(np.abs(ratio_masked-fitFunc_hmf_ratio(np.log10(bin_centers_masked), *popt))))
-        popt_list.append(popt)
-    
-    #first, plot the fitting parameter redshift evolution
-    output_fit_filename = os.path.join(output_dir, 'HMF_redshift_evolution_fit_params.png')
-    popt_array = np.array(popt_list)
-    
-    fig = plt.figure(figsize=(8,6), facecolor='white')
-    ax = fig.gca()
-    
-    plt.scatter(redshifts, popt_array[:,0], color='blue',label='q')
+    gas_resolution, dark_matter_resolution = get_simulation_resolution(simulation_set)
+    plot_hmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution)    
 
-    ax2 = ax.twinx()
-    ax2.scatter(redshifts, popt_array[:,1], color='red',label='p')
-    ax.set_xlabel('z', fontsize=14)
-    ax.set_ylabel('q', fontsize=14)
-    ax2.set_ylabel('p', fontsize=14)
-    ax.tick_params(direction='in', which='both', labelsize=12)
-    ax2.tick_params(direction='in', which='both', labelsize=12)
-    plt.tight_layout()
-    plt.savefig(output_fit_filename,dpi=300)
-    plt.close()
 
-    
-    fig = plt.figure(figsize=(8,6), facecolor='white')
-    ax = fig.gca()
-    plt.xscale('log')
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(hmf_data_list)))
-    labels = [f'z={redshift}' for redshift in redshifts]
 
-    plt.plot(10**lgM_list,ratio_fit, color=colors[i],linestyle='-',alpha=0.3)
-
-    plt.legend(fontsize=11)
-    plt.xlabel(r'Mass [$\mathrm{M}_{\odot}/\mathrm{h}$]', fontsize=14)
-    plt.ylabel(r'$\text{HMF}_{\text{selected}}/\text{HMF}_\text{all}$',fontsize=14)
-    ax.tick_params(direction='in', which='both', labelsize=12)
-    plt.tight_layout()
-    plt.savefig(output_ratio_filename,dpi=300)
-
-    '''
-
-def hmf_ratio_2Dbestfit(lg_mass, redshift):
+def HMF_ratio_2Dbestfit(lg_mass, redshift):
     '''
     Parameters:
     lg_mass: log10(Mass [Msun/h])
@@ -324,13 +275,10 @@ def hmf_ratio_2Dbestfit(lg_mass, redshift):
     #     params_line = f.readline()
     #     params = [np.float64(param) for param in params_line.split()]
     # print("a, b, c, d, e, f: ", params)
-    params = [8.3729, 0.5120, -0.0197, 6.7591, 8.0099, 6.1885]
-    return fitFunc_hmf_ratio_2D((lg_mass, redshift), *params)
+    return fitFunc_hmf_ratio_2D((lg_mass, redshift), *hmf_ratio_params)
 
 
-       
-
-
+#----------------------------------- Subhalo Mass Function -----------------------------------
 
 def get_M_Jeans(z):
     return 220*(1+z)**1.425*h_Hubble
@@ -344,15 +292,179 @@ def fitFunc_lg_dNdlgx(lgx,alpha,beta_ln10, omega, lgA):
     return lgA - alpha*lgx - beta_ln10*x**omega 
 
 
+def plot_shmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
+    base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/'
+    alpha_list = []; beta_list = []; omega_list = []; lgA_list = []
+    for snapNum in snapNums:
+        input_dir = os.path.join(base_dir, f'snap_{snapNum}', 'analysis')
+        SHMF_fit_filename = os.path.join(input_dir, f'SHMF_BestFit_params_snap_{snapNum}.txt')
+        # alpha, beta/ln10, omega, lgA, beta, A   
+        with open(SHMF_fit_filename, 'r') as f:
+            f.readline(); f.readline()
+            SHMF_fit_data = f.readline().split()
+            SHMF_fit_data = [np.float64(param) for param in SHMF_fit_data]
+            alpha = SHMF_fit_data[0]
+            beta_ln10 = SHMF_fit_data[1]
+            omega = SHMF_fit_data[2]
+            lgA = SHMF_fit_data[3]
+            beta = SHMF_fit_data[4]
+            A = SHMF_fit_data[5]
+            alpha_list.append(alpha); beta_list.append(beta); omega_list.append(omega); lgA_list.append(lgA)
+    ln_beta_list = [np.log(beta) for beta in beta_list]
+    #plot SHMF redshift evolution
+    output_filename = os.path.join(base_dir, 'analysis', 'SHMF_redshift_evolution_alpha_lgA.png')
+    fig = plt.figure(figsize=(8,6), facecolor='white')
+    ax = fig.gca()
+    labels = [f'z={redshift}' for redshift in redshifts]
+    ax.scatter(redshifts, alpha_list, c='r', marker='o', label=r'$\alpha$')
+    #then use linear regression to fit the data
+    popt, pcov = curve_fit(lambda x, a, b: a*x + b, redshifts, alpha_list)
+    x_fit = np.linspace(np.min(redshifts), np.max(redshifts), 100)
+    y_fit = popt[0]*x_fit + popt[1]
+    ax.plot(x_fit, y_fit, color='r', linestyle='--',
+            label=r'$\alpha$'+f' fit: {popt[0]:.4f}z {"-" if popt[1] < 0 else "+"} {abs(popt[1]):.4f}')
+    #also plot van den Bosch 2016
+    ax.scatter(0, p_unevolved[0], facecolors='none', edgecolors='grey', marker='o')
+    ax.scatter(0, p_evolved[0], c='grey', marker='o')
+    
+    ax2 = ax.twinx()
+    ax2.scatter(redshifts, lgA_list, c='b', marker='^', label=r'$\lg\mathrm{A}$')
+    popt, pcov = curve_fit(lambda x, a, b: a*x + b, redshifts, lgA_list)
+    y_fit = popt[0]*x_fit + popt[1]
+    ax2.plot(x_fit, y_fit, color='b', linestyle='--', 
+         label=r'$\lg\mathrm{A}$'+f' fit: {popt[0]:.4f}z {"-" if popt[1] < 0 else "+"} {abs(popt[1]):.4f}')
+    ax2.scatter(0, p_unevolved[3], facecolors='none', edgecolors='grey', marker='^')
+    ax2.scatter(0, p_evolved[3], c='grey', marker='^')
+
+    ax.set_xlabel('Redshift', fontsize=14)
+    ax.set_ylabel(r'$\alpha$', fontsize=14, color='r')
+    ax2.set_ylabel(r'$\lg\mathrm{A}$', fontsize=14, color='b')
+    ax.tick_params(direction='in', which='both', labelsize=12)
+    ax2.tick_params(direction='in', which='both', labelsize=12)
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+
+    evolved_circle = Line2D([0], [0], marker='o', color='w', markerfacecolor='grey', markeredgecolor='grey', markersize=6)
+    evolved_triangle = Line2D([0], [0], marker='^', color='w', markerfacecolor='grey', markeredgecolor='grey', markersize=6)
+    unevolved_circle = Line2D([0], [0], marker='o', color='w', markerfacecolor='none', markeredgecolor='grey', markersize=6)
+    unevolved_triangle = Line2D([0], [0], marker='^', color='w', markerfacecolor='none', markeredgecolor='grey', markersize=6)
+    # Create the second legend (with both markers on each line)
+    second_legend = ax.legend(
+        [(evolved_circle, evolved_triangle), (unevolved_circle, unevolved_triangle)],
+        ['Jiang&Bosch16 evolved', 'Jiang&Bosch16 unevolved'],
+        handler_map={tuple: matplotlib.legend_handler.HandlerTuple(ndivide=None)},
+        loc='lower center', 
+        fontsize=14
+    )
+    # Add the second legend manually
+    first_legend = ax.legend(lines1 + lines2, labels1 + labels2, loc='upper center', fontsize=14)
+    ax.add_artist(second_legend)
+
+    ax.invert_xaxis()
+    plt.tight_layout()
+    plt.savefig(output_filename,dpi=300)
+
+
+    #then plot omega and ln(beta)
+    output_filename = os.path.join(base_dir, 'analysis', 'SHMF_redshift_evolution_omega_beta.png')
+    fig = plt.figure(figsize=(8,6), facecolor='white')
+    ax = fig.gca()
+    labels = [f'z={redshift}' for redshift in redshifts]
+    ax.scatter(redshifts, omega_list, c='r', marker='o', label=r'$\omega$')
+    #then use a constant average to fit (only fit z>=6)
+    redshifts_fit = np.array([redshift for redshift in redshifts if redshift >= 6])
+    omega_list_fit = np.array([omega for i, omega in enumerate(omega_list) if redshifts[i] >= 6])
+    x_fit = np.linspace(6.0,np.max(redshifts),100)
+    y_fit = np.full_like(x_fit, np.mean(omega_list_fit))
+    ax.plot(x_fit, y_fit, color='r', linestyle='--', label=r'$\omega$'+f' = {np.mean(omega_list_fit):.4f}')
+    #also plot van den Bosch 2016
+    ax.scatter(0, p_unevolved[2], facecolors='none', edgecolors='grey', marker='o')
+    ax.scatter(0, p_evolved[2], c='grey', marker='o')
+
+    ax2 = ax.twinx()
+    ax2.scatter(redshifts, ln_beta_list, c='b', marker='^', label=r'$\ln\beta$')
+    #then use a constant average to fit (only fit z>=6)
+    ln_beta_list_fit = np.array([ln_beta for i, ln_beta in enumerate(ln_beta_list) if redshifts[i] >= 6])
+    y_fit = np.full_like(x_fit, np.mean(ln_beta_list_fit))
+    ax2.plot(x_fit, y_fit, color='b', linestyle='--', label=r'$\ln\beta$'+f' = {np.mean(ln_beta_list_fit):.4f}')
+    ax2.scatter(0, np.log(np.log(10)*p_unevolved[1]), facecolors='none', edgecolors='grey', marker='^')
+    ax2.scatter(0, np.log(np.log(10)*p_evolved[1]), c='grey', marker='^')
+
+    y_min = min(0.3*np.min(omega_list), 0.3*np.min(ln_beta_list))
+    y_max = max(1.1*np.max(omega_list), 1.1*np.max(ln_beta_list))
+    ax.set_ylim(y_min, y_max)
+    ax2.set_ylim(y_min, y_max)
+    ax.set_xlabel('t', fontsize=14)
+    ax.set_ylabel(r'$\omega$', fontsize=14, color='r')
+    ax2.set_ylabel(r'$\ln\beta$', fontsize=14, color='b')
+    ax.tick_params(direction='in', which='both', labelsize=12)
+    ax2.tick_params(direction='in', which='both', labelsize=12)
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+
+    evolved_circle = Line2D([0], [0], marker='o', color='w', markerfacecolor='grey', markeredgecolor='grey', markersize=6)
+    evolved_triangle = Line2D([0], [0], marker='^', color='w', markerfacecolor='grey', markeredgecolor='grey', markersize=6)
+    unevolved_circle = Line2D([0], [0], marker='o', color='w', markerfacecolor='none', markeredgecolor='grey', markersize=6)
+    unevolved_triangle = Line2D([0], [0], marker='^', color='w', markerfacecolor='none', markeredgecolor='grey', markersize=6)
+    # Create the second legend (with both markers on each line)
+    second_legend = ax.legend(
+        [(evolved_circle, evolved_triangle), (unevolved_circle, unevolved_triangle)],
+        ['Jiang&Bosch16 evolved', 'Jiang&Bosch16 unevolved'],
+        handler_map={tuple: matplotlib.legend_handler.HandlerTuple(ndivide=None)},
+        loc='lower center', 
+        fontsize=14
+    )
+    # Add the second legend manually
+    first_legend = ax.legend(lines1 + lines2, labels1 + labels2, loc='upper center', fontsize=14)
+    ax.add_artist(second_legend)
+    ax.invert_xaxis()
+    plt.tight_layout()
+    plt.savefig(output_filename,dpi=300)
+
+
+def run_shmf_redshift_evolution():
+    TNG_snaplist_file = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/TNG_fullsnapshot_redshifts.txt'
+    #snapNum, scale factor, redshift
+    snaplist = np.loadtxt(TNG_snaplist_file, skiprows=1)
+    snapNums = snaplist[:,0].astype(int)
+    redshifts = snaplist[:,2]
+
+    #add snapNum 1 before the list
+    snapNums = np.insert(snapNums, 0, 1)
+    redshifts = np.insert(redshifts, 0, 15.0)
+
+    gas_resolution, dark_matter_resolution = get_simulation_resolution(simulation_set)
+    plot_shmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution)
 
 
 
+def SHMF_BestFit_dN_dlgx(x, redshift):
+    '''
+    Parameters:
+    x: m/M
+    redshift
+    Returns:
+    dN/dlgx(x, z)
+    '''
+    if SHMF_model == 'BestFit_z':
+        if (redshift < 6):
+            #omega and beta not available
+            raise ValueError("SHMF Error: omega and beta not available for z<6")
+        alpha_z = alpha_z_params[0] + alpha_z_params[1]*redshift 
+        lgA_z = lgA_z_params[0] + lgA_z_params[1]*redshift
+        lg_dNdlgx = fitFunc_lg_dNdlgx(np.log10(x), alpha_z, beta_ln10_z, omega_z, lgA_z)
+        return 10**lg_dNdlgx
 
+    
+    elif SHMF_model == 'Bosch16evolved':
+        alpha, beta_ln10, omega, lgA = p_evolved
+        lg_dNdlgx = fitFunc_lg_dNdlgx(np.log10(x), alpha, beta_ln10, omega, lgA)
+        return 10**lg_dNdlgx
+    else:
+        raise ValueError("SHMF Error: SHMF_model not supported")
+    
 
-
-
-
-
+'''
 #dN/ d lnx, x = m/M, input ln(x)
 def Subhalo_Mass_Function_ln(ln_m_over_M,bestfitparams=None):
     if SHMF_model == 'Giocoli2010':
@@ -362,7 +474,7 @@ def Subhalo_Mass_Function_ln(ln_m_over_M,bestfitparams=None):
         gamma_value = 0.9
         x = m_over_M/beta
         return f0/(beta*gamma(1 - gamma_value)) * x**(-gamma_value) * np.exp(-x)
-    elif SHMF_model == 'Bosch2016':
+    elif SHMF_model == 'Bosch16evolved':
         #x  = m/M
         #dN/dlgx = A* x**(-alpha) exp(-beta x**omega)
         #dN/d ln(x) = dN/dlgx /ln10 = A* x**(-alpha) exp(-beta x**omega) / ln10
@@ -393,8 +505,9 @@ def Subhalo_Mass_Function_dN_dlgm(m, M, bestfitparams=None):
     dlnx_dlgx = np.log(10)
     dlgx_dlgm = 1  #dlg(m/M)/dlg(m/[Msun])
     return dN_dlnx * dlnx_dlgx * dlgx_dlgm
-
+'''
 
 if __name__ == "__main__":
-    # hmf_ratio_2Dbestfit(9, 0.0)
+    # HMF_ratio_2Dbestfit(9, 0.0)
+    # run_shmf_redshift_evolution()
     pass

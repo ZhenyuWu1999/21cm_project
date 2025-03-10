@@ -6,18 +6,18 @@ from scipy.optimize import curve_fit
 
 from physical_constants import *
 from HaloProperties import *
-from Config import simulation_set, snapNum
+from Config import simulation_set, p_evolved, p_unevolved
 from DF_Ostriker99_wake_structure import Idf_Ostriker99_wrapper
 from TNGDataHandler import *
 import Xray_field as xray
 from HaloMassFunction import plot_hmf, fitFunc_lg_dNdlgx
 
-# import argparse
-# parser = argparse.ArgumentParser(description="Run TNG_model with a specified snapNum.")
-# parser.add_argument("snapNum", type=int, help="The snapshot number to process.")
-# args = parser.parse_args()
-# snapNum = args.snapNum
-# print(f"Processing snapNum = {snapNum}")
+import argparse
+parser = argparse.ArgumentParser(description="Run TNG_model with a specified snapNum.")
+parser.add_argument("snapNum", type=int, help="The snapshot number to process.")
+args = parser.parse_args()
+snapNum = args.snapNum
+print(f"Processing snapNum = {snapNum}")
 
 def load_tng_data(basePath, snapNum):
     print("loading header ...")
@@ -67,29 +67,7 @@ def load_tng_data(basePath, snapNum):
     
     return header, halos, subhalos
 
-def get_simulation_resolution_old(simulation_set):
-    if simulation_set == 'TNG50-1':
-        gas_resolution = 8.5e4 * h_Hubble #convert from Msun to Msun/h
-        dark_matter_resolution = 4.5e5 * h_Hubble
-    elif simulation_set == 'TNG100-1':
-        gas_resolution = 1.4e6 * h_Hubble  
-        dark_matter_resolution = 7.5e6 * h_Hubble  
-    elif simulation_set == 'TNG300-1':
-        gas_resolution = 1.1e7 * h_Hubble
-        dark_matter_resolution = 5.9e7 * h_Hubble
 
-def get_simulation_resolution(simulation_set):
-    #resolution in units of Msun/h, https://www.tng-project.org/data/docs/background/
-    if simulation_set == 'TNG50-1':
-        gas_resolution = 5.7e4
-        dark_matter_resolution = 3.1e5 
-    elif simulation_set == 'TNG100-1':
-        gas_resolution = 9.4e5  
-        dark_matter_resolution = 5.1e6  
-    elif simulation_set == 'TNG300-1':
-        gas_resolution = 7.6e6
-        dark_matter_resolution = 4.0e7 
-    return gas_resolution, dark_matter_resolution
 
 def TNG_model():    
 
@@ -370,12 +348,10 @@ def plot_Mratio_dN_dlogMratio():
         
     # Add van den Bosch+ 2016 fitting
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    p_evolved = [0.86, 50/np.log(10), 4, np.log10(0.065)]
     JB16_evolved_lg_number_density = fitFunc_lg_dNdlgx(bin_centers, *p_evolved)
     plt.plot(bin_centers, 10**JB16_evolved_lg_number_density, linestyle='-',
              color='grey', label='Jiang & van den Bosch 2016, evolved')
     
-    p_unevolved = [0.91, 6/np.log(10), 3, np.log10(0.22)]
     JB16_unevolved_lg_number_density = fitFunc_lg_dNdlgx(bin_centers, *p_unevolved)
     plt.plot(bin_centers, 10**JB16_unevolved_lg_number_density, linestyle='--',
              color='grey', label='Jiang & van den Bosch 2016, unevolved')
@@ -420,7 +396,7 @@ def plot_Mratio_dN_dlogMratio():
     plt.savefig(os.path.join(output_dir, f'SHMF_snap_{snapNum}.png'), dpi=300)
 
     # Save bestfit parameters
-    bestfit_params_file = os.path.join(output_dir, f'SNMF_BestFit_params_snap_{snapNum}.txt')
+    bestfit_params_file = os.path.join(output_dir, f'SHMF_BestFit_params_snap_{snapNum}.txt')
     with open(bestfit_params_file, 'w') as f:
         header = ['alpha', 'beta/ln10', 'omega', 'lgA', 'beta', 'A']
         column_width = 12
@@ -495,9 +471,9 @@ def analyze_processed_data():
 
 
 if __name__ == '__main__':
-    TNG_model()
+    # TNG_model()
     # find_abnormal_mach()
     # analyze_processed_data()
 
-    plot_Mratio_dN_dlogMratio()  
-    
+    # plot_Mratio_dN_dlogMratio()  
+    pass

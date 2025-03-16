@@ -48,6 +48,11 @@ def get_gas_lognH_analytic(z):
     lognH = np.log10(nH_cm3)
     return lognH
 
+def get_mass_density_analytic(z):
+    #assume 200 times critical density, unit kg/m^3
+    rho = 200 * rho_m0*(1+z)**3 *Msun/Mpc**3
+    return rho
+
 def get_gas_lognH_numerical(M_vir_in_Msun, R_vir_Mpc):
     #M_vir in solar mass, R_vir in Mpc
     #return lognH in cm^-3

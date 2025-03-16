@@ -1,16 +1,19 @@
-from physical_constants import *
 from colossus.lss import mass_function
-from scipy.special import gamma, expm1
 import numpy as np
-from Config import SHMF_model, simulation_set, hmf_ratio_params, \
-p_evolved, p_unevolved, alpha_z_params, lgA_z_params, omega_z, beta_ln10_z
 import matplotlib.pyplot as plt
 import os
 from scipy.optimize import curve_fit
+from scipy.interpolate import interp1d
 from TNGDataHandler import get_simulation_resolution
 from matplotlib.lines import Line2D
 import matplotlib.patches as mpatches
 import matplotlib
+from scipy.special import gamma
+
+from physical_constants import *
+from Config import simulation_set, hmf_ratio_params, \
+p_evolved, p_unevolved, alpha_z_params, lgA_z_params, omega_z, beta_ln10_z
+from HaloProperties import Vel_Virial_analytic
 
 #output dn/dM in the unit of [(Mpc/h)^(-3) (Msun/h)^(-1)]
 #input M in the unit of Msun/h
@@ -277,11 +280,19 @@ def HMF_ratio_2Dbestfit(lg_mass, redshift):
     # print("a, b, c, d, e, f: ", params)
     return fitFunc_hmf_ratio_2D((lg_mass, redshift), *hmf_ratio_params)
 
+def HMF_2Dbestfit(lgM, redshift):
+    '''
+    Parameters:
+    lgM: log10(Mass [Msun/h])
+    redshift
+    Returns:
+    HMF [dN/dlgM [(Mpc/h)^(-3)]]  (in physical units, not comoving)
+    '''
+
+    return HMF_Colossus(10**lgM, redshift, 'sheth99')* np.log(10)*10**lgM * HMF_ratio_2Dbestfit(lgM, redshift)
+
 
 #----------------------------------- Subhalo Mass Function -----------------------------------
-
-def get_M_Jeans(z):
-    return 220*(1+z)**1.425*h_Hubble
 
 
 #x  = m/M
@@ -438,11 +449,12 @@ def run_shmf_redshift_evolution():
 
 
 
-def SHMF_BestFit_dN_dlgx(x, redshift):
+def SHMF_BestFit_dN_dlgx(lgx, redshift, SHMF_model):
     '''
     Parameters:
-    x: m/M
+    lgx: np.log10(m/M)
     redshift
+    SHMF_model
     Returns:
     dN/dlgx(x, z)
     '''
@@ -450,16 +462,20 @@ def SHMF_BestFit_dN_dlgx(x, redshift):
         if (redshift < 6):
             #omega and beta not available
             raise ValueError("SHMF Error: omega and beta not available for z<6")
-        alpha_z = alpha_z_params[0] + alpha_z_params[1]*redshift 
-        lgA_z = lgA_z_params[0] + lgA_z_params[1]*redshift
-        lg_dNdlgx = fitFunc_lg_dNdlgx(np.log10(x), alpha_z, beta_ln10_z, omega_z, lgA_z)
+        alpha_z = alpha_z_params[0]*redshift + alpha_z_params[1]
+        lgA_z = lgA_z_params[0]*redshift + lgA_z_params[1]
+        lg_dNdlgx = fitFunc_lg_dNdlgx(lgx, alpha_z, beta_ln10_z, omega_z, lgA_z)
         return 10**lg_dNdlgx
-
     
     elif SHMF_model == 'Bosch16evolved':
         alpha, beta_ln10, omega, lgA = p_evolved
-        lg_dNdlgx = fitFunc_lg_dNdlgx(np.log10(x), alpha, beta_ln10, omega, lgA)
+        lg_dNdlgx = fitFunc_lg_dNdlgx(lgx, alpha, beta_ln10, omega, lgA)
         return 10**lg_dNdlgx
+    elif SHMF_model == 'Bosch16unevolved':
+        alpha, beta_ln10, omega, lgA = p_unevolved
+        lg_dNdlgx = fitFunc_lg_dNdlgx(lgx, alpha, beta_ln10, omega, lgA)
+        return 10**lg_dNdlgx
+    
     else:
         raise ValueError("SHMF Error: SHMF_model not supported")
     
@@ -507,7 +523,169 @@ def Subhalo_Mass_Function_dN_dlgm(m, M, bestfitparams=None):
     return dN_dlnx * dlnx_dlgx * dlgx_dlgm
 '''
 
+
+
+#old version for testing
+#dN/ d ln(x)
+#input: ln_m_over_M, logM, z, SHMF_model, bestfitparams
+def Subhalo_Mass_Function_ln_oldversion(ln_m_over_M, SHMF_model, bestfitparams=None):
+    if SHMF_model == 'Giocoli2010':
+        m_over_M = np.exp(ln_m_over_M)
+        f0 = 0.1
+        beta = 0.3
+        gamma_value = 0.9
+        x = m_over_M/beta
+        return f0/(beta*gamma(1 - gamma_value)) * x**(-gamma_value) * np.exp(-x)
+    elif SHMF_model == 'Bosch2016':
+        #x  = m/M
+        #dN/dlgx = A* x**(-alpha) exp(-beta x**omega)
+        #dN/d ln(x) = dN/dlgx /ln10 = A* x**(-alpha) exp(-beta x**omega) / ln10
+        #fitFunc_lg_dNdlgx(lgx,alpha,beta_ln10, omega, lgA)
+        #p_guess = [0.86, 50/np.log(10),4 ,np.log10(0.065)]
+        m_over_M = np.exp(ln_m_over_M)
+        alpha = 0.86
+        beta = 50
+        omega = 4
+        A = 0.065
+        return A* m_over_M**(-alpha) * np.exp(-beta * m_over_M**omega) / np.log(10)
+    elif SHMF_model == 'BestFit':
+        #(alpha,beta_ln10, omega, lgA) provided by bestfitparams
+        if bestfitparams is None:
+            print("Error: bestfitparams is None")
+            return -999
+        m_over_M = np.exp(ln_m_over_M)
+        alpha = bestfitparams[0]
+        beta = bestfitparams[1]
+        omega = bestfitparams[2]
+        A = 10**bestfitparams[3]
+        return A* m_over_M**(-alpha) * np.exp(-beta * m_over_M**omega) / np.log(10)
+        
+
+#old version for testing
+#use Bosch2016 model to calculate the DF heating
+def integrand_oldversion(ln_m_over_M, logM, z, SHMF_model, *bestfitparams):
+    if not bestfitparams:
+        bestfitparams = None
+    global G_grav,rho_b0,h_Hubble, Mpc, Msun
+    
+    eta = 1.0
+    I_DF = 1.0
+    
+    M = 10**logM
+    m_over_M = np.exp(ln_m_over_M)
+    m = m_over_M * M  
+    rho_g = 200 * rho_b0*(1+z)**3 *Msun/Mpc**3
+    DF_heating =  eta * 4 * np.pi * (G_grav * m *Msun/h_Hubble) ** 2 / Vel_Virial_analytic(M/h_Hubble, z) *rho_g *I_DF
+    if SHMF_model == 'BestFit':
+        DF_heating *= Subhalo_Mass_Function_ln_oldversion(ln_m_over_M, SHMF_model, bestfitparams)
+    else:
+        DF_heating *= Subhalo_Mass_Function_ln_oldversion(ln_m_over_M, SHMF_model) 
+
+
+    DF_heating *= HMF_Colossus(M,z) * np.log(10)*M   #convert from M to log10(M)
+    
+    return DF_heating
+
+
+
+#----------------------------------- Mass Limits -----------------------------------
+def T_CMB(z):
+    return T0_CMB*(1+z)
+
+def T_K_Meiksin11(z):
+    if z > 500:
+        return T_CMB(z)
+    elif 300 < z <= 500:
+        return 1.46*(1+z)**1.10
+    elif 60 < z <= 300:
+        return 0.146*(1+z)**1.50
+    elif 6 <= z <= 60:
+        return 0.023*(1+z)**1.95
+    else:
+        raise ValueError("T_K_Meiksin11 Error: z out of range")
+
+def plot_T_K():
+    z_list = np.logspace(np.log10(6),np.log10(50),100)
+    T_K_list = [T_K_Meiksin11(z) for z in z_list]
+
+    #also read output from 21cmFAST fiducial run
+    Tk_21cmFAST_filename = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/global_Tk_z_fid.txt'
+
+    Tk_21cmFAST_data = np.loadtxt(Tk_21cmFAST_filename, skiprows=1)
+    z_21cmFAST = Tk_21cmFAST_data[:,0]
+    Tk_21cmFAST = Tk_21cmFAST_data[:,1]
+
+    fig = plt.figure(facecolor='white')
+    ax = fig.gca()
+    ax.plot(z_list, T_K_list, color='r', label='Meiksin11')
+    ax.plot(z_21cmFAST, Tk_21cmFAST, color='b', label='21cmFAST')
+    ax.invert_xaxis()
+    plt.xlabel('z', fontsize=14)
+    plt.ylabel('T_K [K]', fontsize=14)
+    plt.yscale('log')   
+    ax.tick_params(direction='in', which='both', labelsize=12)
+    plt.tight_layout()
+    plt.legend(fontsize=14)
+    plt.savefig('/home/zwu/21cm_project/unified_model/Analytic_results/T_K_evolution.png',dpi=300)
+
+
+def get_M_Jeans(z):
+    #in units of Msun/h
+    if 6 <= z <= 60:
+        return 220*(1+z)**1.425*h_Hubble
+    else:
+        raise ValueError("M_Jeans Error: z out of range")
+
+def get_M_Jeans_Meiksin11(z):
+    #in units of Msun/h
+    Cs = np.sqrt(5.0/3.0*kB*T_K_Meiksin11(z)/(mu*mp))
+    rho_m = rho_m0*(1+z)**3*Msun/Mpc**3
+    lambda_Jeans = np.sqrt(np.pi*Cs**2/(G_grav*rho_m))
+    M_Jeans = 4/3*np.pi*(lambda_Jeans/2.0)**3*rho_m
+    M_Jeans = M_Jeans/Msun*h_Hubble
+    return M_Jeans
+
+def get_M_Jeans_21cmFAST(z):
+    #in units of Msun/h
+    Tk_21cmFAST_filename = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/global_Tk_z_fid.txt'
+    Tk_21cmFAST_data = np.loadtxt(Tk_21cmFAST_filename, skiprows=1)
+    z_21cmFAST = Tk_21cmFAST_data[:,0]
+    Tk_21cmFAST = Tk_21cmFAST_data[:,1]
+
+    if z < min(z_21cmFAST) or z > max(z_21cmFAST): 
+        raise ValueError("get_M_Jeans_21cmFAST Error: z out of range")
+    
+    interp_func = interp1d(z_21cmFAST, Tk_21cmFAST, kind='linear', assume_sorted=False)
+    Tk_z_interp = interp_func(z)
+    Cs = np.sqrt(5.0/3.0*kB*Tk_z_interp/(mu*mp))
+    rho_m = rho_m0*(1+z)**3*Msun/Mpc**3
+    lambda_Jeans = np.sqrt(np.pi*Cs**2/(G_grav*rho_m))
+    M_Jeans = 4/3*np.pi*(lambda_Jeans/2.0)**3*rho_m
+    M_Jeans = M_Jeans/Msun*h_Hubble
+    return M_Jeans
+
+def plot_M_Jeans():
+    z_list = np.logspace(np.log10(6),np.log10(34),100)
+    M_Jeans_list = [get_M_Jeans(z) for z in z_list]
+    M_Jeans_Meiksin11_list = [get_M_Jeans_Meiksin11(z) for z in z_list]
+    M_Jeans_21cmFAST_list = [get_M_Jeans_21cmFAST(z) for z in z_list]
+
+    fig = plt.figure(facecolor='white')
+    ax = fig.gca()
+    ax.plot(z_list, M_Jeans_list, color='r', label='220*(1+z)^1.425')
+    ax.plot(z_list, M_Jeans_Meiksin11_list, color='g', linestyle='--', label='Meiksin11')
+    ax.plot(z_list, M_Jeans_21cmFAST_list, color='b', label='21cmFAST')
+    ax.invert_xaxis()
+    plt.xlabel('z', fontsize=14)
+    plt.ylabel('M_Jeans [Msun/h]', fontsize=14)
+    plt.yscale('log')   
+    ax.tick_params(direction='in', which='both', labelsize=12)
+    plt.tight_layout()
+    plt.legend(fontsize=14)
+    plt.savefig('/home/zwu/21cm_project/unified_model/Analytic_results/M_Jeans_z.png',dpi=300)
+
 if __name__ == "__main__":
     # HMF_ratio_2Dbestfit(9, 0.0)
     # run_shmf_redshift_evolution()
-    pass
+  
+    plot_M_Jeans()

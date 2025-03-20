@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 import os
 from TNGDataHandler import load_processed_data
-from physical_constants import Zsun, Myr, kpc
+from physical_constants import Zsun, Myr, kpc, Omega_b, Omega_m
 
 
 
@@ -99,6 +99,37 @@ def plot_host_halo_properties(data, snapNum, output_dir):
     plt.savefig(os.path.join(output_dir, f'host_Tvir_metallicity_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
+
+    #plot ratio of different components in host halo
+    halo_gasmass = data.halo_data['GroupGasMass'].value
+    halo_dmmass = data.halo_data['GroupDMmass'].value
+    halo_stellarmass = data.halo_data['GroupStellarMass'].value
+    halo_bhmass = data.halo_data['GroupBHMass'].value
+    halo_mass = data.halo_data['GroupMass'].value
+
+    outputfilename = os.path.join(output_dir, f'host_f_baryon_snap_{snapNum}.png')
+    fig = plt.figure(facecolor='white')
+    ax = fig.gca()
+
+    scatter_size = 0.1
+    gas = plt.scatter(halo_mass, halo_gasmass/halo_mass, s=scatter_size, c='g')
+    dm = plt.scatter(halo_mass, halo_dmmass/halo_mass, s=scatter_size, c='gray')
+    stars = plt.scatter(halo_mass, halo_stellarmass/halo_mass, s=scatter_size, c='r')
+    bh = plt.scatter(halo_mass, halo_bhmass/halo_mass, s=scatter_size, c='b')
+    line, = plt.plot([], [], 'k--', label=r'$\Omega_b/\Omega_m$')
+    plt.axhline(y=Omega_b/Omega_m, color='k', linestyle='--')
+
+    plt.xscale('log')
+    plt.legend(
+        [gas, dm, stars, bh, line],
+        ['Gas', 'Dark Matter', 'Stars', 'Black Hole', r'$\Omega_b/\Omega_m$'],
+        loc='best',
+        markerscale=10  # Use a value greater than 1 to increase marker size in legend
+    )
+    plt.xlabel(r'Halo Mass [$M_{\odot}/h$]')
+    plt.ylabel('Mass Fraction')
+    plt.savefig(outputfilename, bbox_inches='tight', dpi=200)
+    plt.close()
 
 
 def plot_2D_histogram(data, snapNum, output_dir, fig_options):
@@ -338,7 +369,7 @@ if __name__ == '__main__':
     
     snapNum_list = [0, 1, 2, 3, 4, 6, 8, 11, 13,
                     17,21,25,33,40,50,59,67,72,78,84,91,99]
-   
+    
     for snapNum in snapNum_list:
         print(f"Processing snapshot {snapNum} ...")
         base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
@@ -349,8 +380,7 @@ if __name__ == '__main__':
         output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
         # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass', 
         # 'R200_subhaloVmaxRad', 'tff_tcross', 'M200_Mach', 'M200_Anumber', 'Mach_fit']
-        fig_options_2Dhistogram = ['R200_rsubhalfmass', 'R200_subhaloVmaxRad']  
-        plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
+        # plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
         plot_host_halo_properties(data, snapNum, output_dir)
         
 

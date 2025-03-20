@@ -35,6 +35,8 @@ def load_tng_data(basePath, snapNum):
         'Group_R_Crit500',
         'GroupVel',
         'GroupGasMetallicity'
+        # 'Group_M_Mean200',
+        # 'Group_R_Mean200'
     ]
     # Load halo data (GroupFirstSub and GroupNsubs are integer fields, keep as is)
     halos = il.groupcat.loadHalos(basePath, snapNum, 
@@ -131,6 +133,11 @@ def TNG_model():
     R_crit200_m_all = R_crit200_all * Mpc  # meters
     group_vel_all = halos['GroupVel'][index_selected] * 1e3 / scale_factor  # m/s, shape (N_selected, 3)
     M_gas_all = halos['GroupMassType'][index_selected][:, 0] * 1e10  # Msun/h
+    M_dm_all = halos['GroupMassType'][index_selected][:, 1] * 1e10  # Msun/h
+    M_dmlowres_all = halos['GroupMassType'][index_selected][:, 2] * 1e10  # Msun/h
+    M_tracer_all = halos['GroupMassType'][index_selected][:, 3] * 1e10  # Msun/h
+    M_starwind_all = halos['GroupMassType'][index_selected][:, 4] * 1e10  # Msun/h
+    M_bh_all = halos['GroupMassType'][index_selected][:, 5] * 1e10  # Msun/h
     gas_metallicity_host_all = halos['GroupGasMetallicity'][index_selected]
     
     #derived quantities of host halos
@@ -138,12 +145,29 @@ def TNG_model():
     rho_halo_all = (M_crit200_all * Msun/h_Hubble) / (4/3 * np.pi * R_crit200_m_all**3)  # kg/m^3
     Tvir_host_all = np.array([Temperature_Virial_numerical(m/h_Hubble, r) 
                              for m, r in zip(M_crit200_all, R_crit200_all)])  # K
+    '''
+    #check analytical version
+    Tvir_host_all_analytic_old = np.array([Temperature_Virial_analytic_oldversion(m/h_Hubble, current_redshift)
+                                for m in M_crit200_all])  # K
+
+    Tvir_host_all_analytic = np.array([Temperature_Virial_analytic(m/h_Hubble, current_redshift)
+                                for m in M_crit200_all])  # K
+    print("Tvir_host_all_analytic: ", Tvir_host_all_analytic)
+    print("Tvir_host_all_analytic_old: ", Tvir_host_all_analytic_old)
+    print("Tvir_host_all: ", Tvir_host_all)
+    exit()
+    '''
+    
     Cs_host_all = np.sqrt(5.0/3.0 * kB * Tvir_host_all / (mu*mp))  # m/s
     t_ff_all = freefall_factor / np.sqrt(G_grav * rho_halo_all)  # s
-    
     #add to AllTNGData
     AllTNGData.add_halo_quantity('original_index', index_selected, 'dimensionless','Original index in TNG data',dtype=np.int32)
     AllTNGData.add_halo_quantity('GroupMass', M_all, 'Msun/h', 'Total mass of the halo')
+    AllTNGData.add_halo_quantity('GroupPos', halos['GroupPos'][index_selected], 'ckpc/h', 'Position of the halo')
+    AllTNGData.add_halo_quantity('GroupGasMass', M_gas_all, 'Msun/h', 'Gas mass of the halo')
+    AllTNGData.add_halo_quantity('GroupDMmass', M_dm_all, 'Msun/h', 'Dark matter mass of the halo')
+    AllTNGData.add_halo_quantity('GroupStellarMass', M_starwind_all, 'Msun/h', 'Star and wind partile mass of the halo')
+    AllTNGData.add_halo_quantity('GroupBHMass', M_bh_all, 'Msun/h', 'Black hole mass of the halo')
     AllTNGData.add_halo_quantity('Group_M_Crit200', M_crit200_all, 'Msun/h', 'M200')
     AllTNGData.add_halo_quantity('Group_R_Crit200', R_crit200_all, 'Mpc', 'R200')
     AllTNGData.add_halo_quantity('GroupVel', group_vel_all, 'm/s', 'Velocity of host halo')
@@ -231,7 +255,8 @@ def TNG_model():
     rho_m_analytic = rho_m0*(1+current_redshift)**3 *Msun/Mpc**3
     rho_g_analytic_200 = 200 *rho_g_analytic
     DF_heating_withoutIDF = 4 * np.pi * (G_grav * sub_mass_all * Msun/h_Hubble) ** 2 / rel_vel_mag_all * rho_g_analytic_200
-    
+    #fid: divided by Cs instead of rel_vel_mag, I_DF = 1, assume rho_gas = 200*rho_crit(baryon, z)
+    DF_heating_fid = 4 * np.pi * (G_grav * sub_mass_all * Msun/h_Hubble) ** 2 / host_cs_for_subs * rho_g_analytic_200
 
     #plot full hmf and selected halos
     hmf_filename = os.path.join(output_dir, 'analysis', f'HMF_snap_{snapNum}.png')
@@ -242,6 +267,7 @@ def TNG_model():
 
     #add to AllTNGData
     AllTNGData.add_subhalo_quantity('SubMass', sub_mass_all, 'Msun/h', 'Subhalo mass')
+    AllTNGData.add_subhalo_quantity('SubPos', subhalos['SubhaloPos'][all_subhalo_indices], 'ckpc/h', 'Position of subhalo')
     AllTNGData.add_subhalo_quantity('SubHalfmassRad', sub_halfrad_all, 'm', 'Half-mass radius')
     AllTNGData.add_subhalo_quantity('SubVmaxRad', sub_vmaxrad_all, 'm', 'Maximum velocity radius')
     AllTNGData.add_subhalo_quantity('SubVel', sub_vel_all, 'm/s', 'Subhalo velocity') #shape (n_selected_subs, 3)
@@ -259,7 +285,7 @@ def TNG_model():
     AllTNGData.add_subhalo_quantity('host_t_ff', host_tff_for_subs, 's', 'Free-fall time of host halo')
     AllTNGData.add_subhalo_quantity('A_number', A_number_all, 'dimensionless', 'A number')
     AllTNGData.add_subhalo_quantity('DF_heating_withoutIDF', DF_heating_withoutIDF, 'J/s', 'DF heating rate without I_DF factor')
-
+    AllTNGData.add_subhalo_quantity('DF_heating_fid', DF_heating_fid, 'J/s', 'DF heating rate without I/Mach correction and rho_gas = 200*rho_crit(baryon, z)')
     # 
     # AllTNGData.metadata.update({
     #     'rho_gas_analytic': float(rho_g_analytic),
@@ -441,8 +467,8 @@ def analyze_processed_data():
     print(f"Mass range: {data.subhalo_data['SubMass'].value.min():.2e} - "
           f"{data.subhalo_data['SubMass'].value.max():.2e} {data.subhalo_data['SubMass'].units}")
     
-    exit()
 
+    '''
     #now calculate X-ray emissivity
     lognH = get_gas_lognH_analytic(redshift)
     print("lognH: ", lognH)
@@ -468,12 +494,11 @@ def analyze_processed_data():
     comoving_boxsize = 51.7**3  # cMpc^3
     tot_xray_emissivity_per_cMpc3 = tot_xray_emissivity / comoving_boxsize
     print(f"Total X-ray emissivity: {tot_xray_emissivity_per_cMpc3:.2e} erg/s/cMpc^3")
-
+    '''
 
 if __name__ == '__main__':
-    # TNG_model()
+    TNG_model()
     # find_abnormal_mach()
     # analyze_processed_data()
-
     # plot_Mratio_dN_dlogMratio()  
-    pass
+    

@@ -22,7 +22,6 @@ Omega_m = np.float64(cosmo.Om0)
 Omega_lambda = np.float64(1.0 - Omega_m)
 Omega_r = np.float64(0.0)  # ignore cosmo.Or0
 Omega_k = np.float64(0.0)
-
 Omega_b = np.float64(cosmo.Ob0)
 sigma8 = np.float64(cosmo.sigma8)
 G_grav = np.float64(6.674e-11)

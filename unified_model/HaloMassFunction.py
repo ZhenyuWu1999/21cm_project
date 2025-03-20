@@ -13,7 +13,7 @@ from scipy.special import gamma
 from physical_constants import *
 from Config import simulation_set, hmf_ratio_params, \
 p_evolved, p_unevolved, alpha_z_params, lgA_z_params, omega_z, beta_ln10_z
-from HaloProperties import Vel_Virial_analytic
+from HaloProperties import Vel_Virial_analytic_oldversion
 
 #output dn/dM in the unit of [(Mpc/h)^(-3) (Msun/h)^(-1)]
 #input M in the unit of Msun/h
@@ -575,7 +575,7 @@ def integrand_oldversion(ln_m_over_M, logM, z, SHMF_model, *bestfitparams):
     m_over_M = np.exp(ln_m_over_M)
     m = m_over_M * M  
     rho_g = 200 * rho_b0*(1+z)**3 *Msun/Mpc**3
-    DF_heating =  eta * 4 * np.pi * (G_grav * m *Msun/h_Hubble) ** 2 / Vel_Virial_analytic(M/h_Hubble, z) *rho_g *I_DF
+    DF_heating =  eta * 4 * np.pi * (G_grav * m *Msun/h_Hubble) ** 2 / Vel_Virial_analytic_oldversion(M/h_Hubble, z) *rho_g *I_DF
     if SHMF_model == 'BestFit':
         DF_heating *= Subhalo_Mass_Function_ln_oldversion(ln_m_over_M, SHMF_model, bestfitparams)
     else:

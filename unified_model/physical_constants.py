@@ -34,7 +34,8 @@ Zsun = 0.01295 # solar metallicity, grackle default
 #Zsun = 0.0127 # solar metallicity, according to TNG data specifications
 
 Tvir_crit = np.float64(1e4)
-mu = np.float64(1.23)  # mean molecular weight for neutral primordial gas
+mu_neutral = np.float64(1.23)  # mean molecular weight for neutral primordial gas
+mu = np.float64(0.6) # mean molecular weight for ionized gas
 
 rho_crit_z0_kgm3 = 3.0 * H0_s**2 / (8.0 * np.pi * G_grav)
 # convert form kg/m^3 to Msun/Mpc^3
@@ -43,3 +44,9 @@ rho_m0 = Omega_m * rho_crit_z0  # Msun/Mpc^3
 rho_b0 = Omega_b * rho_crit_z0  # Msun/Mpc^3
 
 freefall_factor = np.float64(np.sqrt(3 * np.pi / 32))
+
+
+if __name__ == "__main__":
+    print(Omega_b)
+    print(Omega_m)
+    print(Omega_b/Omega_m)

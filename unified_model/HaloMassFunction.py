@@ -9,6 +9,8 @@ from matplotlib.lines import Line2D
 import matplotlib.patches as mpatches
 import matplotlib
 from scipy.special import gamma
+import matplotlib.ticker as ticker
+
 
 from physical_constants import *
 from Config import simulation_set, hmf_ratio_params, \
@@ -153,7 +155,8 @@ def plot_hmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
     plt.axvline(100*dark_matter_resolution, color='black', linestyle='--')
     plt.legend(fontsize=11)
     plt.xlabel(r'Mass [$\mathrm{M}_{\odot}/\mathrm{h}$]', fontsize=14)
-    plt.ylabel(r'$\frac{\text{dN}}{\text{ d\lg M}}$ [$(\text{cMpc/h})^{-3}$]',fontsize=14)
+    plt.grid()
+    plt.ylabel(r'$\frac{\text{dN}}{\text{ d\lg M}}$ [$(\text{cMpc/h})^{-3} \text{dex}^{-1}$]',fontsize=14)
     ax.tick_params(direction='in', which='both', labelsize=12)
     plt.tight_layout()
     plt.savefig(output_filename,dpi=300)
@@ -260,6 +263,99 @@ def run_hmf_redshift_evolution():
 
     gas_resolution, dark_matter_resolution = get_simulation_resolution(simulation_set)
     plot_hmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution)    
+
+
+
+def plot_hmfhist(redshift):
+        
+    base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/'
+    output_dir = os.path.join(base_dir, 'analysis')
+    filename = os.path.join(output_dir, f'HMFhistogram_z_{redshift}.png')
+    scale_factor = 1.0/(1.+redshift)
+    comoving_factor = scale_factor**3
+    delta_lgM = 0.2
+    lgM_bin_edges = np.arange(6, 15+delta_lgM, delta_lgM) #log10(M [Msun/h])
+    lgM_bin_centers = (lgM_bin_edges[:-1] + lgM_bin_edges[1:])/2
+    
+    HMF_lgM_sheth99 = np.array([HMF_Colossus(10**lgM, redshift, 'sheth99')* np.log(10)*10**lgM for lgM in lgM_bin_centers])
+    HMF_lgM_sheth99_comoving = HMF_lgM_sheth99*comoving_factor
+    nhalo_in_bin_comoving = HMF_lgM_sheth99_comoving*delta_lgM
+    boxsize1_cMpc = 200
+    boxsize2_cMpc = 150
+    boxsize3_cMpc = 100
+    Nhalo_in_bin_box1 = nhalo_in_bin_comoving*(boxsize1_cMpc*h_Hubble)**3
+    Nhalo_in_bin_box2 = nhalo_in_bin_comoving*(boxsize2_cMpc*h_Hubble)**3
+    Nhalo_in_bin_box3 = nhalo_in_bin_comoving*(boxsize3_cMpc*h_Hubble)**3
+
+
+    # Create the figure and plot the histograms
+    fig = plt.figure(figsize=(10, 7), facecolor='white')
+    ax = fig.gca()
+
+    # Plot histograms for the three boxsizes
+    width = delta_lgM * 1.0  # Slightly narrower than the bin width for better visualization
+
+    # First boxsize case
+    ax.bar(lgM_bin_centers, Nhalo_in_bin_box1, 
+        width=width, 
+        alpha=0.7, 
+        color='red', 
+        label=f'Box {boxsize1_cMpc} cMpc')
+
+    # Second boxsize case
+    ax.bar(lgM_bin_centers, Nhalo_in_bin_box2, 
+        width=width*0.9, 
+        alpha=0.7, 
+        color='yellow', 
+        label=f'Box {boxsize2_cMpc} cMpc')
+
+    # Third boxsize case
+    ax.bar(lgM_bin_centers, Nhalo_in_bin_box3, 
+        width=width*0.8, 
+        alpha=0.7, 
+        color='green', 
+        label=f'Box {boxsize3_cMpc} cMpc')
+
+    # Set axis labels and title
+    ax.set_xlabel(r'$\log_{10}(\mathrm{M} \, [\mathrm{M}_{\odot}/\mathrm{h}])$', fontsize=15)
+    ax.set_ylabel(r'Number of halos in bin', fontsize=15)
+    ax.set_title(f'Halo Mass Function Histogram at z = {redshift}', fontsize=16)
+    # Set logarithmic y-scale for better visualization
+    ax.set_yscale('log')
+    ax.axhline(y=1, color='black', linestyle='-', linewidth=1.5, alpha=0.7)
+
+
+    # Add ticks for each dex (order of magnitude)
+    x_major_ticks = np.arange(6, 15, 1)  # Major ticks for each dex on x-axis
+    ax.set_xticks(x_major_ticks)
+    ax.set_xlim(6.0, 15.0)  # Adjust x limits for better visualization
+
+    # Set y-axis to have major ticks at each power of 10
+    ax.yaxis.set_major_locator(ticker.LogLocator(base=10, numticks=15))
+    ax.set_ylim(1e-2, 1e10)  # Adjust y limits to match your plot
+    ax.tick_params(axis='both', direction='in', which='both')
+
+    # Add grid for better readability
+    ax.grid(True, which='major', linestyle='--', linewidth=0.5, alpha=1.0)
+
+
+    # Add legend
+    ax.legend(loc='center right', frameon=True, fontsize=15)
+
+    # Add text with information about the bin size
+    ax.text(0.5, 0.9, f'Bin width = {delta_lgM} dex', 
+            transform=ax.transAxes, fontsize=15,
+            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+    # Adjust layout and save
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+
+
+def run_hmfhist():
+    z_list = [20, 15, 10, 8, 6, 0]
+    for z in z_list:
+        plot_hmfhist(z)
 
 
 
@@ -688,4 +784,6 @@ if __name__ == "__main__":
     # HMF_ratio_2Dbestfit(9, 0.0)
     # run_shmf_redshift_evolution()
   
-    plot_M_Jeans()
+    # plot_M_Jeans()
+    # run_hmf_redshift_evolution()
+    run_hmfhist()

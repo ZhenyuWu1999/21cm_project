@@ -3,6 +3,8 @@ from scipy.integrate import quad, dblquad
 import matplotlib.pyplot as plt
 import os
 
+from TNG_plots import maxwell_boltzmann_pdf
+
 def h_test(sz, rcyl, mach):
     """The constant for the integrand of the dynamical friction integral.
     h = 1: the ice-cream
@@ -32,6 +34,26 @@ def Idf_Ostriker99(mach, xmin):
     else:
         fdf = 0.5 * np.log((1. + mach)/(1 - mach)) - mach
     return fdf
+
+def Idf_Ostriker99_nosingularity(mach, xmin):
+    if not (mach >= 0):
+        raise ValueError("mach must be positive")
+    delta = 0.05 #avoid singularity at mach = 1
+    if mach > 1 - delta and mach <= 1:
+        mach = 1 - delta
+    if mach < 1 + delta and mach >= 1:
+        mach = 1 + delta
+    if (mach > 1 and mach -1 < xmin):
+        print("Warning: Mach -1 < xmin in I_Ostriker99_supersonic; reset mach to 1+xmin")
+        print("Mach:", mach, "xmin:", xmin)
+        mach = 1 + xmin
+    return Idf_Ostriker99(mach, xmin)       
+
+def Idf_Ostriker99_nosingularity_Vtrmin(mach, Vt_rmin):
+    Cst_rmin = Vt_rmin / mach
+    xmin = 1/Cst_rmin
+    return Idf_Ostriker99_nosingularity(mach, xmin)
+
 
 def Idf_Ostriker99_wrapper(mach, rmin, Cs, t):
     if not (mach >= 0):
@@ -333,18 +355,18 @@ def plot_subsonic_schematic(mach):
     #horizontal line 
     max_I_DF = 0.5 * np.log((1 + mach)/(1 - mach)) - mach
     ax.hlines(y=max_I_DF, xmin=0, xmax=(1+mach), color='k', linestyle='--')
-    ax.text(0.5, max_I_DF*0.9, r'$\frac{1}{2}$ ln($\frac{1+\mathscr{M}}{1-\mathscr{M}}$) - $\mathscr{M}$', fontsize=12, ha='center', color='#1f77b4')
+    ax.text(0.5, max_I_DF*0.9, r'$\frac{1}{2}$ ln($\frac{1+\mathcal{M}}{1-\mathcal{M}}$) - $\mathcal{M}$', fontsize=12, ha='center', color='#1f77b4')
     
     # vertical line at x = 1 - mach and x = 1 + mach
     ax.vlines(x=1-mach, ymin=ymin, ymax=0, color='k', linestyle='--')
     ax.vlines(x=1+mach, ymin=ymin, ymax=max_I_DF, color='k', linestyle='--')
     #add text to the vertical lines
-    ax.text(1-mach, ymin/2, r'x = 1-$\mathscr{M}$', fontsize=12, ha='right')
-    ax.text(1+mach, max_I_DF/2, r'x = 1+$\mathscr{M}$', fontsize=12, ha='left')
+    ax.text(1-mach, ymin/2, r'x = 1-$\mathcal{M}$', fontsize=12, ha='right')
+    ax.text(1+mach, max_I_DF/2, r'x = 1+$\mathcal{M}$', fontsize=12, ha='left')
     
     ax.set_xlabel(r"x = r/($c_s$ t)",fontsize=14)
     ax.set_ylabel(r"$I_{DF}$ (x)",fontsize=14,color= '#1f77b4')
-    ax.set_title(r"Subsonic DF force ($\mathscr{M} = $"+f"{mach})",fontsize=14)
+    ax.set_title(r"Subsonic DF force ($\mathcal{M} = $"+f"{mach})",fontsize=14)
     
     #then plot the volume on the right side
     ax2 = ax.twinx()
@@ -353,7 +375,7 @@ def plot_subsonic_schematic(mach):
     ax2.set_ylim(-1, 5)
     #horizontal line
     ax2.hlines(y=4*np.pi/3*(1-mach)**3, xmin=(1-mach), xmax=x_list[-1], color='r', linestyle='--')
-    ax2.text((1-mach)*3, 4*np.pi/3*(1-mach)**3*1.5, r'4$\pi$ (1-$\mathscr{M}$)$^3$/3', fontsize=12, ha='right', color='r')
+    ax2.text((1-mach)*3, 4*np.pi/3*(1-mach)**3*1.5, r'4$\pi$ (1-$\mathcal{M}$)$^3$/3', fontsize=12, ha='right', color='r')
     ax2.text(1+mach, 4*np.pi/3, r'4$\pi$/3', fontsize=12, ha='left', color='r')
     
     plt.tight_layout()
@@ -378,18 +400,18 @@ def plot_supersonic_schematic(mach, xmin):
     #horizontal line
     max_I_DF = Idf_Ostriker99(mach, xmin)
     ax.hlines(y=max_I_DF, xmin=0, xmax=(1+mach), color='#1f77b4', linestyle='--')
-    ax.text(0.5, max_I_DF*0.9, r'$\frac{1}{2}$ ln($\frac{\mathscr{M}+1}{\mathscr{M}}-1$) + ln($\frac{\mathscr{M} - 1}{x_{\min}}$)', fontsize=12, ha='center', color='#1f77b4')
+    ax.text(0.5, max_I_DF*0.9, r'$\frac{1}{2}$ ln($\frac{\mathcal{M}+1}{\mathcal{M}}-1$) + ln($\frac{\mathcal{M} - 1}{x_{\min}}$)', fontsize=12, ha='center', color='#1f77b4')
     
     ax.vlines(x=xmin, ymin=-0.01, ymax=max_I_DF, color='k', linestyle='--')
     ax.text(xmin, 0.0, r'$x_{\min}$', fontsize=12, ha='right')
     ax.vlines(x=np.sqrt(mach**2 - 1.), ymin=-0.01, ymax=max_I_DF, color='k', linestyle='--')
-    ax.text(np.sqrt(mach**2 - 1.), 0.5, r'$\sqrt{\mathscr{M}^2 - 1}$', fontsize=12, ha='right')
+    ax.text(np.sqrt(mach**2 - 1.), 0.5, r'$\sqrt{\mathcal{M}^2 - 1}$', fontsize=12, ha='right')
     ax.vlines(x=1+mach, ymin=-0.01, ymax=max_I_DF, color='k', linestyle='--')
-    ax.text(1+mach, 1.0, r'$1+\mathscr{M}$', fontsize=12, ha='right')
+    ax.text(1+mach, 1.0, r'$1+\mathcal{M}$', fontsize=12, ha='right')
     
     ax.set_xlabel(r"x = r/($c_s$ t)",fontsize=14)
     ax.set_ylabel(r"$I_{DF}$ (x)",fontsize=14,color= '#1f77b4')
-    ax.set_title(r"Supersonic DF force ($\mathscr{M} = $"+f"{mach}"+r" $x_{\min} = $"+f"{xmin})",fontsize=14)
+    ax.set_title(r"Supersonic DF force ($\mathcal{M} = $"+f"{mach}"+r" $x_{\min} = $"+f"{xmin})",fontsize=14)
     
     #then plot the volume on the right side
     
@@ -400,8 +422,8 @@ def plot_supersonic_schematic(mach, xmin):
     ax2.set_ylim(0, Vmax*1.5)
     #horizontal line
     ax2.hlines(y=2*np.pi/3*(1 - np.sqrt(mach**2 - 1)/mach)*np.sqrt(mach**2 - 1)**3, xmin=np.sqrt(mach**2 - 1), xmax=x_list[-1], color='r', linestyle='--')
-    ax2.text(1, 2*np.pi/3*(1 - np.sqrt(mach**2 - 1)/mach)*np.sqrt(mach**2 - 1)**3*1.5, r'2$\pi$/3 (1 - $\cos(\theta_{\mathscr{M}}$))$\sqrt{\mathscr{M}^2 - 1}^3$', fontsize=12, ha='left', color='r')
-    ax2.text(1+mach, Vmax*1.2, r'$\frac{\pi}{3}(\mathscr{M} + 2 + \frac{1}{\mathscr{M}})$', fontsize=12, ha='left', color='r')
+    ax2.text(1, 2*np.pi/3*(1 - np.sqrt(mach**2 - 1)/mach)*np.sqrt(mach**2 - 1)**3*1.5, r'2$\pi$/3 (1 - $\cos(\theta_{\mathcal{M}}$))$\sqrt{\mathcal{M}^2 - 1}^3$', fontsize=12, ha='left', color='r')
+    ax2.text(1+mach, Vmax*1.2, r'$\frac{\pi}{3}(\mathcal{M} + 2 + \frac{1}{\mathcal{M}})$', fontsize=12, ha='left', color='r')
     
     
     plt.tight_layout()
@@ -426,7 +448,7 @@ def plot_subsonic_allmach():
     
     fig, ax = plt.subplots(1, 1, figsize=(5, 4))
     for i, mach in enumerate(mach_array):
-        ax.plot(x_list, I_for_all_mach[i], color=colors[i], label=f"$\mathscr{{M}} = {mach}$")
+        ax.plot(x_list, I_for_all_mach[i], color=colors[i], label=f"$\mathcal{{M}} = {mach}$")
        
         ax.vlines(x=x_high[i], ymin=-0.01, ymax=max_I_DF[i], color=colors[i], linestyle='--')
         
@@ -442,7 +464,7 @@ def plot_subsonic_allmach():
     #then plot the volume
     fig, ax = plt.subplots(1, 1, figsize=(5, 4))
     for i, mach in enumerate(mach_array):
-        ax.plot(x_list, [volume_integral_subsonic(x, mach) for x in x_list], color=colors[i], label=f"$\mathscr{{M}} = {mach}$")
+        ax.plot(x_list, [volume_integral_subsonic(x, mach) for x in x_list], color=colors[i], label=f"$\mathcal{{M}} = {mach}$")
         ax.vlines(x=x_low[i], ymin=-1, ymax=4*np.pi/3*(1-mach)**3, color=colors[i], linestyle='--')
         ax.vlines(x=x_high[i], ymin=-1, ymax=4*np.pi/3, color=colors[i], linestyle='--')
 
@@ -472,7 +494,7 @@ def plot_supersonic_allmach():
     
     fig, ax = plt.subplots(1, 1, figsize=(5, 4))
     for i, mach in enumerate(mach_array):
-        ax.plot(x_list, I_for_all_mach[i], color=colors[i], label=f"$\mathscr{{M}} = {mach}$")
+        ax.plot(x_list, I_for_all_mach[i], color=colors[i], label=f"$\mathcal{{M}} = {mach}$")
        
         ax.vlines(x=x_high[i], ymin=-0.01, ymax=max_I_DF[i], color=colors[i], linestyle='--')
         
@@ -487,7 +509,7 @@ def plot_supersonic_allmach():
     #then plot the volume
     fig, ax = plt.subplots(1, 1, figsize=(5, 4))
     for i, mach in enumerate(mach_array):
-        ax.plot(x_list, [volume_integral_supersonic(x, mach, xmin) for x in x_list], color=colors[i], label=f"$\mathscr{{M}} = {mach}$")
+        ax.plot(x_list, [volume_integral_supersonic(x, mach, xmin) for x in x_list], color=colors[i], label=f"$\mathcal{{M}} = {mach}$")
         ax.vlines(x=x_low[i], ymin=-1, ymax=2*np.pi/3*(1 - np.sqrt(mach**2 - 1)/mach)*np.sqrt(mach**2 - 1)**3, color=colors[i], linestyle='--')
         ax.vlines(x=x_high[i], ymin=-1, ymax=np.pi/3*(mach + 2.0 - 1.0/mach), color=colors[i], linestyle='--')
         
@@ -500,44 +522,166 @@ def plot_supersonic_allmach():
     plt.savefig(filename)
   
 def plot_I_Mach(output_dir):
-    mach_array = np.logspace(-1, 1, 50)
-    Cst_rmin_ratios = np.array([10, 20, 50, 100])
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(Cst_rmin_ratios)))
+    mach_array = np.logspace(-2, np.log10(5.0), 100)
+    # Cst_rmin_ratios = np.array([10, 20, 50, 100])
+    Vt_rmin_ratios = np.array([10, 20, 50])
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(Vt_rmin_ratios)))
     I_DF_list = []
-    for ratio in Cst_rmin_ratios:
-        xmin = 1/ratio
-        I_DF_list.append([Idf_Ostriker99(mach, xmin) for mach in mach_array])
+    for Vt_rmin in Vt_rmin_ratios:
+        I_DF = []
+        for mach in mach_array:
+            Cst_rmin = Vt_rmin / mach
+            xmin = 1/Cst_rmin
+            I_DF.append(Idf_Ostriker99_nosingularity(mach, xmin))
+        I_DF_list.append(I_DF)
     I_DF_list = np.array(I_DF_list)
+
     
     fig, ax = plt.subplots(1, 1, figsize=(5, 4),facecolor='w')
-    for i, ratio in enumerate(Cst_rmin_ratios):
-        ax.plot(mach_array, I_DF_list[i], color=colors[i], label=r"$C_s$ t/r$_{\min}$" + f" = {ratio}")
-    ax.set_xlabel(r"$\mathscr{M}$",fontsize=14)
+    for i, ratio in enumerate(Vt_rmin_ratios):
+        ax.plot(mach_array, I_DF_list[i], color=colors[i], label=r"V t/r$_{\min}$" + f" = {ratio}")
+    ax.set_xlabel(r"$\mathcal{M}$",fontsize=14)
     ax.set_ylabel(r"$I_{DF}$",fontsize=14)
     ax.set_title(r"DF force vs Mach number",fontsize=14)
     ax.legend()
     plt.tight_layout()
-    filename = os.path.join(output_dir, "I_DF_Mach.pdf")
-    plt.savefig(filename)
+    filename = os.path.join(output_dir, "I_DF_Mach_new.png")
+    plt.savefig(filename, dpi= 300)
     
     
     #F = I/Mach^2
     Dimensionless_I_DF = I_DF_list.copy()
-    for i in range(len(Cst_rmin_ratios)):
+    for i in range(len(Vt_rmin_ratios)):
         Dimensionless_I_DF[i] = Dimensionless_I_DF[i]/mach_array**2
     
     fig, ax = plt.subplots(1, 1, figsize=(5, 4),facecolor='w')
-    for i, ratio in enumerate(Cst_rmin_ratios):
-        ax.plot(mach_array, Dimensionless_I_DF[i], color=colors[i], label=r"$C_s$ t/r$_{\min}$" + f" = {ratio}")
-    ax.set_xlabel(r"$\mathscr{M}$",fontsize=14)
+    for i, ratio in enumerate(Vt_rmin_ratios):
+        ax.plot(mach_array, Dimensionless_I_DF[i], color=colors[i], label=r"V t/r$_{\min}$" + f" = {ratio}")
+    ax.set_xlabel(r"$\mathcal{M}$",fontsize=14)
     ax.set_ylabel(r"$F / [4 \pi \rho_0 (G m_p)^2/C_s^2]$",fontsize=14)
     ax.set_title(r"DF force vs Mach number",fontsize=14)
     ax.legend()
     plt.tight_layout()
-    filename = os.path.join(output_dir, "F_DF_Mach.pdf")
-    plt.savefig(filename)
+    filename = os.path.join(output_dir, "F_DF_Mach_new.png")
+    plt.savefig(filename, dpi=300)
+
+
+    #I_over_Mach (the factor for DF heating)
+    fig, ax = plt.subplots(1, 1, figsize=(5, 4),facecolor='w')
+    for i, ratio in enumerate(Vt_rmin_ratios):
+        ax.plot(mach_array, I_DF_list[i]/mach_array, color=colors[i], label=r"V t/r$_{\min}$" + f" = {ratio}")
+    ax.set_xlabel(r"$\mathcal{M}$",fontsize=14)
+    ax.set_ylabel(r"$I_{DF}/\mathcal{M}$",fontsize=14)
+    ax.legend()
+    plt.tight_layout()
+    filename = os.path.join(output_dir, "I_over_Mach_new.png")
+    plt.savefig(filename, dpi=300)
     
+def test_func(mach, xmin):
+    return 1.0
+
+
+def compute_average_I(func, sigma_mach, param):
+    """
+    Compute the average of a function weighted by the Maxwell distribution
+    func: function to average
+    sigma_mach: standard deviation of the Mach number distribution
+    param: parameter for the function (e.g., xmin for Idf_Ostriker99_nosingularity; Vt_rmin for Idf_Ostriker99_nosingularity_Vtrmin)
+    """
+
+    mach_min = 0.01
+    mach_max = 5.0
+    #Maxwell distribution is already normalized
+    def integrand_numerator(mach):
+        return func(mach, param) * maxwell_boltzmann_pdf(mach, sigma_mach)
     
+    result, _ = quad(integrand_numerator, mach_min, mach_max)
+    
+    # Return the average
+    return result 
+
+
+def plot_averages(output_dir):
+    """
+    Calculate and plot the average values of I and I/mach as a function of sigma_mach
+    """
+    # Create output directory if it doesn't exist
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    # Set up sigma_mach values to explore
+    sigma_mach_array = np.logspace(-1, np.log10(5), 50)  # From 0.1 to 10
+    # Cst_rmin_ratios = np.array([10, 20, 50, 100])
+    # colors = plt.cm.rainbow(np.linspace(0, 1, len(Cst_rmin_ratios)))
+    Vt_rmin_ratios = np.array([10, 20, 50])
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(Vt_rmin_ratios)))
+    
+    # Compute average I for different sigma_mach and different xmin values
+    # avg_I_values = np.zeros((len(Cst_rmin_ratios), len(sigma_mach_array)))
+    # avg_I_over_mach_values = np.zeros((len(Cst_rmin_ratios), len(sigma_mach_array)))
+    avg_I_values = np.zeros((len(Vt_rmin_ratios), len(sigma_mach_array)))
+    avg_I_over_mach_values = np.zeros((len(Vt_rmin_ratios), len(sigma_mach_array)))
+    
+    # for i, ratio in enumerate(Cst_rmin_ratios):
+    for i, Vt_rmin in enumerate(Vt_rmin_ratios):
+        for j, sigma_mach in enumerate(sigma_mach_array):
+            # Calculate average I
+            
+            avg_I_values[i, j] = compute_average_I(Idf_Ostriker99_nosingularity_Vtrmin, sigma_mach, Vt_rmin)
+            
+            # Calculate average I/mach
+            def I_over_mach(mach, Vt_rmin):
+                return Idf_Ostriker99_nosingularity_Vtrmin(mach, Vt_rmin) / mach
+            
+            avg_I_over_mach_values[i, j] = compute_average_I(I_over_mach, sigma_mach, Vt_rmin)
+    
+    # Print sample values to verify calculations
+    # print(f"Sample values for ratio={Cst_rmin_ratios[0]}, sigma_mach={sigma_mach_array[0]:.2f}:")
+    # print(f"Average I: {avg_I_values[0, 0]:.4f}")
+    # print(f"Average I/mach: {avg_I_over_mach_values[0, 0]:.4f}")
+    
+
+
+    # Visualize the Maxwell-Boltzmann distribution for different sigma values
+    '''
+    fig = plt.figure(figsize=(10, 6), facecolor='w')
+    mach_array = np.linspace(0, 5, 100)
+    for sigma in [0.5, 1.0, 2.0]:
+        dist = [maxwell_boltzmann_pdf(m, sigma) for m in mach_array]
+        plt.plot(mach_array, dist, label=f"σ = {sigma}")
+    plt.xlabel("Mach Number", fontsize=14)
+    plt.ylabel("Probability Density", fontsize=14)
+    plt.title("Maxwell-Boltzmann Distribution for Different σ Values", fontsize=14)
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "maxwell_distributions.png"), dpi=300)
+    '''
+    # Plot average I as a function of sigma_mach
+    fig = plt.figure(figsize=(10, 6), facecolor='w')
+    for i, ratio in enumerate(Vt_rmin_ratios):
+        plt.plot(sigma_mach_array, avg_I_values[i], color=colors[i], 
+                 label=r"V t/r$_{\min}$ = "+f"{ratio}")
+    plt.xlabel(r"$\sigma_{\mathcal{M}}$", fontsize=14)
+    plt.ylabel(r"$\langle I_{DF} \rangle$", fontsize=14)
+    plt.title(r"Average Dynamical Friction vs $\sigma_{\mathcal{M}}$", fontsize=14)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "avg_I_vs_sigma_new.png"), dpi=300)
+    
+    # Plot average I/mach as a function of sigma_mach
+    fig = plt.figure(figsize=(10, 6), facecolor='w')
+    for i, ratio in enumerate(Vt_rmin_ratios):
+        plt.plot(sigma_mach_array, avg_I_over_mach_values[i], color=colors[i], 
+                 label=r"V t/r$_{\min}$ = "+f"{ratio}")
+    plt.xlabel(r"$\sigma_{\mathcal{M}}$", fontsize=14)
+    plt.ylabel(r"$\langle I_{DF}/\mathcal{M} \rangle$", fontsize=14)
+    plt.title(r"Average $I_{DF}/\mathcal{M}$ vs $\sigma_{\mathcal{M}}$", fontsize=14)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "avg_I_over_mach_vs_sigma_new.png"), dpi=300)
     
     
 
@@ -556,7 +700,5 @@ if __name__ == '__main__':
     #plot_supersonic_schematic(mach=1.5, xmin=0.1)
     #plot_supersonic_allmach()
     
-    plot_I_Mach(output_dir)
-    I_Mach1 = Idf_Ostriker99(1.0, 0.1)
-    print(I_Mach1)
-    
+    # plot_I_Mach(output_dir)
+    plot_averages(output_dir)

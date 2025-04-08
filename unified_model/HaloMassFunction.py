@@ -14,7 +14,7 @@ import matplotlib.ticker as ticker
 
 from physical_constants import *
 from Config import simulation_set, hmf_ratio_params, \
-p_evolved, p_unevolved, alpha_z_params, lgA_z_params, omega_z, beta_ln10_z
+p_evolved, p_unevolved, alpha_z_params, lgA_z_params, omega_z_params, lnbeta_z_params
 from HaloProperties import Vel_Virial_analytic_oldversion
 
 #output dn/dM in the unit of [(Mpc/h)^(-3) (Msun/h)^(-1)]
@@ -398,6 +398,10 @@ def fitFunc_lg_dNdlgx(lgx,alpha,beta_ln10, omega, lgA):
     x = 10**lgx
     return lgA - alpha*lgx - beta_ln10*x**omega 
 
+def piecewise_func_for_omega_lnbeta(z, c, m):
+    b = c - m*6  # Derive b to ensure continuity at z=6
+    result = np.where(z >= 6, c, m*z + b)
+    return result
 
 def plot_shmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/'
@@ -429,7 +433,7 @@ def plot_shmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
     x_fit = np.linspace(np.min(redshifts), np.max(redshifts), 100)
     y_fit = popt[0]*x_fit + popt[1]
     ax.plot(x_fit, y_fit, color='r', linestyle='--',
-            label=r'$\alpha$'+f' fit: {popt[0]:.4f}z {"-" if popt[1] < 0 else "+"} {abs(popt[1]):.4f}')
+            label=r'$\alpha$'+f' fit: {popt[0]:.2f}z {"-" if popt[1] < 0 else "+"} {abs(popt[1]):.2f}')
     #also plot van den Bosch 2016
     ax.scatter(0, p_unevolved[0], facecolors='none', edgecolors='grey', marker='o')
     ax.scatter(0, p_evolved[0], c='grey', marker='o')
@@ -439,7 +443,7 @@ def plot_shmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
     popt, pcov = curve_fit(lambda x, a, b: a*x + b, redshifts, lgA_list)
     y_fit = popt[0]*x_fit + popt[1]
     ax2.plot(x_fit, y_fit, color='b', linestyle='--', 
-         label=r'$\lg\mathrm{A}$'+f' fit: {popt[0]:.4f}z {"-" if popt[1] < 0 else "+"} {abs(popt[1]):.4f}')
+         label=r'$\lg\mathrm{A}$'+f' fit: {popt[0]:.2f}z {"-" if popt[1] < 0 else "+"} {abs(popt[1]):.2f}')
     ax2.scatter(0, p_unevolved[3], facecolors='none', edgecolors='grey', marker='^')
     ax2.scatter(0, p_evolved[3], c='grey', marker='^')
 
@@ -478,22 +482,43 @@ def plot_shmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
     ax = fig.gca()
     labels = [f'z={redshift}' for redshift in redshifts]
     ax.scatter(redshifts, omega_list, c='r', marker='o', label=r'$\omega$')
-    #then use a constant average to fit (only fit z>=6)
-    redshifts_fit = np.array([redshift for redshift in redshifts if redshift >= 6])
-    omega_list_fit = np.array([omega for i, omega in enumerate(omega_list) if redshifts[i] >= 6])
-    x_fit = np.linspace(6.0,np.max(redshifts),100)
-    y_fit = np.full_like(x_fit, np.mean(omega_list_fit))
-    ax.plot(x_fit, y_fit, color='r', linestyle='--', label=r'$\omega$'+f' = {np.mean(omega_list_fit):.4f}')
+    #then use a piecewise linear function to fit
+    # Initial parameter guesses [c, m]
+    omega_high_z = [omega for i, omega in enumerate(omega_list) if redshifts[i] >= 6]
+    initial_c_omega = np.mean(omega_high_z)
+    initial_m_omega = 0.5  # Start with a positive slope for z<6
+    params_omega, _ = curve_fit(piecewise_func_for_omega_lnbeta,redshifts,omega_list,p0=[initial_c_omega, initial_m_omega])
+    c_omega, m_omega = params_omega
+
+    x_fit = np.linspace(0, np.max(redshifts), 100)
+    y_fit_omega = piecewise_func_for_omega_lnbeta(x_fit, c_omega, m_omega)
+    b_omega = c_omega - m_omega*6
+    print('omega fit: c=%.2f, m=%.2f, b=%.2f' % (c_omega, m_omega, b_omega))
+    ax.plot(x_fit, y_fit_omega, color='r', linestyle='--', 
+        label=r'$\omega = %.2f$ for $z \geq 6$, $%.2f z + %.2f$ for $z < 6$' % 
+        (c_omega, m_omega, b_omega))
+
     #also plot van den Bosch 2016
     ax.scatter(0, p_unevolved[2], facecolors='none', edgecolors='grey', marker='o')
     ax.scatter(0, p_evolved[2], c='grey', marker='o')
 
+
     ax2 = ax.twinx()
     ax2.scatter(redshifts, ln_beta_list, c='b', marker='^', label=r'$\ln\beta$')
-    #then use a constant average to fit (only fit z>=6)
-    ln_beta_list_fit = np.array([ln_beta for i, ln_beta in enumerate(ln_beta_list) if redshifts[i] >= 6])
-    y_fit = np.full_like(x_fit, np.mean(ln_beta_list_fit))
-    ax2.plot(x_fit, y_fit, color='b', linestyle='--', label=r'$\ln\beta$'+f' = {np.mean(ln_beta_list_fit):.4f}')
+    #then use a piecewise linear function to fit
+    # Initial parameter guesses [c, m]
+    ln_beta_high_z = [ln_beta for i, ln_beta in enumerate(ln_beta_list) if redshifts[i] >= 6]
+    initial_c_ln_beta = np.mean(ln_beta_high_z)
+    initial_m_ln_beta = 0.5  # Start with a positive slope for z<6
+    params_ln_beta, _ = curve_fit(piecewise_func_for_omega_lnbeta,redshifts,ln_beta_list,p0=[initial_c_ln_beta, initial_m_ln_beta])
+    c_ln_beta, m_ln_beta = params_ln_beta
+    b_ln_beta = c_ln_beta - m_ln_beta*6
+    print('ln beta fit: c=%.2f, m=%.2f, b=%.2f' % (c_ln_beta, m_ln_beta, b_ln_beta))
+    y_fit_ln_beta = piecewise_func_for_omega_lnbeta(x_fit, c_ln_beta, m_ln_beta)
+    ax2.plot(x_fit, y_fit_ln_beta, color='b', linestyle='--', 
+         label=r'$\ln\beta = %.2f$ for $z \geq 6$, $%.2f z + %.2f$ for $z < 6$' % 
+         (c_ln_beta, m_ln_beta, b_ln_beta))
+    #also plot van den Bosch 2016
     ax2.scatter(0, np.log(np.log(10)*p_unevolved[1]), facecolors='none', edgecolors='grey', marker='^')
     ax2.scatter(0, np.log(np.log(10)*p_evolved[1]), c='grey', marker='^')
 
@@ -501,7 +526,7 @@ def plot_shmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
     y_max = max(1.1*np.max(omega_list), 1.1*np.max(ln_beta_list))
     ax.set_ylim(y_min, y_max)
     ax2.set_ylim(y_min, y_max)
-    ax.set_xlabel('t', fontsize=14)
+    ax.set_xlabel('Redshift', fontsize=14)
     ax.set_ylabel(r'$\omega$', fontsize=14, color='r')
     ax2.set_ylabel(r'$\ln\beta$', fontsize=14, color='b')
     ax.tick_params(direction='in', which='both', labelsize=12)
@@ -527,6 +552,30 @@ def plot_shmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
     ax.invert_xaxis()
     plt.tight_layout()
     plt.savefig(output_filename,dpi=300)
+
+
+    #show how the exponential tail of SHMF changes with omega and beta
+    output_filename = os.path.join(base_dir, 'analysis', 'SHMF_redshift_evolution_exponential_tail.png')
+    fig = plt.figure(figsize=(8,6), facecolor='white')
+    ax = fig.gca()
+    labels = [f'z={redshift}' for redshift in redshifts]
+    lgx_all = [-2, -1, -0.8, -0.5, -0.2]
+
+    for lgx in lgx_all:
+        x = 10**lgx
+        exponential_tail = [np.exp(-beta*x**omega) for beta, omega in zip(beta_list, omega_list)]
+        ax.plot(redshifts, exponential_tail, label=f'lg(m/M)={lgx}')
+    
+    ax.set_xlabel('Redshift', fontsize=14)
+    ax.set_ylabel(r'$\exp(-\beta (m/M)^{\omega})$', fontsize=14)
+    ax.tick_params(direction='in', which='both', labelsize=12)
+    ax.legend(fontsize=11)
+    ax.invert_xaxis()
+    plt.tight_layout()
+    plt.savefig(output_filename,dpi=300)
+
+
+
 
 
 def run_shmf_redshift_evolution():
@@ -555,11 +604,11 @@ def SHMF_BestFit_dN_dlgx(lgx, redshift, SHMF_model):
     dN/dlgx(x, z)
     '''
     if SHMF_model == 'BestFit_z':
-        if (redshift < 6):
-            #omega and beta not available
-            raise ValueError("SHMF Error: omega and beta not available for z<6")
         alpha_z = alpha_z_params[0]*redshift + alpha_z_params[1]
         lgA_z = lgA_z_params[0]*redshift + lgA_z_params[1]
+        omega_z = piecewise_func_for_omega_lnbeta(redshift, omega_z_params[0], omega_z_params[1])
+        lnbeta_z = piecewise_func_for_omega_lnbeta(redshift, lnbeta_z_params[0], lnbeta_z_params[1])
+        beta_z = np.exp(lnbeta_z); beta_ln10_z = beta_z/np.log(10)
         lg_dNdlgx = fitFunc_lg_dNdlgx(lgx, alpha_z, beta_ln10_z, omega_z, lgA_z)
         return 10**lg_dNdlgx
     
@@ -782,8 +831,8 @@ def plot_M_Jeans():
 
 if __name__ == "__main__":
     # HMF_ratio_2Dbestfit(9, 0.0)
-    # run_shmf_redshift_evolution()
+    run_shmf_redshift_evolution()
   
     # plot_M_Jeans()
     # run_hmf_redshift_evolution()
-    run_hmfhist()
+    # run_hmfhist()

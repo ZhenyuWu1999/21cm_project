@@ -26,6 +26,9 @@ def generalized_NFW_profile(x, rho_s, alpha):
 def f_NFW(x):
     return np.log(1+x) - x/(1+x)
 
+def f_core(x):
+    return np.log(1+x) -x*(3*x+2)/2/(x+1)**2
+
 def get_concentration(M_in_Msun, z, model_name):
     '''
     parameters:
@@ -76,7 +79,7 @@ def gasdensity_core_profile(x, M, z, concentration_model):
     concentration_model: concentration model name for colossus
     '''
     concentration = get_concentration(M, z, concentration_model)
-    rho_s = concentration**3 / f_NFW(concentration) / 3.0
+    rho_s = concentration**3 / f_core(concentration) / 3.0  
     alpha = 0.0
     f_gas = Omega_b/Omega_m
     return f_gas * generalized_NFW_profile(x, rho_s, alpha) #in unit of rho_vir
@@ -103,7 +106,7 @@ def compare_concentration_model():
         print(model_name)
 
     M = 10**np.arange(5.0, 15.4, 0.1)
-    #z_list = [0, 3, 6, 8, 10, 12, 15]
+    z_list = [0, 3, 6, 8, 10, 12, 15]
     models_to_plot = ['bullock01','ludlow16', 'child18','diemer19','ishiyama21']
     for z in z_list:
         fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')

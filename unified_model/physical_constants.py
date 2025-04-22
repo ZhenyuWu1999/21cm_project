@@ -30,6 +30,7 @@ Msun = np.float64(1.988e30)
 Mpc = np.float64(3.086e22)
 kpc = np.float64(3.086e19)
 Myr = np.float64(3.1536e13)  # seconds
+Gyr = Myr * 1e3  # seconds
 Zsun = 0.01295 # solar metallicity, grackle default
 #Zsun = 0.0127 # solar metallicity, according to TNG data specifications
 

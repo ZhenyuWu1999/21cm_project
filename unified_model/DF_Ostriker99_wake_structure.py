@@ -567,7 +567,7 @@ def plot_supersonic_allmach():
 def plot_I_Mach(output_dir):
     mach_array = np.logspace(-2, np.log10(5.0), 100)
     # Cst_rmin_ratios = np.array([10, 20, 50, 100])
-    Vt_rmin_ratios = np.array([10, 20])
+    Vt_rmin_ratios = np.array([20, 40, 100, 200])
     I_DF_list = []
     for Vt_rmin in Vt_rmin_ratios:
         I_DF = []
@@ -580,7 +580,7 @@ def plot_I_Mach(output_dir):
 
     #also compare with Kim07 model
     I_phi_Kim07_list = []
-    Rp_rmin_ratios = np.array([5, 10])
+    Rp_rmin_ratios = np.array([10, 20, 50, 100])
     for Rp_rmin in Rp_rmin_ratios:
         I_phi_Kim07 = []
         for mach in mach_array:
@@ -592,8 +592,8 @@ def plot_I_Mach(output_dir):
     I_R_Kim07 = np.array([Idf_R_Kim2007(mach) for mach in mach_array])
         
 
-    Ostriker99_colors = ['orange', 'red']
-    Kim07_colors = ['cyan','blue']
+    Ostriker99_colors = ['orange', 'darkorange', 'red', 'brown']
+    Kim07_colors = ['cyan', 'deepskyblue', 'dodgerblue','royalblue']
     
     fig, ax = plt.subplots(1, 1, figsize=(5, 4),facecolor='w')
     for i, ratio in enumerate(Vt_rmin_ratios):
@@ -690,8 +690,8 @@ def plot_averages(output_dir):
     sigma_mach_array = np.logspace(-1, np.log10(3), 50)  # From 0.1 to 3
 
     #average I and I/Mach in Ostriker99
-    Vt_rmin_ratios = np.array([10, 20])
-    Ostriker99_colors = ['orange', 'red']
+    Vt_rmin_ratios = np.array([20, 40, 100, 200])
+    Ostriker99_colors = ['orange', 'darkorange', 'red', 'brown']
     avg_I_values = np.zeros((len(Vt_rmin_ratios), len(sigma_mach_array)))
     avg_I_over_mach_values = np.zeros((len(Vt_rmin_ratios), len(sigma_mach_array)))
     
@@ -704,8 +704,8 @@ def plot_averages(output_dir):
             avg_I_over_mach_values[i, j] = compute_average_I(I_over_mach, sigma_mach, Vt_rmin)
     
     #also compare with Kim07 model
-    Rp_rmin_ratios = np.array([5, 10])
-    Kim07_colors = ['cyan','blue']
+    Rp_rmin_ratios = np.array([10, 20, 50, 100])
+    Kim07_colors = ['cyan', 'deepskyblue', 'dodgerblue','royalblue']
     avg_I_phi_values = np.zeros((len(Rp_rmin_ratios), len(sigma_mach_array)))
     avg_I_phi_over_mach_values = np.zeros((len(Rp_rmin_ratios), len(sigma_mach_array)))
     for i, Rp_rmin in enumerate(Rp_rmin_ratios):

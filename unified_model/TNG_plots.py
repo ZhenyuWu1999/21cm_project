@@ -2,8 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 import os
+import matplotlib.lines as mlines
 from TNGDataHandler import load_processed_data
-from physical_constants import Zsun, Myr, kpc, Omega_b, Omega_m
+from physical_constants import Zsun, Myr, kpc, Omega_b, Omega_m, h_Hubble
 
 
 
@@ -155,15 +156,18 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
     host_mass = data.halo_data['GroupMass'].value[host_indices]
     host_M200 = data.halo_data['Group_M_Crit200'].value[host_indices]
     host_R200 = data.halo_data['Group_R_Crit200'].value[host_indices] 
+    host_pos = data.halo_data['GroupPos'].value[host_indices]
     
     # Subhalo properties
     subhalo_mass = data.subhalo_data['SubMass'].value
-    halfmass_radius = data.subhalo_data['SubHalfmassRad'].value
+    halfmass_radius = data.subhalo_data['SubHalfmassRad'].value  #unit: m
     vmaxrad = data.subhalo_data['SubVmaxRad'].value
     mach_number = data.subhalo_data['mach_number'].value
     vmaxrad_tcross = data.subhalo_data['vmaxrad_tcross'].value
     host_tff = data.subhalo_data['host_t_ff'].value
     a_number = data.subhalo_data['A_number'].value
+    subhalo_pos = data.subhalo_data['SubPos'].value  #unit: kpc/h
+
 
     # Total hosthalo mass vs subhalo mass
     if 'Mtot_msub' in fig_options:
@@ -238,10 +242,18 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         print(f"Number of valid indices: {len(host_M200_selected)}")
         print(f"Number of total indices: {len(host_M200)}")
         fig = plt.figure(figsize=(8, 6), facecolor='w')
+        ax = fig.gca()
         plt.hist2d(np.log10(host_M200_selected), np.log10(a_number_selected), bins=50)
-        plt.colorbar(label='Counts')
+        plt.colorbar(label='Subhalo Counts')
         plt.xlabel(r'log$_{10}$(M$_{200}$ [M$_{\odot}$/h])', fontsize=14)
         plt.ylabel(r'log$_{10} \mathcal{A}$', fontsize=14)
+        ax.tick_params(axis='both', direction='in')
+        #add a text at left bottom corner for the redshift
+        redshift = data.header['Redshift']
+        textstr = f"z = {redshift:.2f}"
+        props = dict(boxstyle='round', facecolor='white', alpha=0.5)
+        ax.text(0.05, 0.15, textstr, transform=ax.transAxes, fontsize=14,
+                verticalalignment='top', bbox=props)
         plt.savefig(os.path.join(output_dir, f'M200_Anumber_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
         plt.close()
 
@@ -256,15 +268,24 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         log_min_M200 = np.log10(min_M200)
         log_max_M200 = np.log10(max_M200)
         M200_bins = np.logspace(log_min_M200, log_max_M200, 6)
+        # predefined_bins = np.arange(7, 14.5, 0.5)
+        # lower_bins = predefined_bins[predefined_bins > log_min_M200]
+        # upper_bins = predefined_bins[predefined_bins < log_max_M200]
+        # lower_bin = lower_bins[0]
+        # upper_bin = upper_bins[-1]
+        # lgM200_bins = np.arange(lower_bin, upper_bin + 0.5, 0.5)
+        # M200_bins = 10**lgM200_bins
 
         #save best fit sigma to a file
-        with open(os.path.join(output_dir, 'best_fit_Mach_sigma.txt'), 'w') as f:
+        bestfit_mach_filename = os.path.join(output_dir, f'best_fit_Mach_sigma_new.txt')
+        with open(bestfit_mach_filename, 'w') as f:
             f.write(f"threshold Mach number: {mach_number_max}, fraction of Mach number < {mach_number_max}: {mach_selected_fraction}\n")
             f.write("M200_min, M200_max, Best Fit Sigma\n")
 
-        colors = plt.cm.plasma(np.linspace(0, 1, 5)) #color map for different bins
+        colors = plt.cm.plasma(np.linspace(0, 1, 5))
+        # colors = plt.cm.plasma(np.linspace(0, 1, len(predefined_bins)-1))
 
-        for i in range(5):
+        for i in range(len(M200_bins)-1):
             mask = (host_M200 > M200_bins[i]) & (host_M200 < M200_bins[i+1]) & (mach_number < mach_number_max)
             plt.hist(mach_number[mask], bins=50, histtype='step', linewidth=2, density=True, color=colors[i],label=f'{M200_bins[i]:.2e} - {M200_bins[i+1]:.2e}')
         
@@ -277,7 +298,7 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
             )
             plt.plot(x_fit, y_fit, linestyle='--', color=colors[i])
 
-            with open(os.path.join(output_dir, 'best_fit_Mach_sigma.txt'), 'a') as f:
+            with open(bestfit_mach_filename, 'a') as f:
                 f.write(f"{M200_bins[i]:.2e}, {M200_bins[i+1]:.2e}, {popt[0]}\n")
 
         plt.xlabel('$\mathcal{M}$', fontsize=14)
@@ -286,8 +307,37 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         plt.savefig(os.path.join(output_dir, f'M200_Mach_bins_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
         plt.close()
         
-        
-    
+    if 'dpos_subhaloVmaxRad' in fig_options:
+        #plot distance between subhalo and host halo center vs subhalo Vmax radius
+        valid_indices = (vmaxrad > 0)
+        print(f"Number of valid indices: {np.sum(valid_indices)}")
+        print(f"Number of total indices: {len(valid_indices)}")
+        subhalo_pos_selected = subhalo_pos[valid_indices]
+        subhalo_radius_selected = vmaxrad[valid_indices]
+        host_pos_selected = host_pos[valid_indices]
+        # Calculate distance between subhalo and host halo center
+        dpos = np.sqrt(np.sum((subhalo_pos_selected - host_pos_selected)**2, axis=1))
+        subhalo_radius_kpch = subhalo_radius_selected / (kpc/h_Hubble)
+        dpos_rhalf_ratio = dpos / subhalo_radius_kpch
+
+        fig = plt.figure(figsize=(8, 6), facecolor='w')
+        plt.hist2d(np.log10(dpos), np.log10(subhalo_radius_kpch), bins=50)
+        plt.colorbar(label='Counts')
+        plt.xlabel(r'log$_{10}$(distance [kpc/h])', fontsize=14)
+        plt.ylabel(r'log$_{10}$(r$_{\mathrm{sub,VmaxRad}}$ [kpc/h])', fontsize=14)
+        plt.savefig(os.path.join(output_dir, f'dpos_subhaloVmaxRad_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+
+        #also plot the 1D histogram of dpos/rhalf
+        fig = plt.figure(figsize=(8, 6), facecolor='w')
+        #only plot the 99.7th percentile to exclude extremely large values
+        dpos_rhalf_ratio = dpos_rhalf_ratio[dpos_rhalf_ratio < np.percentile(dpos_rhalf_ratio, 99.7)]
+        plt.hist(dpos_rhalf_ratio, bins=50, histtype='step', linewidth=2)
+        plt.xlabel(r'log$_{10}$(distance/r$_{\mathrm{sub,VmaxRad}}$)', fontsize=14)
+        plt.ylabel('Counts', fontsize=14)
+        plt.savefig(os.path.join(output_dir, f'dpos_subhaloVmaxRad_ratio_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+
+
 
 def compare_mach_numbers(simulation_set, snapNums):
     """
@@ -304,8 +354,9 @@ def compare_mach_numbers(simulation_set, snapNums):
     num_snapshots = len(snapNums)
     
     #write best fit sigma to a file
-    with open(os.path.join(base_dir, simulation_set, 'analysis', 'best_fit_Mach_sigma.txt'), 'w') as f:
-        f.write("Snapshot, Redshift, Best Fit Sigma\n")
+    output_filename = os.path.join(base_dir, simulation_set, 'analysis', 'best_fit_Mach_sigma_allz.txt')
+    with open(output_filename, 'w') as f:
+        f.write("Snapshot, Redshift, Best Fit Sigma, F(Mach < 5)\n")
 
     # Setup the plot
     fig = plt.figure(figsize=(8, 6), facecolor='w')
@@ -318,8 +369,9 @@ def compare_mach_numbers(simulation_set, snapNums):
         data = load_processed_data(processed_file)
         
         # Get Mach numbers and filter out Mach > 5
-        mach_numbers = data.subhalo_data['mach_number'].value
-        mach_numbers = mach_numbers[mach_numbers < 5]
+        all_mach_numbers = data.subhalo_data['mach_number'].value
+        mach_numbers = all_mach_numbers[all_mach_numbers < 5]
+        selected_fraction = len(mach_numbers) / len(all_mach_numbers)
         redshift = data.header['Redshift']
         
         # Plot normalized distribution
@@ -337,10 +389,9 @@ def compare_mach_numbers(simulation_set, snapNums):
         plt.plot(x_fit, y_fit, color=color, linestyle='--')
 
         #write best fit sigma to a file
-        with open(os.path.join(base_dir, simulation_set, 'analysis', 'best_fit_Mach_sigma.txt'), 'a') as f:
-            f.write(f"{snapNum}, {redshift}, {popt[0]}\n")
+        with open(output_filename, 'a') as f:
+            f.write(f"{snapNum}, {redshift}, {popt[0]}, {selected_fraction}\n")
 
-        
         # Print statistics
         print(f"\nSnapshot {snapNum}, z = {redshift:.2f}")
         print(f"Number of subhalos: {len(mach_numbers)}")
@@ -348,17 +399,14 @@ def compare_mach_numbers(simulation_set, snapNums):
         print(f"Median Mach number: {np.median(mach_numbers):.2f}")
         print(f"Std Mach number: {np.std(mach_numbers):.2f}")
         print(f"Fraction subsonic (M < 1): {np.sum(mach_numbers < 1) / len(mach_numbers):.2%}")
-    
+    mb_fit_line = mlines.Line2D([], [], color='gray', linestyle='--', label='Maxwell-Boltzmann fit')
     plt.xlabel('Mach Number')
     plt.ylabel('Probability Density')
-    plt.title(f'Mach Number Distribution at Different Redshifts\n{simulation_set}')
-    plt.legend()
+    plt.legend(handles=plt.gca().get_legend_handles_labels()[0] + [mb_fit_line])
     plt.grid(True, alpha=0.3)
-    
-    # Save plot
     plot_dir = os.path.join(base_dir, simulation_set, 'analysis')
     os.makedirs(plot_dir, exist_ok=True)
-    plt.savefig(os.path.join(plot_dir, 'mach_number_distribution_cutMach5.png'), 
+    plt.savefig(os.path.join(plot_dir, 'mach_number_distribution_cutMach5_allz.png'), 
                 dpi=300, bbox_inches='tight')
     plt.close()
 
@@ -369,6 +417,7 @@ if __name__ == '__main__':
     
     snapNum_list = [0, 1, 2, 3, 4, 6, 8, 11, 13,
                     17,21,25,33,40,50,59,67,72,78,84,91,99]
+
     
     for snapNum in snapNum_list:
         print(f"Processing snapshot {snapNum} ...")
@@ -380,11 +429,11 @@ if __name__ == '__main__':
         output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
         # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass', 
         # 'R200_subhaloVmaxRad', 'tff_tcross', 'M200_Mach', 'M200_Anumber', 'Mach_fit']
-        # plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
-        plot_host_halo_properties(data, snapNum, output_dir)
-        
-
-    # Compare Mach numbers across snapshots
-    # snapNums = [2, 3, 4, 6, 8, 11, 13]
-    # compare_mach_numbers(simulation_set, snapNums)
+        fig_options_2Dhistogram = ['M200_Anumber']
+        plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
+        # plot_host_halo_properties(data, snapNum, output_dir)
+    
+    # snapNum_list = [1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 50, 99]
+    # # Compare Mach numbers across snapshots
+    # compare_mach_numbers(simulation_set, snapNum_list)
 

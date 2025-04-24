@@ -15,7 +15,9 @@ from Config import simulation_set
 from TNGDataHandler import load_processed_data
 from HaloProperties import get_gas_lognH_analytic, get_gas_lognH_numerical
 
-def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity, **kwargs):
+def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate, 
+                           volumetric_heating_rate, temperature, gas_metallicity, 
+                           f_H2, **kwargs):
     '''
     Wrapper function to set up and run constant density chemistry model.
     
@@ -38,6 +40,8 @@ def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate,
         Initial gas temperature in K
     gas_metallicity : float
         Gas metallicity in [Zsun]
+    f_H2 : float
+        H2 mass fraction
     **kwargs:
         UVB_flag : bool
             Whether to include UV background
@@ -121,6 +125,7 @@ def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate,
     fc = setup_fluid_container(
         my_chemistry,
         density=density,
+        f_H2=f_H2,
         temperature=temperature,
         state=state,
         metal_mass_fraction=metal_mass_fraction,
@@ -175,13 +180,20 @@ def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate,
     return data
 
 
-def plot_cooling_curve(output_dir, redshift, metallicity_Zsun):
+def plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2):
     evolve_cooling = False #equilibrium cooling rate
-    UVB_flag = True
+    UVB_flag = False
     Compton_Xray_flag = False
     dynamic_final_flag = False
 
+    #debug: LWbackground_intensity = ?
+
     temperature = np.logspace(2.0, 9.0, 200)
+    #also compare with Dekel08 
+    temperature_Dekel08 = np.logspace(5.0, 9.0, 100)
+    T6_Dekel08 = temperature_Dekel08 / 1.0e6
+    Lambda23_Dekel08 = 6.0*(metallicity_Zsun/0.3)**0.7 * T6_Dekel08**(-1) + 0.2*T6_Dekel08**(1/2)  #Lambda in 1e-23 erg/s*cm^3
+
     lognH_list = np.array([-3.0, -2.0, -1.0, 0.0, 1.0, 2.0])
 
     specific_heating_rate = 0.0
@@ -189,8 +201,9 @@ def plot_cooling_curve(output_dir, redshift, metallicity_Zsun):
     gas_metallicity = metallicity_Zsun
     data_alldensity = []
     for lognH in lognH_list:
-        data = run_constdensity_model(evolve_cooling,redshift,lognH,specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity, 
-                             UVB_flag=UVB_flag, Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag)
+        data = run_constdensity_model(evolve_cooling,redshift,lognH,specific_heating_rate, 
+                volumetric_heating_rate, temperature, gas_metallicity, f_H2=f_H2,
+                UVB_flag=UVB_flag, Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag)
         data_alldensity.append(data)
 
     fig, ax = plt.subplots(figsize=(8,6))
@@ -203,6 +216,8 @@ def plot_cooling_curve(output_dir, redshift, metallicity_Zsun):
         ax.plot(data["temperature"].v[neg_mask], -cooling_rate[neg_mask], color=colors[i], label=f'log(nH)={lognH_list[i]}')
         ax.plot(data["temperature"].v[pos_mask], cooling_rate[pos_mask], color=colors[i], linestyle='dashed')
 
+    #plot Dekel08 cooling rate
+    ax.plot(temperature_Dekel08, Lambda23_Dekel08*1.0e-23, color='black', linestyle='dotted', label='Dekel+08')
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlabel('Temperature [K]', fontsize=14)
@@ -210,16 +225,21 @@ def plot_cooling_curve(output_dir, redshift, metallicity_Zsun):
     ax.set_title(f'Cooling rate at z={redshift}, Z={metallicity_Zsun}Z$_\odot$', fontsize=16)
     ax.legend()
     ax.set_ylim(1e-29, 1e-20)
+    # ax.set_ylim(1e-27, 1e-21)
+    ax.tick_params(axis='both', direction='in')
     plt.tight_layout()
     filename_ext = ''
     if UVB_flag:
-        filename_ext = '_UVB'
+        filename_ext += '_UVB'
     if Compton_Xray_flag:
-        filename_ext = '_ComptonX'
+        filename_ext += '_ComptonX'
+    if f_H2 > 0:
+        filename_ext += f'_fH2_{f_H2:.1e}'
     
-    filename = f'Cooling_rate_z{redshift}_Z{metallicity_Zsun}Zsun{filename_ext}.png'
+    filename = f'Cooling_rate_z{redshift}_Z{metallicity_Zsun:.1e}Zsun{filename_ext}.png'
     plt.savefig(os.path.join(output_dir, filename), dpi=300)
 
+"""
 def test_coolingcell():
     UVB_flag = False
     Compton_Xray_flag = False
@@ -353,17 +373,18 @@ def test_TNGhalo_cooling(snapNum):
         print("\n\n")
 
         # break
-
+"""
         
 
 if __name__ == "__main__":
     
-    redshift = 12
-    metallicity_Zsun = 1.0e-6
+    redshift = 2
+    metallicity_Zsun = 0.3*10**(-0.17*redshift)  # Dekel & Birnboim (2006)
+    f_H2 = 0.0
     output_dir = './Grackle_results'
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    plot_cooling_curve(output_dir, redshift, metallicity_Zsun)
+    plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2)
     
     # snapNum = 2
     # test_TNGhalo_cooling(snapNum)

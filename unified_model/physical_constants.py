@@ -19,7 +19,7 @@ h_Hubble = np.float64(cosmo.h)
 delta_c = np.float64(1.686)  # spherical collapse
 
 Omega_m = np.float64(cosmo.Om0)
-Omega_lambda = np.float64(1.0 - Omega_m)
+Omega_lambda = np.float64(cosmo.Ode0)
 Omega_r = np.float64(0.0)  # ignore cosmo.Or0
 Omega_k = np.float64(0.0)
 Omega_b = np.float64(cosmo.Ob0)
@@ -48,6 +48,8 @@ freefall_factor = np.float64(np.sqrt(3 * np.pi / 32))
 
 
 if __name__ == "__main__":
-    print(Omega_b)
-    print(Omega_m)
+    print("H0:", H0)
+    print("Omega_lambda:", cosmo.Ode0)
+    print("Omega_b:", Omega_b)
     print(Omega_b/Omega_m)
+    print("sigma8:", sigma8)

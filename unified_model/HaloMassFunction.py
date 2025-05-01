@@ -1,4 +1,5 @@
 from colossus.lss import mass_function
+from hmf import MassFunction
 import numpy as np
 import matplotlib.pyplot as plt
 import os
@@ -19,20 +20,45 @@ from HaloProperties import Vel_Virial_analytic_oldversion
 
 #output dn/dM in the unit of [(Mpc/h)^(-3) (Msun/h)^(-1)]
 #input M in the unit of Msun/h
-def HMF_Colossus(M, z, model = 'press74'):
+def HMF_Colossus(M, z, model, mdef = None):
     if model == 'press74' or model == 'sheth99':
-        mfunc = mass_function.massFunction(M, z, model = model, q_out = 'M2dndM')
+        mfunc = mass_function.massFunction(M, z, model = model, q_out = 'M2dndM', mdef = 'fof')
     elif model == 'reed07':
         ps_path = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/analysis/input_spectrum_PLANCK15.txt'
         #mfunc = mass_function.massFunction(M, z, model = model, ps_args={'model': 'test', 'path': ps_path}, q_out = 'M2dndM')
         mfunc = mass_function.massFunction(M, z, model = model, ps_args={'model': 'eisenstein98'}, q_out = 'M2dndM')
     elif model == 'tinker08':
-        mfunc = mass_function.massFunction(M, z, model = model, mdef='200c', q_out = 'M2dndM')
+        mfunc = mass_function.massFunction(M, z, model = model, mdef=mdef, q_out = 'M2dndM')
     else:
         print('Error: model not supported')
         return -999
     return mfunc/M**2*rho_m0*(1+z)**3/h_Hubble**2
 
+def HMF_py_dndlog10m(lgMmin, lgMmax, dlog10m, z, hmf_model, mdef_model, mdef_params):
+    '''
+    Parameters:
+    lgMmin: log10(Mmin [Msun/h])
+    lgMmax: log10(Mmax [Msun/h])
+    dlog10m: log10(M) bin width
+    z: redshift
+    hmf_model: the model of HMF, e.g. 'Tinker08'
+    mdef_model: the model of mass definition, e.g. "SOCritical"
+    mdef_params: the parameters of mass definition, e.g. {'overdensity': 200}
+    Returns:
+    dndlog10m: the HMF in the unit of [(cMpc/h)^(-3) dex^{-1}]
+    '''
+    my_mf = MassFunction(hmf_model = hmf_model, cosmo_model = 'Planck15')
+    my_mf.update(
+        z = z,
+        Mmin = lgMmin,
+        Mmax = lgMmax,
+        dlog10m = dlog10m,
+        mdef_model = mdef_model,
+        mdef_params = mdef_params
+    )
+    return my_mf.m, my_mf.dndlog10m
+
+    
 
 def plot_hmf(halos, index_selected, current_redshift, dark_matter_resolution, simulation_volume, hmf_filename):
     '''
@@ -44,13 +70,16 @@ def plot_hmf(halos, index_selected, current_redshift, dark_matter_resolution, si
     hmf_filename: the output filename of the plot
 
     '''
+    scale_factor = 1.0/(1.+current_redshift)
+    comoving_factor = scale_factor**3
     #plot HMF (halo mass function)
     M_all = halos['GroupMass']*1e10   #unit: 1e10 Msun/h
+    # M_all = halos['Group_M_Crit200']*1e10  #unit: Msun/h
     selected_M_all = M_all[index_selected]
     max_M = np.max(M_all)
 
     # Create a histogram (logarithmic bins and logarithmic mass)
-    bins = np.logspace(np.log10(min(M_all)), np.log10(max(M_all)), num=50)
+    bins = np.logspace(np.log10(min(M_all[M_all > 0])), np.log10(max(M_all)), num=50)
     hist, bin_edges = np.histogram(M_all, bins=bins)
     hist_selected, _ = np.histogram(selected_M_all, bins=bins)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
@@ -67,31 +96,36 @@ def plot_hmf(halos, index_selected, current_redshift, dark_matter_resolution, si
     logM_limits = [6, np.log10(1.1*max_M)]  # Limits for log10(M [Msun/h])
     HMF_lgM_press74 = []
     HMF_lgM_sheth99 = []
-    # HMF_lgM_reed07 = []
     # HMF_lgM_tinker08 = []
-    logM_list = np.linspace(logM_limits[0], logM_limits[1],57)
+
+    dlog10m = (logM_limits[1] - logM_limits[0]) / 60
+    logM_list = np.arange(logM_limits[0], logM_limits[1], dlog10m)
     #plot analytical HMF
     for logM in logM_list:
         M = 10**(logM)
         HMF_lgM_press74.append(HMF_Colossus(10**logM, current_redshift, 'press74')* np.log(10)*M)  
         HMF_lgM_sheth99.append(HMF_Colossus(10**logM, current_redshift, 'sheth99')* np.log(10)*M)
-        # HMF_lgM_reed07.append(HMF_Colossus(10**logM, current_redshift, 'reed07')* np.log(10)*M)
-        # HMF_lgM_tinker08.append(HMF_Colossus(10**logM, current_redshift, 'tinker08')* np.log(10)*M)
+        # HMF_lgM_tinker08.append(HMF_Colossus(10**logM, current_redshift, 'tinker08', mdef = '200c')* np.log(10)*M)
+    HMF_lgM_press74 = np.array(HMF_lgM_press74)
+    HMF_lgM_sheth99 = np.array(HMF_lgM_sheth99)
+    # HMF_lgM_tinker08 = np.array(HMF_lgM_tinker08)
+    # _, HMF_lgM_tinker08_test = HMF_py_dndlog10m(logM_limits[0], logM_limits[1], dlog10m, current_redshift, 'Tinker08', mdef_model = 'SOCritical', mdef_params = {'overdensity': 200})
+
     #plot the dark matter resolution and TNG HMF
     plt.yscale('log')
     plt.xscale('log')
     plt.axvline(100*dark_matter_resolution, color='black', linestyle='--')
-    plt.scatter(bin_centers, number_density, c='none', edgecolor='blue', marker='o', label='All TNG halos')
-    plt.scatter(bin_centers, number_density_selected, c='none', edgecolor='green', marker='^',label='Selected TNG halos')
+    plt.scatter(bin_centers, number_density*comoving_factor, c='none', edgecolor='blue', marker='o', label='All TNG halos')
+    plt.scatter(bin_centers, number_density_selected*comoving_factor, c='none', edgecolor='green', marker='^',label='Selected TNG halos')
 
-    plt.plot(10**(logM_list),HMF_lgM_press74,color='k',linestyle='-',label='Press74')
-    plt.plot(10**(logM_list),HMF_lgM_sheth99,color='red',linestyle='-',label='Sheth99')
-    # plt.plot(10**(logM_list),HMF_lgM_reed07,color='orange',linestyle='-',label='Reed07')
-    # plt.plot(10**(logM_list),HMF_lgM_tinker08,color='purple',linestyle='-',label='Tinker08')
+    plt.plot(10**(logM_list),HMF_lgM_press74*comoving_factor, color='k',linestyle='-',label='Press74')
+    plt.plot(10**(logM_list),HMF_lgM_sheth99*comoving_factor, color='red',linestyle='-',label='Sheth99')
+    # plt.plot(10**(logM_list),HMF_lgM_tinker08*comoving_factor, color='blue',linestyle='-',label='Tinker08')
+    # plt.plot(10**(logM_list),HMF_lgM_tinker08_test,color='orange',linestyle='-',label='Tinker08')
     plt.legend(fontsize=13)
     
     plt.xlabel(r'Mass [$\mathrm{M}_{\odot}/\mathrm{h}$]', fontsize=14)
-    plt.ylabel(r'$\frac{\text{dN}}{\text{ d\lg M}}$ [$(\text{Mpc/h})^{-3}$]',fontsize=14)
+    plt.ylabel(r'$\frac{\text{dN}}{\text{ d\lg M}}$ [$(\text{cMpc/h})^{-3}$]',fontsize=14)
     ax.tick_params(direction='in', which='both', labelsize=12)
     
     plt.tight_layout()
@@ -144,10 +178,15 @@ def plot_hmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
         bin_centers = hmf_data[:,2]
         number_density_all = hmf_data[:,3]
         number_density_selected = hmf_data[:,4]
+        # lgMmin = np.log10(min(bin_centers))
+        # lgMmax = np.log10(max(bin_centers))
+        # dlog10m = (lgMmax - lgMmin) / (len(bin_centers) - 1)
+        # M_list, HMF_Tinker08 = HMF_py_dndlog10m(lgMmin, lgMmax, dlog10m, redshift, 'Tinker08', mdef_model = 'SOCritical', mdef_params = {'overdensity': 200})   
         #sheth99
         lgM = np.log10(bin_centers)
         HMF_lgM_sheth99 = np.array([HMF_Colossus(10**lgM[j], redshift, 'sheth99')* np.log(10)*10**lgM[j] for j in range(len(lgM))])
         
+        # plt.plot(M_list, HMF_Tinker08, color=colors[i],linestyle='-',label=labels[i])
         plt.plot(10**lgM,HMF_lgM_sheth99*comoving_factor, color=colors[i],linestyle='-',label=labels[i])
         plt.scatter(bin_centers, number_density_all*comoving_factor, c='none', edgecolor=colors[i], marker='o')
         plt.scatter(bin_centers, number_density_selected*comoving_factor, c='none', edgecolor=colors[i], marker='^')
@@ -174,8 +213,8 @@ def plot_hmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
         bin_centers = hmf_data[:,2]
         number_density_all = hmf_data[:,3]
         number_density_selected = hmf_data[:,4]
-        # Avoid zero division
-        mask = number_density_all > 0
+        # Avoid zero division and avoid resolution effect
+        mask = (number_density_all > 0) & (number_density_selected > 0)
         ratio_masked = number_density_selected[mask]/number_density_all[mask]
         bin_centers_masked = bin_centers[mask]
         # Add to our collections

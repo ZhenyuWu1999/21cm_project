@@ -45,7 +45,9 @@ def load_tng_data(basePath, snapNum):
     print("loading subhalos ...")
     # Define subhalo fields that need to be converted to float64
     subhalo_float_fields = [
+        'SubhaloFlag',
         'SubhaloMass',
+        'SubhaloMassInMaxRad', #Sum of masses of all particles/cells within the radius of Vmax
         'SubhaloPos',
         'SubhaloVel',
         'SubhaloHalfmassRad',
@@ -195,7 +197,9 @@ def TNG_model():
         for j in sub_indices:
             subhalo_mass = subhalos['SubhaloMass'][j] * 1e10 # Msun/h
             host_mass = M_all[i]
-            if (subhalo_mass >= 50*dark_matter_resolution) and (subhalo_mass/host_mass < 1):
+            subhaloflag = subhalos['SubhaloFlag'][j]
+            #flag 0 (very rare): not of cosmological origin, may be a fragment of disk identified by SUBFIND; 1: galaxy or satellite
+            if (subhalo_mass >= 50*dark_matter_resolution) and (subhalo_mass/host_mass < 1) and (subhaloflag == 1):
                 all_subhalo_indices.append(j)
                 host_indices_for_subs.append(i)
                 
@@ -206,6 +210,7 @@ def TNG_model():
     
     #now get the basic properties of selected subhalos
     sub_mass_all = subhalos['SubhaloMass'][all_subhalo_indices] * 1e10  # Msun/h
+    # sub_massinvmaxrad_all = subhalos['SubhaloMassInMaxRad'][all_subhalo_indices] * 1e10  # Msun/h
     sub_halfrad_all = subhalos['SubhaloHalfmassRad'][all_subhalo_indices] / 1e3 * scale_factor / h_Hubble * Mpc  # meters
     sub_vmaxrad_all = subhalos['SubhaloVmaxRad'][all_subhalo_indices] / 1e3 * scale_factor / h_Hubble * Mpc  # meters
     sub_vel_all = subhalos['SubhaloVel'][all_subhalo_indices] * 1e3  # m/s, shape (n_selected_subs, 3)
@@ -267,6 +272,7 @@ def TNG_model():
 
     #add to AllTNGData
     AllTNGData.add_subhalo_quantity('SubMass', sub_mass_all, 'Msun/h', 'Subhalo mass')
+    # AllTNGData.add_subhalo_quantity('SubMassInMaxRad', sub_massinvmaxrad_all, 'Msun/h', 'Subhalo mass in Vmax radius')
     AllTNGData.add_subhalo_quantity('SubPos', subhalos['SubhaloPos'][all_subhalo_indices], 'ckpc/h', 'Position of subhalo')
     AllTNGData.add_subhalo_quantity('SubHalfmassRad', sub_halfrad_all, 'm', 'Half-mass radius')
     AllTNGData.add_subhalo_quantity('SubVmaxRad', sub_vmaxrad_all, 'm', 'Maximum velocity radius')
@@ -296,6 +302,12 @@ def TNG_model():
     processed_file = os.path.join(output_dir, f'processed_halos_snap_{snapNum}.h5')
     save_processed_data(processed_file, AllTNGData)
 
+    #check subhalo flags
+    subhalo_flags = subhalos['SubhaloFlag'][all_subhalo_indices]
+    print("# of selected subhalos: ", len(subhalo_flags))
+    print("# of flag = 0: ", np.sum(subhalo_flags == 0))
+    print("# of flag = 1: ", np.sum(subhalo_flags == 1))
+
 def plot_Mratio_dN_dlogMratio():
 
     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
@@ -305,9 +317,12 @@ def plot_Mratio_dN_dlogMratio():
     output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}','analysis')
 
     # Get required quantities
+    #test different definitions of subhalo mass and host mass
     sub_masses = data.subhalo_data['SubMass'].value  # Msun/h
+    # sub_masses = data.subhalo_data['SubMassInMaxRad'].value  # Msun/h
     host_indices = data.subhalo_data['host_index'].value
     host_masses = data.halo_data['GroupMass'].value[host_indices]  # Msun/h
+    # host_masses = data.halo_data['Group_M_Crit200'].value[host_indices] # Msun/h
     mass_ratios = sub_masses / host_masses
     host_logM = np.log10(host_masses)
 

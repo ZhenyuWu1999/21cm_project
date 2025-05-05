@@ -77,7 +77,8 @@ def get_gas_lognH_analytic(z):
     #assume 200 times critical density
     #return lognH in cm^-3
     rho  = 200 * rho_b0*(1+z)**3 *Msun/Mpc**3
-    nH = rho/(mu*mp)   #debug: mean molecular weight?????????
+    nH = rho*hydrogen_mass_fraction/mp #now nH is just for hydrogen, not for all particles
+    # nH = rho/(mu*mp)   
     nH_cm3 = nH/1.0e6
     lognH = np.log10(nH_cm3)
     return lognH
@@ -93,7 +94,17 @@ def get_gas_lognH_numerical(M_vir_in_Msun, R_vir_Mpc):
     R_vir_m = R_vir_Mpc * Mpc
     Mgas = Omega_b/Omega_m * M_vir_in_Msun
     rho = Mgas*Msun/(4/3*np.pi*R_vir_m**3)
-    nH = rho/(mu*mp)  #debug: mean molecular weight?????????
+    nH = rho*hydrogen_mass_fraction/mp #now nH is just for hydrogen, not for all particles
+    # nH = rho/(mu*mp)  
     nH_cm3 = nH/1.0e6
     lognH = np.log10(nH_cm3)
     return lognH
+
+
+if __name__ == "__main__":
+    # Test the functions
+    z = 2
+    lognH = get_gas_lognH_analytic(z)
+    nH = 10**lognH
+    mass_density = get_mass_density_analytic(z)
+    print(f"z = {z}, lognH = {lognH}, nH = {nH} cm^-3, mass_density = {mass_density} kg/m^3")

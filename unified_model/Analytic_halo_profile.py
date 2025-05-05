@@ -36,8 +36,13 @@ def get_concentration(M_in_Msun, z, model_name):
     z: redshift
     model: concentration model, see colossus tutorial, e.g. 'bullock01', 'ludlow16', 'child18','diemer19','ishiyama21'
     '''
-    M = M_in_Msun * h_Hubble # in Msun/h
-    c = concentration.concentration(M, '200c', z, model = model_name, range_return = False)
+    if model_name != 'bullock01_Dekel':
+        M = M_in_Msun * h_Hubble # in Msun/h
+        c = concentration.concentration(M, '200c', z, model = model_name, range_return = False)
+    elif model_name == 'bullock01_Dekel':
+        M13 = M_in_Msun/1e13
+        c = 9.0*M13**(-0.15)/(1+z)
+
     return c
 
     

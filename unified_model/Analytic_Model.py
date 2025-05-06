@@ -1,6 +1,7 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
 import os
 from scipy.integrate import quad
 from matplotlib.ticker import LogLocator
@@ -820,26 +821,6 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
         print("cooling_Dekel08_fid:", cooling_Dekel08_fid)
 
 
-    '''
-    print("------------------------------------------")
-    M_test = 1e11
-    c_test = get_concentration(M_test/h_Hubble, redshift, 'bullock01_Dekel')
-    profile_correction_for_cooling = c_test**3*(c_test**2+5*c_test+10)/30/(c_test+1)**5 * c_test**3/3/f_core(c_test)**2
-    cooling_result_test = get_EqCooling_for_single_host(M_test, redshift, cooling_param_sets, True)
-    cooling_result_test = np.array(cooling_result_test)
-    print("Cooling result test: ", cooling_result_test)
-    print("fg_correction: ", fg_correction)
-    print("profile correction: ", profile_correction_for_cooling)
-    print("Cooling result test with profile correction: ", cooling_result_test * profile_correction_for_cooling * fg_correction)
-
-
-    print("------------------------------------------")
-
-
-    cooling_Dekel_test = get_cooling_Dekel08_test(M_test/h_Hubble, redshift, fg, debug_output=True)
-    print("cooling_Dekel_test: ", cooling_Dekel_test)
-    '''
-
     selected_heating_datasets_index = [0, 1, 2, 3, 4]
     heating_datasets = [plot_heating_datasets[i] for i in selected_heating_datasets_index]
     output_dir = '/home/zwu/21cm_project/unified_model/Analytic_results/singlehost'
@@ -920,6 +901,22 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
 
 
 
+
+    #also save the heating and cooling results to a text file
+    lgM_list = np.array(lgM_list)
+    txt_filename = os.path.join(output_dir,f"singlehost_z{redshift:.2f}.txt")
+    with open(txt_filename, 'w') as f:
+        f.write("lgM, Heating_singlehost[erg/s](data_min3_max1, data_min3_max0, data_min3_max0_fg005), Cooling_singlehost[erg/s](Z=1e-6, Z=1e-2, Z=Z_Dekel; fg=0.05)\n")
+        for i in range(len(lgM_list)):
+            f.write(f"{float(lgM_list[i]):.2f}, "
+                    f"{float(1e7 * data_min3_max1['Heating_singlehost'][i]):.2e}, "
+                    f"{float(1e7 * data_min3_max0['Heating_singlehost'][i]):.2e}, "
+                    f"{float(1e7 * data_min3_max0_fg005['Heating_singlehost'][i]):.2e}, "
+                    f"{plot_cooling_datasets[0]['data'][i].item():.2e}, "
+                    f"{plot_cooling_datasets[1]['data'][i].item():.2e}, "
+                    f"{plot_cooling_datasets[2]['data'][i].item():.2e}\n")
+
+                        
 
 def Analytic_model(redshift):
 
@@ -1049,6 +1046,66 @@ def Analytic_model(redshift):
     # plt.savefig(filename,dpi=300)
 
 
+def run_heating_cooling_singlehost():
+    plot_global_heating_cooling_singlehost(0, 10, 15)
+    plot_global_heating_cooling_singlehost(1, 10, 15)
+    plot_global_heating_cooling_singlehost(2, 10, 15)
+    plot_global_heating_cooling_singlehost(3, 10, 14)
+    plot_global_heating_cooling_singlehost(4, 10, 14)
+    plot_global_heating_cooling_singlehost(5, 9, 13)
+    plot_global_heating_cooling_singlehost(6, 9, 13)
+    plot_global_heating_cooling_singlehost(7, 9, 12)
+    plot_global_heating_cooling_singlehost(8, 9, 12)
+
+def plot_heating_cooling_ratio_singlehost():
+    z_list = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    base_dir = '/home/zwu/21cm_project/unified_model/Analytic_results/singlehost'
+    All_results = []
+    for z in z_list:
+        txt_filename = os.path.join(base_dir,f"singlehost_z{z:.2f}.txt")
+        #lgM, Heating_singlehost[erg/s](data_min3_max1, data_min3_max0, data_min3_max0_fg005), Cooling_singlehost[erg/s](Z=1e-6, Z=1e-2, Z=Z_Dekel; fg=0.05)
+
+        data = np.loadtxt(txt_filename, skiprows=1, delimiter=',')
+
+        lgM = data[:, 0]
+        heating_min3_max0_fg005 = data[:, 3]
+        cooling_Z_Dekel = data[:, 6]
+        ratio_z = heating_min3_max0_fg005 / cooling_Z_Dekel
+        All_results.append({
+            "z": z,
+            "lgM": lgM,
+            "ratio": ratio_z
+        })
+    #plot the ratio
+    fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')
+    colors = plt.cm.rainbow(np.linspace(1, 0, len(z_list)))
+    for result in All_results:
+        z = result["z"]
+        lgM = result["lgM"]
+        ratio = result["ratio"]
+        heating_Dekel08_fid = np.array([get_heating_Dekel08(10**x/h_Hubble, z, 0.05) for x in lgM])
+        cooling_Dekel08_fid = np.array([get_cooling_Dekel08(10**x/h_Hubble, z, 0.05) for x in lgM])
+        ratio_Dekel08 = heating_Dekel08_fid / cooling_Dekel08_fid
+
+        ax.plot(lgM[lgM>11], ratio[lgM>11], color=colors[z], label=f'z={z:.2f}')
+        ax.plot(lgM[lgM>11], ratio_Dekel08[lgM>11], color=colors[z], linestyle='--')
+    solid_line = mlines.Line2D([], [], color='black', linestyle='-', label=r'This work (SHMF: [10$^{-3}$,1] BestFit, f$_g$=0.05)')
+    dashed_line = mlines.Line2D([], [], color='black', linestyle='--', label=r"Dekel08 (f$_c$ = f$_g$ = 0.05)")
+    #add Heating/Cooling = 1 line
+    ax.axhline(y=1, color='grey', linestyle='-')
+    ax.set_yscale('log')
+    ax.set_xlabel(r'lgM [M$_{\odot}$/h]', fontsize=14)
+    ax.set_ylabel(r'Heating/Cooling Ratio', fontsize=14)
+    legend1 = ax.legend(loc='lower right', title='z', fontsize=13)  
+    ax.add_artist(legend1)  
+    legend2 = ax.legend(handles=[solid_line, dashed_line], loc='upper left', fontsize=13)
+
+    ax.tick_params(axis='both', which='both', direction='in')
+    ax.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(base_dir, 'heating_cooling_ratio.png'), dpi=300)
+
+
 
 
 
@@ -1062,12 +1119,9 @@ if __name__ == "__main__":
     # plot_peak_lgM_cosmic_DFheating()
 
     #2. cimpare heating and cooling for a single host halo
-    plot_global_heating_cooling_singlehost(0, 10, 15)
-    plot_global_heating_cooling_singlehost(2, 10, 15)
-    plot_global_heating_cooling_singlehost(5, 9, 13)
+    # run_heating_cooling_singlehost()
+    plot_heating_cooling_ratio_singlehost()
 
-    plot_global_heating_cooling_singlehost(6, 9, 13)
-    plot_global_heating_cooling_singlehost(8, 9, 12)
     # plot_global_heating_cooling_singlehost(12, 11)
     # plot_global_heating_cooling_singlehost(15, 11)
 

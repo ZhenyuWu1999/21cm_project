@@ -54,3 +54,7 @@ if __name__ == "__main__":
     print("Omega_b:", Omega_b)
     print(Omega_b/Omega_m)
     print("sigma8:", sigma8)
+
+    print("1/H0:", 1./H0_s/Myr, "Myr")
+
+    # print(f"age of the universe: {cosmology.Cosmology.age(cosmo, z = 0.0)} billion years")

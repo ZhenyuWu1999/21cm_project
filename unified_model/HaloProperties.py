@@ -33,17 +33,21 @@ def Vel_Virial_numerical(M_vir_in_Msun, R_vir_Mpc):
     V_vir = np.sqrt(G_grav*M_vir_in_Msun*Msun/(R_vir_Mpc*Mpc))
     return V_vir #m/s    
 
-def Temperature_Virial_analytic(M_vir_in_Msun,z):  #van den Bosch Lecture 15
+def Temperature_Virial_analytic(M_vir_in_Msun,z,mean_molecular_weight=None):  #van den Bosch Lecture 15
+    if mean_molecular_weight is None:
+        mean_molecular_weight = mu
     halo_profile_factor = 3.0/2.0
     V_vir = Vel_Virial_analytic(M_vir_in_Msun, z)
-    T_vir = halo_profile_factor* mu*mp*V_vir**2 /kB/3
+    T_vir = halo_profile_factor* mean_molecular_weight*mp*V_vir**2 /kB/3
     return T_vir
 
-def inversefunc_Temperature_Virial_analytic(T_vir, z):
+def inversefunc_Temperature_Virial_analytic(T_vir, z, mean_molecular_weight=None):  #van den Bosch Lecture 15
     #T_vir in K, return M_vir in solar mass
     #use Crit200 definition
+    if mean_molecular_weight is None:
+        mean_molecular_weight = mu
     halo_profile_factor = 3.0/2.0
-    V_vir = np.sqrt(3*T_vir*kB/(halo_profile_factor*mu*mp))
+    V_vir = np.sqrt(3*T_vir*kB/(halo_profile_factor*mean_molecular_weight*mp))
     M_vir = inversefunc_Vel_Virial_analytic(V_vir, z)
     return M_vir
 
@@ -58,11 +62,13 @@ def Temperature_Virial_analytic_oldversion(M_vir_in_Msun,z):  #van den Bosch Lec
 #     #M in solar mass, return virial temperature in K
 #     return 3.6e5 * (Vel_Virial(M,z)/1e3/100)**2
 
-def Temperature_Virial_numerical(M_vir_in_Msun, R_vir_Mpc):
+def Temperature_Virial_numerical(M_vir_in_Msun, R_vir_Mpc, mean_molecular_weight=None):
     #M_vir in solar mass, R_vir in Mpc
+    if mean_molecular_weight is None:
+        mean_molecular_weight = mu
     halo_profile_factor = 3.0/2.0
     V_vir = Vel_Virial_numerical(M_vir_in_Msun, R_vir_Mpc)
-    T_vir = halo_profile_factor* mu*mp*V_vir**2 /kB/3
+    T_vir = halo_profile_factor* mean_molecular_weight*mp*V_vir**2 /kB/3
     return T_vir
 
 def get_A_number(mPert,Cs,rSoft):

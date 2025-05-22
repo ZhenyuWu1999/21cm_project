@@ -51,12 +51,16 @@ def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate,
             Whether to use dynamic final time evolution
         final_time : float, optional
             Final time in Myr (default: 50)
+        data_file: str, optional
+            cooling/heating data files used for interpolation (default: "CloudyData_UVB=HM2012.h5")
+
     '''
     
     UVB_flag = kwargs.get('UVB_flag', True)
     Compton_Xray_flag = kwargs.get('Compton_Xray_flag', False)
     dynamic_final_flag = kwargs.get('dynamic_final_flag', False)
     final_time = kwargs.get('final_time', 50.0)
+    data_file = kwargs.get('data_file', "CloudyData_UVB=HM2012.h5")
 
   
     tiny_number = 1e-20
@@ -84,7 +88,7 @@ def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate,
     my_chemistry.self_shielding_method = 0
     my_chemistry.H2_self_shielding = 0
     my_chemistry.grackle_data_file = \
-        os.path.join(grackle_data_dir, "CloudyData_UVB=HM2012.h5")
+        os.path.join(grackle_data_dir, data_file)
 
     my_chemistry.use_specific_heating_rate = 1
     my_chemistry.use_volumetric_heating_rate = 1
@@ -109,7 +113,7 @@ def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate,
 
     density = nH * mass_hydrogen_cgs
     
-    if np.log10(gas_metallicity)<-6:
+    if gas_metallicity == 0 or np.log10(gas_metallicity)<-6:
         gas_metallicity = 1e-6  #valid range minimum value
     #metallicity = 0.0 # Solar   #assume primordial gas
     metal_mass_fraction = gas_metallicity * my_chemistry.SolarMetalFractionByMass

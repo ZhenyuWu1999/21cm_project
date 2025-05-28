@@ -37,6 +37,7 @@ Zsun = 0.01295 # solar metallicity, grackle default
 Tvir_crit = np.float64(1e4)
 mu_neutral = np.float64(1.23)  # mean molecular weight for neutral primordial gas
 mu = np.float64(0.6) # mean molecular weight for ionized gas
+mu_minihalo = np.float64(1.0) # mean molecular weight for gas cloud ~200K - 1e4K
 hydrogen_mass_fraction = np.float64(0.75)  # hydrogen mass fraction in primordial gas
 
 rho_crit_z0_kgm3 = 3.0 * H0_s**2 / (8.0 * np.pi * G_grav)

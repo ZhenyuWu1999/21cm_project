@@ -4,9 +4,12 @@ import os
 import matplotlib.ticker as ticker
 from matplotlib.ticker import LogLocator
 from matplotlib.ticker import FixedLocator
+from matplotlib.colors import SymLogNorm
+import cmcrameri.cm as cmc
 from scipy.interpolate import interp1d
-
 from colossus.cosmology import cosmology
+
+
 from physical_constants import h_Hubble, H0_s, Omega_m, Omega_b, Myr, cosmo, Msun, mu_minihalo
 from HaloProperties import Temperature_Virial_analytic, get_gas_lognH_analytic, \
 inversefunc_Temperature_Virial_analytic, get_mass_density_analytic
@@ -305,8 +308,8 @@ def plot_fH2_vs_T(z):
         DF_heating_list[i] = DF_heating_density
         normalized_heating_list[i] = normalized_heating
     
-    Cooling_rate_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
-    Cooling_timescale_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
+    cooling_rate_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
+    cooling_timescale_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
 
     for i in range(len(T_list)):
         for j in range(len(initial_fH2_list)):
@@ -315,19 +318,31 @@ def plot_fH2_vs_T(z):
             
             if not np.isnan(cooling_rate) and not np.isnan(cooling_timescale):
                 energy_density_in_cell = cooling_rate * cooling_timescale
+                #debug factor * DF heating
                 cooling_rate_with_DF = cooling_rate + normalized_heating_list[i]
-                # print(f"i={i}, j={j}, cooling_rate = {cooling_rate}, cooling_timescale = {cooling_timescale}, DF_heating = {normalized_heating_list[i]}")
-                
-                #debug: check if cooling rate with DF is positive
-                # if cooling_rate_with_DF > 0:
-                    # print("net heating, cooling rate with DF = ", cooling_rate_with_DF)
-                    # exit()
+                cooling_rate_with_DF_all[i, j] = cooling_rate_with_DF
 
                 if cooling_rate_with_DF != 0:
                     cooling_timescale_with_DF = energy_density_in_cell / cooling_rate_with_DF
-                    Cooling_rate_with_DF_all[i, j] = cooling_rate_with_DF
-                    Cooling_timescale_with_DF_all[i, j] = cooling_timescale_with_DF
-
+                    cooling_timescale_with_DF_all[i, j] = cooling_timescale_with_DF
+    
+    #find where cooling_rate_with_DF crosses zero
+    fH2_zero_netcooling = np.full(len(T_list), np.nan)  # Store fH2 values where cooling rate crosses zero
+    for i in range(len(T_list)):
+        for j in range(len(initial_fH2_list) - 1, 0, -1):
+            ct1 = cooling_rate_with_DF_all[i, j]
+            ct2 = cooling_rate_with_DF_all[i, j - 1]
+            if (not np.isnan(ct1)) and (not np.isnan(ct2)):
+                if ct1 < 0.0 and ct2 > 0.0:
+                    # Interpolate to find the fH2 where cooling rate crosses zero
+                    fH2_zero_netcooling[i] = initial_fH2_list[j]
+                    break
+            if np.all(np.isnan(cooling_rate_with_DF_all[i, :])): #all nan, near 1e4K
+                fH2_zero_netcooling[i] = initial_fH2_list[0]
+            elif np.nanmax(cooling_rate_with_DF_all[i, :]) < 0.0: #all negative (net cooling)
+                fH2_zero_netcooling[i] = initial_fH2_list[0]
+            elif np.nanmin(cooling_rate_with_DF_all[i, :]) > 0.0: #all positive (net heating)
+                fH2_zero_netcooling[i] = initial_fH2_list[-1]
 
 
     #find the critical fH2 for each T
@@ -345,15 +360,50 @@ def plot_fH2_vs_T(z):
                             fH2_critical[i] = initial_fH2_list[j]
                             found = True
                             break
+                    elif ct1 <0.0 and ct2 > 0.0 and -ct1 <= t_Hubble_Myr:
+                        fH2_critical[i] = initial_fH2_list[j]
+                        found = True
+                        break
             if not found:
-                ct_low = timescale_array[i, 1]
-                if not np.isnan(ct_low) and ct_low < 0.0 and -ct_low <= t_Hubble_Myr:
-                    fH2_critical[i] = initial_fH2_list[1]
+                if np.all(np.isnan(timescale_array[i, :])): #all nan, near 1e4K
+                    fH2_critical[i] = initial_fH2_list[0]
+                elif 0 < np.nanmax(-timescale_array[i, :]) < t_Hubble_Myr:
+                    fH2_critical[i] = initial_fH2_list[0]
+                elif np.nanmin(-timescale_array[i, :]) > t_Hubble_Myr or np.nanmax(timescale_array[i, :])> 0.0: #max cooling not enough or all net heating
+                    fH2_critical[i] = initial_fH2_list[-1]
                     
         return fH2_critical
 
     fH2_critical = find_critical_fH2(cooling_timescale_all, initial_fH2_list, T_list, t_Hubble_Myr)
-    fH2_with_DF_critical = find_critical_fH2(Cooling_timescale_with_DF_all, initial_fH2_list, T_list, t_Hubble_Myr)
+    fH2_with_DF_critical = find_critical_fH2(cooling_timescale_with_DF_all, initial_fH2_list, T_list, t_Hubble_Myr)
+
+    fH2_Tegmark = np.array([get_fH2_Tegmark97(T, z) for T in T_list])
+    fH2_Yoshida = get_fH2_Yoshida03(T_list)
+    fH2_critical_Tegmark = np.array([get_critical_fH2_Tegmark97(T, z) for T in T_list])
+    line_styles = {
+    'tegmark_crit': {'color': 'black', 'linestyle': '-', 'linewidth': 2.5, 
+                'label': 'Critical line (Tegmark97)'},
+    'grackle_crit': {'color': 'darkgreen', 'linestyle': '-', 'linewidth': 2, 
+                'label': 'Critical line (Grackle)'},
+    'grackle_df_crit': {'color': 'darkorange', 'linestyle': '-', 'linewidth': 2, 
+                   'label': 'Critical line with DF heating (Grackle)'},
+    'yoshida_H2produced': {'color': 'dimgray', 'linestyle': '--', 'linewidth': 2, 
+                'label': r'H$_2$ produced $\propto$ T$^{1.52}$'},
+    'zero_netcooling': {'color': 'magenta', 'linestyle': ':', 'linewidth': 2,
+                'label': 'cooling = DF heating'},
+    }
+
+    print("cooling with DF = ", cooling_rate_with_DF_all)
+    print("max cooling with DF = ", np.nanmax(cooling_rate_with_DF_all))
+    print("min cooling with DF = ", np.nanmin(cooling_rate_with_DF_all))
+    print("min(abs(cooling rate with DF)) = ", np.nanmin(np.abs(cooling_rate_with_DF_all)))
+
+
+    print("cooling timescale with DF = ", cooling_timescale_with_DF_all)
+    print("max cooling timescale with DF = ", np.nanmax(cooling_timescale_with_DF_all))
+    print("min cooling timescale with DF = ", np.nanmin(cooling_timescale_with_DF_all))
+    print("min(abs(cooling timescale with DF)) = ", np.nanmin(np.abs(cooling_timescale_with_DF_all)))
+    # exit()
 
     def add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM, lgM_to_Tvir):
         """
@@ -414,12 +464,10 @@ def plot_fH2_vs_T(z):
         return ax2
 
 
-
-    #2D color plot for cooling rate
-    masked_lg_cooling_rate = np.ma.masked_invalid(np.log10(-cooling_rate_all))
-
     T_grid, fH2_grid = np.meshgrid(T_list, initial_fH2_list, indexing='ij')
 
+    #1. 2D color plot for cooling rate
+    masked_lg_cooling_rate = np.ma.masked_invalid(np.log10(-cooling_rate_all))
     fig, ax1 = plt.subplots(figsize=(9, 7)) 
     cmap = plt.colormaps['seismic_r'].copy()
     cmap.set_bad(color='lightgray') 
@@ -429,25 +477,61 @@ def plot_fH2_vs_T(z):
     vmin=np.nanmin(masked_lg_cooling_rate), vmax=np.nanmax(masked_lg_cooling_rate)
     )
     cb = plt.colorbar(c, label=r'log$_{10}$(cooling rate [erg cm$^3$ /s])')  # Add units if known
+    mask_1e4 = (T_list <= 1e4)
+    ax1.plot(T_list[mask_1e4], fH2_critical_Tegmark[mask_1e4], **line_styles['tegmark_crit'])
+    ax1.plot(T_list, fH2_critical, **line_styles['grackle_crit'])
+    ax1.plot(T_list, fH2_with_DF_critical, **line_styles['grackle_df_crit'])
+    ax1.plot(T_list[mask_1e4], fH2_Yoshida[mask_1e4], **line_styles['yoshida_H2produced'])
+    ax1.plot(T_list, fH2_zero_netcooling, **line_styles['zero_netcooling'])
+    ax1.set_ylim(1e-6, 1e-1)
     ax1.set_xscale('log')
     ax1.set_yscale('log')
     ax1.set_xlabel('Temperature [K]', fontsize=15)
     ax1.set_ylabel('Molecular Hydrogen Fraction $f_{H_2}$', fontsize=15)
+    legend = ax1.legend(fontsize=11, framealpha=0.5)
     ax2 = add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM_minihalo, lgM_to_Tvir_minihalo)
     plt.title('Cooling Rate vs Temperature and $f_{H_2}$')
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f"cooling_rate_vs_T_fH2_z{z}.png"), dpi=300)
     
 
+    #2. plot the cooling rate with DF heating
+    linthresh = 1e-30  # use linear scale between -linthresh and linthresh, otherwise log scale
+    net_cooling_with_DF_all = - cooling_rate_with_DF_all
+    vmax = np.nanmax(np.abs(net_cooling_with_DF_all))
+    vmin = -vmax
+    masked_cooling_rate = np.ma.masked_invalid(net_cooling_with_DF_all)
+
+    fig, ax1 = plt.subplots(figsize=(9, 7))
+    cmap = plt.colormaps['seismic_r'].copy()
+    cmap.set_bad(color='lightgray')
+
+    c = plt.pcolormesh(
+        T_grid, fH2_grid, masked_cooling_rate,
+        cmap=cmap, shading='auto',
+        norm=SymLogNorm(linthresh=linthresh, vmin=vmin, vmax=vmax)
+    )
+    cb = plt.colorbar(c, label=r'Net Cooling Rate [erg cm$^3$/s]')
+    mask_1e4 = (T_list <= 1e4)
+    ax1.plot(T_list[mask_1e4], fH2_critical_Tegmark[mask_1e4], **line_styles['tegmark_crit'])
+    ax1.plot(T_list, fH2_critical, **line_styles['grackle_crit'])
+    ax1.plot(T_list, fH2_with_DF_critical, **line_styles['grackle_df_crit'])
+    ax1.plot(T_list[mask_1e4], fH2_Yoshida[mask_1e4], **line_styles['yoshida_H2produced'])
+    ax1.plot(T_list, fH2_zero_netcooling, **line_styles['zero_netcooling'])
+    ax1.set_ylim(1e-6, 1e-1)
+    ax1.set_xscale('log')
+    ax1.set_yscale('log')
+    ax1.set_xlabel('Temperature [K]', fontsize=15)
+    ax1.set_ylabel('Molecular Hydrogen Fraction $f_{H_2}$', fontsize=15)
+    legend = ax1.legend(fontsize=11, framealpha=0.5)
+    ax2 = add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM_minihalo, lgM_to_Tvir_minihalo)
+    plt.title('Cooling - DF Heating')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"cooling_rate_vs_T_fH2_z{z}_withDF.png"), dpi=300)
 
 
 
-    fH2_Tegmark = np.array([get_fH2_Tegmark97(T, z) for T in T_list])
-    fH2_Yoshida = get_fH2_Yoshida03(T_list)
-    fH2_critical_Tegmark = np.array([get_critical_fH2_Tegmark97(T, z) for T in T_list])
-
-    #2D color plot for cooling timescale
-    #debug
+    #3. 2D color plot for cooling timescale
     masked_lg_cooling_timescale_all = np.ma.masked_invalid(np.log10(-cooling_timescale_all))
     fig, ax1 = plt.subplots(figsize=(9, 7)) 
     cmap = plt.colormaps['seismic'].copy()
@@ -459,21 +543,13 @@ def plot_fH2_vs_T(z):
     )
     cb = plt.colorbar(c, ax=ax1, label=r'log$_{10}$(cooling timescale [Myr])',shrink=1.0, pad=0.02)  
     cb.ax.tick_params(labelsize=14)  
-    line_styles = {
-    'tegmark_crit': {'color': 'black', 'linestyle': '-', 'linewidth': 2.5, 
-                'label': 'Critical line (Tegmark97)'},
-    'grackle_crit': {'color': 'darkgreen', 'linestyle': '-', 'linewidth': 2, 
-                'label': 'Critical line (Grackle)'},
-    'grackle_df_crit': {'color': 'darkorange', 'linestyle': '-', 'linewidth': 2, 
-                   'label': 'Critical line with DF heating (Grackle)'},
-    'yoshida_H2produced': {'color': 'dimgray', 'linestyle': '--', 'linewidth': 2, 
-                'label': r'H$_2$ produced $\propto$ T$^{1.52}$'}
-    }
+
     mask_1e4 = (T_list <= 1e4)
     ax1.plot(T_list[mask_1e4], fH2_critical_Tegmark[mask_1e4], **line_styles['tegmark_crit'])
     ax1.plot(T_list, fH2_critical, **line_styles['grackle_crit'])
     ax1.plot(T_list, fH2_with_DF_critical, **line_styles['grackle_df_crit'])
     ax1.plot(T_list[mask_1e4], fH2_Yoshida[mask_1e4], **line_styles['yoshida_H2produced'])
+    ax1.plot(T_list, fH2_zero_netcooling, **line_styles['zero_netcooling'])
     # ax1.plot(T_list[T_list<=1e4], fH2_Tegmark[T_list<=1e4], color='k', linestyle='--', label='H2 fraction produced (Tegmark97)')
     ax1.set_ylim(1e-6, 1e-1)
     ax1.set_xscale('log')
@@ -481,11 +557,9 @@ def plot_fH2_vs_T(z):
     ax1.set_xlabel('Temperature [K]', fontsize=16)
     ax1.set_ylabel(r'Molecular Hydrogen Fraction $f_{\mathrm{H_2}}$', fontsize=16)
     ax1.tick_params(labelsize=12)
-        
     legend = ax1.legend(fontsize=11, framealpha=0.5)
     ax2 = add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM_minihalo, lgM_to_Tvir_minihalo)
-
-    title_text = (f'Cooling Timescale (with DF) vs Temperature and $f_{{\mathrm{{H_2}}}}$ at z = {z}\n'
+    title_text = (f'Cooling Timescale vs Temperature and $f_{{\mathrm{{H_2}}}}$ at z = {z}\n'
               f'(Hubble time = {t_Hubble_Myr:.0f} Myr)')
     plt.title(title_text, fontsize=16, pad=20)
     plt.tight_layout()
@@ -493,6 +567,44 @@ def plot_fH2_vs_T(z):
     
 
 
+    #4. plot the cooling timescale with DF heating
+    # linthresh = 1.0
+    masked_cooling_timescale_with_DF = np.ma.masked_invalid(-cooling_timescale_with_DF_all)
+    display_data = masked_cooling_timescale_with_DF.copy()
+    lg_display_data = display_data.copy()
+    lg_display_data[display_data > 0] = np.log10(display_data[display_data > 0])
+    lg_display_data[display_data <= 0] = -9999  # set negative values to -9999 for display
+    lg_display_data = np.ma.masked_where(np.isnan(masked_cooling_timescale_with_DF), lg_display_data)
+    cmap = plt.colormaps['seismic'].copy()
+    cmap.set_bad(color='lightgray')    # NaNs
+    cmap.set_under('black') #for net heating, where cooling timescale doesn't exist
+    fig, ax1 = plt.subplots(figsize=(9, 7))
+    cmap = plt.colormaps['seismic'].copy()
+    cmap.set_bad(color='lightgray')  
+    c = ax1.pcolormesh(
+        T_grid, fH2_grid, lg_display_data,
+        cmap=cmap, shading='auto',
+        vmin=0.0  
+    )
+    cb = plt.colorbar(c, ax=ax1, label=r'log$_{10}$(net cooling timescale [Myr])',shrink=1.0, pad=0.02)  
+    cb.ax.tick_params(labelsize=14)  
+
+    mask_1e4 = (T_list <= 1e4)
+    ax1.plot(T_list[mask_1e4], fH2_critical_Tegmark[mask_1e4], **line_styles['tegmark_crit'])
+    ax1.plot(T_list, fH2_critical, **line_styles['grackle_crit'])
+    ax1.plot(T_list, fH2_with_DF_critical, **line_styles['grackle_df_crit'])
+    ax1.plot(T_list[mask_1e4], fH2_Yoshida[mask_1e4], **line_styles['yoshida_H2produced'])
+    ax1.plot(T_list, fH2_zero_netcooling, **line_styles['zero_netcooling'])
+    ax1.set_ylim(1e-6, 1e-1)
+    ax1.set_xscale('log')
+    ax1.set_yscale('log')
+    ax1.set_xlabel('Temperature [K]', fontsize=15)
+    ax1.set_ylabel('Molecular Hydrogen Fraction $f_{H_2}$', fontsize=15)
+    legend = ax1.legend(fontsize=11, framealpha=0.5)
+    ax2 = add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM_minihalo, lgM_to_Tvir_minihalo)
+    plt.title('Cooling Timescale (with DF) vs Temperature and $f_{H_2}$')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"cooling_timescale_vs_T_fH2_z{z}_withDF.png"), dpi=300)
 
 
 

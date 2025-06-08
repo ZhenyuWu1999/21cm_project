@@ -56,7 +56,6 @@ z_half_idx = np.argmin(np.abs(xe_array - 0.5))
 z_half = z_array[z_half_idx]
 
 
-plt.ylim(0, 1.1)
 plt.tight_layout()
 plt.savefig('recombination_plot.png', dpi=300)
 

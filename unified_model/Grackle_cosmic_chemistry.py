@@ -61,7 +61,22 @@ def Tgas_evolution_Compton():
            header='Redshift  Tgas[K]', fmt='%.6e')
 
 
+def get_k_HMphotodiss_H4_GP98(z):
+    T_CMB = T0_CMB * (1 + z)
+    return 1.1e-1 * T_CMB**2.13 *np.exp(-8823/T_CMB)
 
+def get_k_H2IIphotodiss_H9_GP98(z, model):
+    T_CMB = T0_CMB * (1 + z)
+    if model == "LTE":
+        k = 1.63e7*np.exp(-32400/T_CMB)
+    elif model == "v0":
+        k = 20*T_CMB**1.59*np.exp(-82000/T_CMB)
+    else:
+        raise ValueError("Invalid model. Choose 'LTE' or 'v0'.")
+    return k
+def get_k_H2IIphotodiss_H12_GP98(z):
+    T_CMB = T0_CMB * (1 + z)
+    return 90*T_CMB**1.48*np.exp(-335000/T_CMB)
 
 """
 def evolve_freefall(fc, final_density, safety_factor=0.01,
@@ -179,6 +194,7 @@ def run_grackle_cosmic_chemistry(initial_redshift, final_redshift, z_vir, T_vir)
     initial_redshift - z_vir: set density to baryonic density; T = Tgas(z)
     z_vir - final_redshift: set density to 200 * baryonic critical density; T = T_vir
     """
+    print(f"Running Grackle cosmic chemistry... Initial redshift: {initial_redshift}, Final redshift: {final_redshift}, z_vir: {z_vir}, T_vir: {T_vir}")
 
     # Just run the script as is.
     metallicity = 0.
@@ -202,6 +218,7 @@ def run_grackle_cosmic_chemistry(initial_redshift, final_redshift, z_vir, T_vir)
         grackle_data_dir, "cloudy_metals_2008_3D.h5")
     print("Using grackle data file: ", my_chemistry.grackle_data_file)
     my_chemistry.use_volumetric_heating_rate = 0
+    my_chemistry.UVbackground = 0 #
     my_chemistry.LWbackground_intensity = 0.0  # no LW background
 
 
@@ -217,8 +234,10 @@ def run_grackle_cosmic_chemistry(initial_redshift, final_redshift, z_vir, T_vir)
 
     #Set up initial conditions
     initial_nH, initial_temperature = get_nH_T_in_halo(initial_redshift, z_vir, T_vir)
-    initial_xe = xe_interp_func(initial_redshift)
-    initial_fH2 = 1.0e-7
+    initial_xe = xe_interp_func(initial_redshift) #debug
+    initial_fH2 = 2*1.0e-7  #initial H2 mass fraction (~1e-7 at z = 300, see [H2/H] abundance in Galli & Palla 1998)
+    initial_H2II = 2*1.0e-12  #initial H2+ mass fraction
+    initial_HM = 1.0e-20  #initial H2- mass fraction
     initial_density     = initial_nH * mass_hydrogen_cgs # g / cm^3
 
     metal_mass_fraction = metallicity * my_chemistry.SolarMetalFractionByMass
@@ -274,10 +293,12 @@ def run_grackle_cosmic_chemistry(initial_redshift, final_redshift, z_vir, T_vir)
     state_vals["HeI_density"] = He_total * fc_density
     state_vals["DI_density"] = D_total * fc_density
 
-    state_vals["HII_density"] = initial_xe * fc_density  #debug ?
+    state_vals["HII_density"] = initial_xe * fc_density  #initial H+ (mass) fraction
     state_vals["HeIII_density"] = tiny_density  
-    state_vals["e_density"] = state_vals["HII_density"] + state_vals["HeIII_density"] / 2
-    state_vals["H2I_density"] = initial_fH2 * fc_density
+    state_vals["e_density"] = state_vals["HII_density"] + state_vals["HeIII_density"] / 2 #initial free electron number density
+    state_vals["H2I_density"] = initial_fH2 * fc_density #initial H2 mass fraction
+    state_vals["H2II_density"] = initial_H2II * fc_density  #initial H2+ mass fraction
+    state_vals["HM_density"] = initial_HM * fc_density  #initial H2- mass fraction
 
     for field in fc.density_fields:
         fc[field][:] = state_vals.get(field, tiny_density)
@@ -295,15 +316,19 @@ def run_grackle_cosmic_chemistry(initial_redshift, final_redshift, z_vir, T_vir)
     current_redshift = initial_redshift
     current_time = cosmo.age(current_redshift)*1e3 # convert from Gyr to Myr
     data = defaultdict(list)
+    count = 0
     while current_redshift > final_redshift:
+        count += 1
+        print(f"Step {count}:")
         print(f"Redshift: {current_redshift}, Time: {current_time:.2f} Myr")
         dz = -0.01 * current_redshift  # step size
         Hz = cosmo.Hz(current_redshift)/3.086e19  #convert km/s/Mpc to s^(-1)
         dt_dz = -1/(1+current_redshift)/Hz
         dtMyr_dz = dt_dz / my_chemistry.time_units  # convert to Myr
         dtMyr = dtMyr_dz * dz
+        dtsec = dtMyr * sec_per_Myr  # convert to seconds
 
-        add_to_data(fc, data, extra={"time": current_time})
+        add_to_data(fc, data, extra={"time": current_time, "redshift": current_redshift})
         new_nH, new_temperature = get_nH_T_in_halo(current_redshift, z_vir, T_vir)
         new_density = new_nH * mass_hydrogen_cgs
         density_ratio = new_density / (fc["density"][0] * my_chemistry.density_units)
@@ -312,15 +337,45 @@ def run_grackle_cosmic_chemistry(initial_redshift, final_redshift, z_vir, T_vir)
             fc[field] *= density_ratio
 
         fc.calculate_mean_molecular_weight()
-        fc["internal_energy"] = temperature / \
+        fc["internal_energy"] = new_temperature / \
         fc.chemistry_data.temperature_units / \
         fc["mean_molecular_weight"] / (my_chemistry.Gamma - 1.0)
 
         fc.solve_chemistry(dtMyr)
+        # print("k26:",my_chemistry.k26)
+        """
+        current_nHI = new_nH*fc["HI_density"][0]/fc["density"][0]
+        current_ne = new_nH*fc["e_density"][0]/fc["density"][0]  
+        current_nHM = new_nH*fc["HM_density"][0]/fc["density"][0]  
+        current_nH2II = new_nH*fc["H2II_density"][0]/fc["density"][0]/2
+        current_nHII = new_nH*fc["HII_density"][0]/fc["density"][0]
 
+        k4_GP98 = get_k_HMphotodiss_H4_GP98(current_redshift)
+        k9_GP98 = get_k_H2IIphotodiss_H9_GP98(current_redshift, model="LTE")
+        k12_GP98 = get_k_H2IIphotodiss_H12_GP98(current_redshift)
+
+        dnHM_dt = -k4_GP98 * current_nHM 
+        dnHI_dt = k4_GP98 * current_nHM + k9_GP98 * current_nH2II 
+        dne_dt = k4_GP98 * current_nHM + k12_GP98 * current_nH2II 
+        dnH2II_dt = -k9_GP98 * current_nH2II - k12_GP98 * current_nH2II
+        dnHII_dt = k9_GP98 * current_nH2II + 2* k12_GP98 * current_nH2II
+
+        new_nHM = current_nHM + dnHM_dt * dtsec
+        new_nHI = current_nHI + dnHI_dt * dtsec
+        new_ne = current_ne + dne_dt * dtsec
+        new_nH2II = current_nH2II + dnH2II_dt * dtsec
+        new_nHII = current_nHII + dnHII_dt * dtsec
+        # update the fluid container with new densities
+        fc["HM_density"][0] = new_nHM * fc["density"][0]/new_nH
+        fc["HI_density"][0] = new_nHI * fc["density"][0]/new_nH
+        fc["e_density"][0] = new_ne * fc["density"][0]/new_nH
+        fc["H2II_density"][0] = new_nH2II * fc["density"][0] * 2/new_nH  
+        fc["HII_density"][0] = new_nHII * fc["density"][0]/new_nH
+
+        """
         current_redshift += dz
         current_time += dtMyr
-        
+
     for field in data:
         data[field] = np.squeeze(np.array(data[field]))
         
@@ -350,11 +405,79 @@ def test_cloudy_data():
     filename = '/home/zwu/grackle/input/cloudy_metals_2008_3D.h5'
 
 
-
 if __name__ == "__main__":
-    data = run_grackle_cosmic_chemistry(initial_redshift=300, final_redshift=15, z_vir=25, T_vir=np.nan)
-    print("Final data keys:", data.keys())
-    print(data['time'])
-    print(data['time'].shape)
-    print(data['e_density']/data['density'])
-    print(data['H2I_density']/data['density']) 
+
+    #1. plot xe(z) across redshift
+    data = run_grackle_cosmic_chemistry(initial_redshift=300, final_redshift=15, z_vir=-1, T_vir=np.nan)
+    # print("Final data keys:", data.keys())
+    # print(data['time'])
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    CAMB_mask = (z_CAMB > 15) & (z_CAMB < 1800)
+    ax.plot(z_CAMB[CAMB_mask], xe_CAMB[CAMB_mask], label='CAMB data', color='k', linestyle='-')
+    ax.plot(data['redshift'], data['e_density']/data['density'], label='Grackle', color='b', linestyle='--')
+
+    ax.invert_xaxis()
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel('Redshift (z)', fontsize=14)
+    ax.set_ylabel('Ionization Fraction (xe)', fontsize=14)
+    ax.grid()
+    ax.legend()
+    plt.tight_layout()
+    filename = os.path.join("Grackle_cosmic_chemistry_results", f"global_xe_vs_z.png")
+    plt.savefig(filename, dpi=300)
+
+
+    #2. plot fH2(z) for zvir_list and Tvir_list
+    Tvir_list = [100, 1000, 3000]
+    zvir_list = [25, 50, 100]
+    colors = ['b', 'g', 'r']
+    linestyles = ["--", ":", '-']
+    data_all = []
+    for T_vir in Tvir_list:
+        for z_vir in zvir_list:
+            data = run_grackle_cosmic_chemistry(initial_redshift=300, final_redshift=15, z_vir=z_vir, T_vir=T_vir)
+            data_all.append(data)
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    for i in range(len(Tvir_list)):
+        for j in range(len(zvir_list)):
+            data = data_all[i * len(zvir_list) + j]
+            ax.plot(data['redshift'], data['H2I_density']/data['density'], 
+                    label=f'T_vir={Tvir_list[i]} K, z_vir={zvir_list[j]}', 
+                    color=colors[i], linestyle=linestyles[j])
+    ax.invert_xaxis()
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel('Redshift (z)', fontsize=14)
+    ax.set_ylabel('H2 Mass Fraction (fH2)', fontsize=14)
+    ax.grid()
+    ax.legend()
+    plt.tight_layout()
+    filename = os.path.join("Grackle_cosmic_chemistry_results", f"fH2_vs_z.png")
+    plt.savefig(filename, dpi=300)
+
+    #3. plot final fH2 vs Tvir for different zvir at z = 17
+    z_final = 17
+    zvir_list = [25, 50, 100]
+    Tvir_fulllist = np.logspace(np.log10(100), np.log10(5000), 50) 
+    fH2_final = np.zeros((len(zvir_list), len(Tvir_fulllist)))
+    for i, z_vir in enumerate(zvir_list):
+        for j, T_vir in enumerate(Tvir_fulllist):
+            data = run_grackle_cosmic_chemistry(initial_redshift=300, final_redshift=z_final, z_vir=z_vir, T_vir=T_vir)
+            fH2_final[i, j] = data['H2I_density'][-1] / data['density'][-1]
+    
+    fig, ax = plt.subplots(figsize=(8, 6))
+    for i, z_vir in enumerate(zvir_list):
+        ax.plot(Tvir_fulllist, fH2_final[i], label=f'z_vir={z_vir}', color='k', linestyle=linestyles[i])
+    ax.set_xlabel('T_vir [K]', fontsize=14)
+    ax.set_ylabel(f'H2 Mass Fraction at z = {z_final}', fontsize=14)
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.grid()
+    ax.legend()
+    plt.tight_layout()
+    filename = os.path.join("Grackle_cosmic_chemistry_results", f"fH2_vs_Tvir_z{z_final}.png")
+    plt.savefig(filename, dpi=300)
+    

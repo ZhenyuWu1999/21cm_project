@@ -10,7 +10,7 @@ from scipy.interpolate import interp1d
 from colossus.cosmology import cosmology
 
 
-from physical_constants import h_Hubble, H0_s, Omega_m, Omega_b, Ombh2, Myr, cosmo, Msun, mu_minihalo, eV, kB
+from physical_constants import h_Hubble, H0_s, Omega_m, Omega_b, Ombh2, Myr, cosmo, Msun, mu_minihalo, eV, kB, Mpc
 from HaloProperties import Temperature_Virial_analytic, get_gas_lognH_analytic, \
 inversefunc_Temperature_Virial_analytic, get_mass_density_analytic
 from Grackle_cooling import run_constdensity_model
@@ -31,10 +31,8 @@ Tgas = Tgas_data[:, 1]  # Second column (gas temperature)
 Tgas_interp_func = interp1d(z_Tgas, Tgas, bounds_error=False, fill_value='extrapolate')
 
 
-def K_Tegmark97(reaction_index, T, z):
+def get_K_Tegmark97(reaction_index, T, z):
     #Table 1 in Tegmark 1997, return reaction rate in cm^3/s
-
-    T_gamma = T_CMB(z)  
     if reaction_index == 1:
         #more accurate: 6.95, 6.112, 6.116 in Peebles 1993?
         return 1.88e-10 * T**(-0.64)
@@ -43,14 +41,17 @@ def K_Tegmark97(reaction_index, T, z):
     elif reaction_index == 3:
         return 1.3e-9
     elif reaction_index == 4:
+        T_gamma = T_CMB(z)  
         return 0.114 * T_gamma**2.13 * np.exp(-8650.0 / T_gamma)
     elif reaction_index == 5:
         return 1.85e-23 * T**1.8
     elif reaction_index == 6:
         return 6.4e-10
     elif reaction_index == 7:
+        T_gamma = T_CMB(z)
         return 6.36e5 * np.exp(-71600.0 / T_gamma)
     elif reaction_index == 8:
+        T_gamma = T_CMB(z)
         return 4.91e-22 * T_gamma**4
     else:
         raise ValueError("Invalid reaction index. Must be an integer from 1 to 8.")
@@ -58,17 +59,41 @@ def K_Tegmark97(reaction_index, T, z):
 def get_km_Tegmark97(T, xe, z):
     #effective formation rate of H2
     nH = get_nH_Tegmark97(z)
-    k2 = K_Tegmark97(2, T, z)  
-    k3 = K_Tegmark97(3, T, z)
-    k4 = K_Tegmark97(4, T, z)
-    k5 = K_Tegmark97(5, T, z)
-    k6 = K_Tegmark97(6, T, z)
-    k7 = K_Tegmark97(7, T, z)
+    k2 = get_K_Tegmark97(2, T, z)  
+    k3 = get_K_Tegmark97(3, T, z)
+    k4 = get_K_Tegmark97(4, T, z)
+    k5 = get_K_Tegmark97(5, T, z)
+    k6 = get_K_Tegmark97(6, T, z)
+    k7 = get_K_Tegmark97(7, T, z)
 
     k2channel_all = k3 + k4/((1-xe)*nH)
     k5channel_all = k6 + k7/((1-xe)*nH)
     km = k2*k3/k2channel_all + k5*k6/k5channel_all
     return km
+
+def get_K_GP98(label, z):
+    T_gamma = T_CMB(z)  
+    if label == "H2": #HI + p --> HII + e
+        Rc2 = 8.76e-11 * (1+z)**(-0.58)
+        R2c = 2.41e15 * T_gamma**1.5 * np.exp(-39472/T_gamma) * Rc2
+        return R2c
+    elif label == "He2": #HeII + p --> HeIII + e
+        return 5.0e1 * T_gamma**1.63 * np.exp(-590000/T_gamma)
+    elif label == "He4": #HeI + p --> HeII + e
+        return 1.0e4 * T_gamma**1.23 * np.exp(-280000/T_gamma)
+    elif label == "H4": #HM + p --> HI + e
+        return 1.1e-1 * T_gamma**2.13 *np.exp(-8823/T_gamma)
+    elif label == "H9v0": #H2II + p --> HI + HII, v0
+        return 2.0e1 * T_gamma**1.59 * np.exp(-82000/T_gamma)
+    elif label == "H9LTE": #H2II + p --> HI + HII, LTE
+        return 1.63e7*np.exp(-32400/T_gamma)
+    elif label == "H18": #H2I + p --> H2II + e
+        return 2.9e2 * T_gamma**1.56 * np.exp(-178500/T_gamma)
+    elif label == "H12": #H2II + p --> 2HII + e
+        return 9.0e1 * T_gamma**1.48 * np.exp(-335000/T_gamma)
+    # elif label ==  #H2I + p --> 2HI
+    else:
+        raise ValueError("Invalid label. Must be one of 'H2', 'He2', 'He4', 'H4', 'H9v0', 'H9LTE', 'H18', 'H12'.")
 
 
 def get_k1_Peebles97(T):
@@ -76,10 +101,18 @@ def get_k1_Peebles97(T):
     k1 = 2.6e-13*T4**(-0.8)
     return k1
 
+def get_kHM_GP98(T):
+    #the reaction rate for H + e -> H- + photon [cm^3 /s], in Galli & Palla 1998 table 1
+
+    return 1.4e-18 * T**0.928 * np.exp(-T/16200)
+
+def get_kdiss_Yoshida03(J21, Fshield):
+    return 1.38e9 * J21 *1.0e-21 * Fshield #[s^-1]
+
 def test_k1():
     T_list = np.logspace(2, 4, 50)  # Temperature in K
     z = 15
-    k1_Tegmark = np.array([K_Tegmark97(1, T, z) for T in T_list])
+    k1_Tegmark = np.array([get_K_Tegmark97(1, T, z) for T in T_list])
     k1_Peebles = np.array([get_k1_Peebles97(T) for T in T_list])
 
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -144,29 +177,52 @@ def get_Tvir_Tegmark97(M, z):
 
 def get_Tvir_Yoshida03(M, z, mean_molecular_weight):
     #M in Msun
-    Delta = 200
+    Delta = 180
     T =  1.98e4*(mean_molecular_weight/0.6)*(M*h_Hubble/1e8)**(2/3) \
         *(Omega_m*Delta/18/np.pi**2)**(1/3)*(1+z)/10
     return T
 
 def get_fH2_Yoshida03(T):
+    #for Tvir = 2300*(0.5**(2/3)) K, fH2 = 8e-5 (see section 4 of Yoshida 2003) 
     
-    T3 = T/1e3
-    fH2 = 4.7e-5 * T3**1.52
-    return fH2
+    return 1.254e-9*T**1.52
+
+def get_H2_mass_frac_equilibrium(T, z, J21, self_shielding):
+    lognH = get_gas_lognH_analytic(z)
+    nH = 10**lognH  
+    kHM = get_kHM_GP98(T)
+    if self_shielding:
+        fH2_without_LW = get_fH2_Yoshida03(T)
+        C = 0.2
+        Mvir = inversefunc_Temperature_Virial_analytic(T, z, mean_molecular_weight=mu_minihalo)  # Mvir in Msun
+        halo_density = get_mass_density_analytic(z)
+        halo_volume = Mvir * Msun / halo_density
+        Rvir = (3 * halo_volume / (4 * np.pi))**(1/3)  # Rvir in m
+        Rvir_cm = Rvir * 1e2  # Convert to cm
+        N_H2 = C*fH2_without_LW*nH*Rvir_cm
+        Fshield = min(1, (N_H2/1.0e14)**(-3/4))  # self-shielding factor, N_H2 in cm^(-2)
+        k_diss = get_kdiss_Yoshida03(J21, Fshield)
+        print("Rvir_cm = ", Rvir_cm, "cm, nH = ", nH, "cm^-3, N_H2 = ", N_H2, "cm^-2")
+        print("T = ", T, "K, J21 = ", J21, "Fshield = ", Fshield, "k_diss = ", k_diss)
+    else:
+        k_diss = get_kdiss_Yoshida03(J21, 1.0)
+    xe = 1.0e-4
+    f_H2_eq = 2 * kHM * nH * xe /k_diss  #mass fraction of H2 in equilibrium
+    return f_H2_eq
+
 
 def test_Tvir():
     #compare Tvir from Yoshida03, Tegmark97 and our model
-    z = 15
+    z = 20
     M_list = np.logspace(4, 8, 50)
-    Tvir_Yoshida = np.array([get_Tvir_Yoshida03(M, z, 1.0) for M in M_list])
+    Tvir_Yoshida = np.array([get_Tvir_Yoshida03(M, z, 1.2) for M in M_list])
     Tvir_Tegmark = np.array([get_Tvir_Tegmark97(M, z) for M in M_list])
     Tvir_analytic = np.array([Temperature_Virial_analytic(M, z, mean_molecular_weight=mu_minihalo) for M in M_list])
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111)
     ax.plot(M_list, Tvir_Yoshida, label='Yoshida 2003', color='blue')
     ax.plot(M_list, Tvir_Tegmark, label='Tegmark 1997', color='red')
-    ax.plot(M_list, Tvir_analytic, label='our model, mu = 1.0', color='green')
+    ax.plot(M_list, Tvir_analytic, label='our model, mu = 1.2', color='green')
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.legend()
@@ -177,6 +233,33 @@ def test_Tvir():
     plt.tight_layout()
     filename = os.path.join("Analytic_results/Yoshida03", "compare_Tvir.png")
     plt.savefig(filename, dpi=300)
+
+    print("test Tvir, M = 1e6 Msun/h, z = 20, Tvir_Yoshida = ", get_Tvir_Yoshida03(1e6/h_Hubble, z, 1.2))
+
+#check the H2 formation and dissociation timescale mentioned in Yoshida 2003
+def test_H2_form_diss_timescale():
+    f_H2 = 8.0e-5 #or 2.0e-4, the critical H2 fraction for the halo after merger
+    nH2_over_nH = f_H2 / 2
+    T = 2300
+    nH = get_nH_Tegmark97(20)  
+    xe = 1.0e-4
+    ne = xe * nH 
+    # k_HM = get_K_Tegmark97(2,T,np.nan)
+    k_HM = get_kHM_GP98(T)
+    t_form = nH2_over_nH/k_HM/ne
+    t_form_Myr = t_form / Myr
+    print("t_form = ", t_form_Myr, "Myr")
+
+    J21 = 0.1
+    Fshield = 1.0
+    k_diss = get_kdiss_Yoshida03(J21, Fshield)  
+    t_diss = 1.0 / k_diss
+    t_diss_Myr = t_diss / Myr
+    print("t_diss = ", t_diss_Myr, "Myr, approx", 1e12/J21/Myr, "Myr")
+    fH2_eq = get_H2_mass_frac_equilibrium(T, 17, J21, self_shielding=False)
+    print("fH2_eq = ", fH2_eq)
+
+
 
 
 
@@ -274,7 +357,7 @@ def test_fH2():
     print("fH2_test / fH2_test_Tegmark = ", fH2_test/fH2_test_Tegmark)
 
 def x_t_Tegmark97(x0, t, n, T):
-    k1 = K_Tegmark97(1, T, 0)  # k1 doesn't depend on z in this case
+    k1 = get_K_Tegmark97(1, T, 0)  # k1 doesn't depend on z in this case
     x_t = x0/(1+x0*n*k1*t)
     return x_t
 
@@ -282,7 +365,7 @@ def dxe_dz_Tegmark97(z, xe, T):
     T = Tgas_interp_func(z)  # debug: reset T to Tgas at redshift z
     # T = 5000
     nH = get_nH_Tegmark97(z)/200 #debug/200
-    k1 = K_Tegmark97(1, T, z)
+    k1 = get_K_Tegmark97(1, T, z)
     dxe_dt = - k1 * nH * xe**2
     Hz = cosmo.Hz(z)/3.086e19  #convert km/s/Mpc to s^(-1)
     dt_dz = -1/(1+z)/Hz
@@ -319,7 +402,7 @@ def dxefH2_dz_Tegmark97(z, y, z_vir, T_vir):
     else:
         T = T_vir
         nH = get_nH_Tegmark97(z)
-    k1 = K_Tegmark97(1, T, z)
+    k1 = get_K_Tegmark97(1, T, z)
     km = get_km_Tegmark97(T, xe, z)
     dxe_dt = - k1 * nH * xe**2
     dfH2_dt = km * nH * (1 - xe - 2*fH2) * xe
@@ -445,21 +528,28 @@ def plot_xe_vs_z():#debug: n and T fixed?
     filename = os.path.join("Analytic_results/Yoshida03", f"fH2_vs_z.png")
     plt.savefig(filename, dpi=300)
 
-    #now use a full list of Tvir
+    #now plot final fH2 and use a full list of Tvir and plot fH2 at z = 17
     print("Using a full list of Tvir for different zvir ...")
+    z_final = 17
     zvir_list = [25, 50, 100]
-    Tvir_fulllist = np.logspace(np.log10(100), np.log10(5000), 20)  
+    Tvir_fulllist = np.logspace(np.log10(100), np.log10(10000), 30) 
+    finalxe_intTegmark_allresults = []
     finalfH2_intTegmark_allresults = []
     for zvir in zvir_list:
+        finalxe_for_zvir = np.zeros(len(Tvir_fulllist))
         finalfH2_for_zvir = np.zeros(len(Tvir_fulllist))
         for j, Tvir in enumerate(Tvir_fulllist):
             print("calculating Tvir = ", Tvir, "K, zvir = ", zvir)
             y_initial = np.array([xe_at_z_start, fH2_at_z_start])
             result = integrate_ode_z(dxefH2_dz_Tegmark97,z_initial=z_start,y_initial=y_initial,
                                                    z_final=z_final,ode_args=(zvir, Tvir))
+            finalxe = result['y'][0][-1]  # Get the final xe value
             finalfH2 = result['y'][1][-1]  # Get the final fH2 value
+            finalxe_for_zvir[j] = finalxe
             finalfH2_for_zvir[j] = finalfH2
+        finalxe_intTegmark_allresults.append(finalxe_for_zvir)
         finalfH2_intTegmark_allresults.append(finalfH2_for_zvir)
+    finalxe_intTegmark_allresults = np.array(finalxe_intTegmark_allresults)
     finalfH2_intTegmark_allresults = np.array(finalfH2_intTegmark_allresults)
 
     #plot final fH2 vs Tvir for different zvir
@@ -467,13 +557,30 @@ def plot_xe_vs_z():#debug: n and T fixed?
     linestyles = ["--", ":", '-']
 
     for i, zvir in enumerate(zvir_list):
-        ax.plot(Tvir_fulllist, finalfH2_intTegmark_allresults[i], 
+        ax.plot(Tvir_fulllist, 2*finalfH2_intTegmark_allresults[i], 
                 label=f'zvir={zvir}', color='k', linestyle=linestyles[i])
+    #also compare with Yoshida 2003 
+    fH2_Yoshida03 = get_fH2_Yoshida03(Tvir_fulllist)
+    ax.plot(Tvir_fulllist, fH2_Yoshida03, label='Yoshida 2003', color='blue', linestyle='-')
+    finalxe_zvir25 = finalxe_intTegmark_allresults[0]
+    nHhalo_zfinal = get_nH_Tegmark97(z_final)
+    Fshield = 1.0
+    fH2_Yoshida03_LWhigh = np.zeros(len(Tvir_fulllist))
+    fH2_Yoshida03_LWlow_shield = np.zeros(len(Tvir_fulllist))
+    fH2_Yoshida03_LWlow = np.zeros(len(Tvir_fulllist))
+    for i, Tvir in enumerate(Tvir_fulllist):
+        fH2_Yoshida03_LWhigh[i] = get_H2_mass_frac_equilibrium(Tvir, z_final, 0.1, self_shielding=False)
+        fH2_Yoshida03_LWlow_shield[i] = get_H2_mass_frac_equilibrium(Tvir, z_final, 0.01, self_shielding=True)
+        fH2_Yoshida03_LWlow[i] = get_H2_mass_frac_equilibrium(Tvir, z_final, 0.01, self_shielding=False)
+    #multiply by 2 to convert from number density to mass fraction
+    ax.plot(Tvir_fulllist, fH2_Yoshida03_LWhigh, label='Yoshida 2003 LW(J21 = 0.1)', color='green', linestyle='--')
+    ax.plot(Tvir_fulllist, fH2_Yoshida03_LWlow_shield, label='Yoshida 2003 LW(J21 = 0.01) with self-shielding', color='green', linestyle='-.')
+    ax.plot(Tvir_fulllist, fH2_Yoshida03_LWlow, label='Yoshida 2003 LW(J21 = 0.01)', color='green', linestyle=':')
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlabel('Tvir [K]', fontsize=14)
-    ax.set_ylabel('fH2 at z = 15', fontsize=14)
-    ax.set_ylim(1e-6, 2e-2)
+    ax.set_ylabel(f'H2 mass fraction at z = {z_final}', fontsize=14)
+    ax.set_ylim(1e-7, 2e-2)
     ax.grid()
     ax.legend()
     plt.tight_layout()
@@ -481,7 +588,9 @@ def plot_xe_vs_z():#debug: n and T fixed?
     plt.savefig(filename, dpi=300)
 
 
-
+#plot the mass fraction of H2 in halos with/without LW background
+def plot_Yoshida03_with_LW():
+    pass
 
 
 def plot_fH2_vs_T(z):
@@ -942,6 +1051,9 @@ if __name__ == "__main__":
     # plot_fH2_vs_T(z = 15)
     # test_fH2_Tegmark()
     # test_fH2()
-    # test_Tvir()
+    test_Tvir()
     # test_k1()
-    plot_xe_vs_z()
+    # test_H2_form_diss_timescale()
+
+
+    # plot_xe_vs_z()

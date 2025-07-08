@@ -868,6 +868,22 @@ def plot_M_Jeans():
     plt.legend(fontsize=14)
     plt.savefig('/home/zwu/21cm_project/unified_model/Analytic_results/M_Jeans_z.png',dpi=300)
 
+#correction factor for the variance of the cumulative SHMF, Equation 16 in Jiang & van den Bosch paperIII
+def get_cumulativeSHMF_sigma_correction(N_avg, correction_model):
+    if correction_model == 'superPossion': #BK10
+        epsilon = 0.18
+        return np.sqrt(1+epsilon**2*N_avg)
+    elif correction_model == 'supersubPossion': #Jiang & van den Bosch paperIII, including both super and sub Poissonian correction
+        N0 = 0.12
+        x = np.sqrt(N_avg/N0)
+        eta = 0.09
+        epsilon = 0.18
+        return (1 - eta*x**2 * np.exp(-x)) * np.sqrt(1+epsilon**2*N_avg)
+    elif correction_model == 'None':
+        return np.ones_like(N_avg)  # No correction, return 1 for all N_avg
+
+
+
 if __name__ == "__main__":
     # HMF_ratio_2Dbestfit(9, 0.0)
     run_shmf_redshift_evolution()

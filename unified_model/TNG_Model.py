@@ -10,7 +10,7 @@ from Config import simulation_set, p_evolved, p_unevolved
 from DF_Ostriker99_wake_structure import Idf_Ostriker99_wrapper
 from TNGDataHandler import *
 import Xray_field as xray
-from HaloMassFunction import plot_hmf, fitFunc_lg_dNdlgx
+from HaloMassFunction import plot_hmf, fitFunc_lg_dNdlgx, get_cumulativeSHMF_sigma_correction
 
 import argparse
 parser = argparse.ArgumentParser(description="Run TNG_model with a specified snapNum.")
@@ -337,46 +337,69 @@ def plot_Mratio_dN_dlogMratio():
     logM_bins = np.linspace(logM_min, logM_max, num=num_M_bins+1)
 
     #initialize lists
+    sub_host_Mratio_list_old = [] #the old list which doesn't deal with individual host halos
     sub_host_Mratio_list = []
+    cumulative_sub_host_Mratio_list = []
     num_host_list = []
     critical_ratio_list = []
     subhalo_resolution = 50*dark_matter_resolution 
 
-    # Loop over mass bins
-    for i in range(num_M_bins):
-        mask = (host_logM >= logM_bins[i]) & (host_logM < logM_bins[i+1])
-        sub_host_Mratio_list.append(mass_ratios[mask])
-        unique_hosts = len(np.unique(host_indices[mask]))
-        num_host_list.append(unique_hosts)
-        #define critical ratio = subhalo_resolution/Mhost(left edge of bin)
-        critical_ratio_list.append(subhalo_resolution/10**logM_bins[i])
-        print(f"Number of host halos in bin {i}: {unique_hosts}")
-        print(f"number of subhalos in bin {i}: {len(mass_ratios[mask])}")
-    
-    tot_num_host = len(np.unique(host_indices))
-    print(f"Total number of host halos: {tot_num_host}")  #plot tot distribution separately
-
-    colors = plt.cm.rainbow(np.linspace(0, 1, num_M_bins))
-    labels = [f'[{logM_bins[i]:.2f}, {logM_bins[i+1]:.2f}]' for i in range(num_M_bins)]
-
-
     # Create histogram bins
-    bins = np.linspace(-5, 0, 50) #(-4, 0) for high-z, (-5, 0) for low-z
+    num_ratio_bins = 50
+    bins = np.linspace(-4, 0, num_ratio_bins+1) #(-4, 0) for high-z, (-5, 0) for low-z
+    bin_edges = bins
     log_bin_widths = bins[1] - bins[0]
     artificial_small = 1e-10
     min_number_density = 1e10 #used to set the lower limit of y-axis for plotting
 
+
+    # Loop over mass bins
+    for i in range(num_M_bins):
+        mask = (host_logM >= logM_bins[i]) & (host_logM < logM_bins[i+1])
+        sub_host_Mratio_list_old.append(mass_ratios[mask])
+        unique_host_indices = np.unique(host_indices[mask])
+        len_unique_hosts = len(unique_host_indices)
+        num_host_list.append(len_unique_hosts)
+        #define critical ratio = subhalo_resolution/Mhost(left edge of bin)
+        critical_ratio_list.append(subhalo_resolution/10**logM_bins[i])
+        print(f"Number of host halos in bin {i}: {len_unique_hosts}")
+        print(f"number of subhalos in bin {i}: {len(mass_ratios[mask])}")
+
+        #individual SHMF
+        sub_host_Mratio_matrix = np.zeros((len_unique_hosts, num_ratio_bins))
+        for j, host_index in enumerate(unique_host_indices):
+            host_subhalo_mask = (host_indices == host_index) & mask
+            sub_host_Mratio_matrix[j, :], _ = np.histogram(np.log10(mass_ratios[host_subhalo_mask]), 
+                                                            bins=bins)
+        sub_host_Mratio_list.append(sub_host_Mratio_matrix)
+
+        cumulative_matrix = np.cumsum(sub_host_Mratio_matrix[:, ::-1], axis=1)[:, ::-1]
+        cumulative_sub_host_Mratio_list.append(cumulative_matrix)
+    
+    tot_num_host = len(np.unique(host_indices))
+    print(f"Total number of host halos: {tot_num_host}")  #plot tot distribution separately
+
+
+
+
     # Plot mass ratio distributions
+    colors = plt.cm.rainbow(np.linspace(0, 1, num_M_bins))
+    labels = [f'[{logM_bins[i]:.2f}, {logM_bins[i+1]:.2f}]' for i in range(num_M_bins)]
+
     fig = plt.figure(facecolor='white')
     ax = fig.gca()
     number_density_list = []
     for i in range(num_M_bins):
-        counts, bin_edges = np.histogram(np.log10(sub_host_Mratio_list[i]), bins=bins)
-        number_density = counts/log_bin_widths/num_host_list[i]
+        # counts, bin_edges = np.histogram(np.log10(sub_host_Mratio_list_old[i]), bins=bins)
+        # number_density = counts/log_bin_widths/num_host_list[i]
+        sub_host_Mratio_matrix = sub_host_Mratio_list[i]
+        #sum the rows (all hosts)
+        number_density = np.sum(sub_host_Mratio_matrix, axis=0) / log_bin_widths / num_host_list[i]
+
         min_number_density = min(min_number_density, np.min(number_density[number_density > 0]))
         
         # Handle zero counts
-        mask = number_density == 0
+        mask = (number_density == 0)
         number_density[mask] = artificial_small
         
         plt.step(bin_edges[:-1], number_density, where='post', 
@@ -396,8 +419,7 @@ def plot_Mratio_dN_dlogMratio():
     JB16_unevolved_lg_number_density = fitFunc_lg_dNdlgx(bin_centers, *p_unevolved)
     plt.plot(bin_centers, 10**JB16_unevolved_lg_number_density, linestyle='--',
              color='grey', label='Jiang & van den Bosch 2016, unevolved')
-    #no
-    # w calculate bestfit parameters with fitFunc_lg_dNdlgx
+    #now calculate bestfit parameters with fitFunc_lg_dNdlgx
     #combine data points from all bins with mass ratio > their critical ratio and exclude artificial small
     all_bin_centers = []
     all_number_density = []
@@ -422,19 +444,15 @@ def plot_Mratio_dN_dlogMratio():
     # Finalize plot
     plt.ylim(bottom=min_number_density/10)
     #xlim: > 1e-4 or > 1e-5
-    if snapNum <= 13:
-        plt.xlim([-4,0])
-    else:
-        plt.xlim([-5,0])
+    plt.xlim([-4.1,0])
     plt.legend(loc='lower left')
     plt.xlabel(r'$\lg$($\psi$) = $\lg$(m/M)',fontsize=14)
     plt.ylabel(r'dN/d$\lg(\psi)$',fontsize=14)
     plt.yscale('log')
     ax.tick_params(direction='in', which='both', labelsize=12)
     plt.tight_layout()
-    
     # Save plot
-    plt.savefig(os.path.join(output_dir, f'SHMF_snap_{snapNum}.png'), dpi=300)
+    plt.savefig(os.path.join(output_dir, f'SHMF_snap_{snapNum}_new.png'), dpi=300)
 
     # Save bestfit parameters
     bestfit_params_file = os.path.join(output_dir, f'SHMF_BestFit_params_snap_{snapNum}.txt')
@@ -456,6 +474,130 @@ def plot_Mratio_dN_dlogMratio():
         f.write(formatted_header + '\n') 
         f.write(formatted_values + '\n')  
 
+    #calculate the cumulative shmf for the bestfit parameters
+    N_bestfit = 10**bestfit_lg_number_density * log_bin_widths
+    cumulative_bestfit = np.cumsum(N_bestfit[::-1])[::-1]
+
+    #Now plot the cumulative subhalo mass function (no Possion correction)
+    fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')
+    for i in range(num_M_bins):
+        cumulative_matrix = cumulative_sub_host_Mratio_list[i]
+        mean_cumulative = np.mean(cumulative_matrix, axis=0) #mean over all hosts in this host mass bin
+        var_cumulative = np.var(cumulative_matrix, axis=0)
+        std_cumulative = np.sqrt(var_cumulative)
+        resolved_mask = bins[:-1] >= np.log10(critical_ratio_list[i])
+        plt.errorbar(bins[:-1][resolved_mask], mean_cumulative[resolved_mask], 
+                    yerr=std_cumulative[resolved_mask],
+                    fmt='o-', color=colors[i], label=labels[i], 
+                    markersize=4, capsize=3, alpha=0.8)
+        
+        # plt.plot(bins[:-1][resolved_mask], mean_cumulative[resolved_mask], 'o-', color=colors[i], label=labels[i], markersize=4, linewidth=2)
+
+        std_Possion = np.sqrt(mean_cumulative)  # Poisson error
+        print(f"Mean cumulative for bin {i}: {mean_cumulative}")
+        one_sigma_upper = mean_cumulative + std_Possion
+        one_sigma_lower = mean_cumulative - std_Possion
+        # 1-sigma shaded region
+        # plt.fill_between(bins[:-1][resolved_mask],one_sigma_lower[resolved_mask], one_sigma_upper[resolved_mask],
+        #                  color=colors[i], alpha=0.15)
+        plt.plot(bins[:-1][resolved_mask], one_sigma_upper[resolved_mask], linestyle='--', color=colors[i], alpha=0.7, linewidth=1)
+        plt.plot(bins[:-1][resolved_mask], one_sigma_lower[resolved_mask], linestyle='--', color=colors[i], alpha=0.7, linewidth=1)
+
+        plt.axvline(np.log10(critical_ratio_list[i]), color=colors[i], linestyle='--', alpha=0.8)
+    plt.plot(bins[:-1], cumulative_bestfit, linestyle='-', color='black', label='BestFit')
+    ax.set_xlabel(r'$\lg(\psi)$, $\psi = m/M$', fontsize=14)
+    ax.set_ylabel(r'$N(>\psi)$', fontsize=14)
+    ax.set_xlim([-4.1, 0])
+    ax.set_ylim(bottom=1e-3)
+    ax.set_yscale('log')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    filename = os.path.join(output_dir, f'SHMF_cumulative_snap_{snapNum}.png')
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300)
+    print(f"Cumulative SHMF plot saved to {filename}")
+
+
+
+    #Now plot the cumulative subhalo mass function (with Possion correction)
+    fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')
+    for i in range(num_M_bins):
+        cumulative_matrix = cumulative_sub_host_Mratio_list[i]
+        mean_cumulative = np.mean(cumulative_matrix, axis=0) #mean over all hosts in this host mass bin
+        var_cumulative = np.var(cumulative_matrix, axis=0)
+        std_cumulative = np.sqrt(var_cumulative)
+        resolved_mask = bins[:-1] >= np.log10(critical_ratio_list[i])
+        plt.errorbar(bins[:-1][resolved_mask], mean_cumulative[resolved_mask], 
+                    yerr=std_cumulative[resolved_mask],
+                    fmt='o-', color=colors[i], label=labels[i], 
+                    markersize=4, capsize=3, alpha=0.8)
+        
+        # plt.plot(bins[:-1][resolved_mask], mean_cumulative[resolved_mask], 'o-', color=colors[i], label=labels[i], markersize=4, linewidth=2)
+
+        std_Possion = np.sqrt(mean_cumulative)  # Poisson error
+        Possion_corr = get_cumulativeSHMF_sigma_correction(mean_cumulative,'supersubPossion')
+        print(f"Mean cumulative for bin {i}: {mean_cumulative}")
+        print(f"Poisson correction factor for bin {i}: {Possion_corr}")
+        std_Possioncorr = std_Possion * Possion_corr  # corrected Poisson error
+        one_sigma_upper = mean_cumulative + std_Possioncorr
+        one_sigma_lower = mean_cumulative - std_Possioncorr
+        # 1-sigma shaded region
+        # plt.fill_between(bins[:-1][resolved_mask],one_sigma_lower[resolved_mask], one_sigma_upper[resolved_mask],
+        #                  color=colors[i], alpha=0.15)
+        plt.plot(bins[:-1][resolved_mask], one_sigma_upper[resolved_mask], linestyle='--', color=colors[i], alpha=0.7, linewidth=1)
+        plt.plot(bins[:-1][resolved_mask], one_sigma_lower[resolved_mask], linestyle='--', color=colors[i], alpha=0.7, linewidth=1)
+
+        plt.axvline(np.log10(critical_ratio_list[i]), color=colors[i], linestyle='--', alpha=0.8)
+    plt.plot(bins[:-1], cumulative_bestfit, linestyle='-', color='black', label='BestFit')
+    ax.set_xlabel(r'$\lg(\psi)$, $\psi = m/M$', fontsize=14)
+    ax.set_ylabel(r'$N(>\psi)$', fontsize=14)
+    ax.set_xlim([-4.1, 0])
+    ax.set_ylim(bottom=1e-3)
+    ax.set_yscale('log')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    filename = os.path.join(output_dir, f'SHMF_cumulative_Possioncorr_snap_{snapNum}.png')
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300)
+    print(f"Cumulative SHMF plot saved to {filename}")
+
+
+
+    #plot the ratio between sigma and sigma_Possion vs mean cumulative
+    fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')
+    for i in range(num_M_bins):
+        cumulative_matrix = cumulative_sub_host_Mratio_list[i]
+        mean_cumulative = np.mean(cumulative_matrix, axis=0)  # mean over all hosts in this host mass bin
+        var_cumulative = np.var(cumulative_matrix, axis=0)
+        std_cumulative = np.sqrt(var_cumulative)
+        resolved_mask = bins[:-1] >= np.log10(critical_ratio_list[i])
+        
+        std_Possion = np.sqrt(mean_cumulative)
+        mask = (std_Possion > 0) & (std_cumulative > 0) & resolved_mask
+        ratio_masked = std_cumulative[mask] / std_Possion[mask]
+        mean_cumulative_masked = mean_cumulative[mask]
+        plt.plot(mean_cumulative_masked, ratio_masked, 'o-', color=colors[i], label=labels[i], markersize=4, linewidth=2)
+        
+    #also plot correction from JB paperIII
+    N_list = np.logspace(-3, 2, num=1000)  # N(>psi)
+    JB_corrections = get_cumulativeSHMF_sigma_correction(N_list, 'supersubPossion')
+    plt.plot(N_list, JB_corrections, linestyle='--', color='grey', label='fit of Jiang&van den Bosch paperIII', linewidth=2)
+    plt.axhline(1, color='black', linestyle='--')
+    ax.set_xscale('log')
+    ax.set_xlabel(r'$N(>\psi)$', fontsize=14)
+    ax.set_ylabel(r'$\sigma / \sigma_{P}$', fontsize=14)
+    ax.set_xlim(left=10**(-3.1))
+    ax.set_ylim(bottom=0.6, top=2.0)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    filename = os.path.join(output_dir, f'SHMF_sigma_ratio_snap_{snapNum}.png')
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300)
+    print(f"Sigma ratio plot saved to {filename}")
+
+
+
+        
    
 
 
@@ -512,8 +654,8 @@ def analyze_processed_data():
     '''
 
 if __name__ == '__main__':
-    TNG_model()
+    # TNG_model()
     # find_abnormal_mach()
     # analyze_processed_data()
-    # plot_Mratio_dN_dlogMratio()  
+    plot_Mratio_dN_dlogMratio()  
     

@@ -7,7 +7,8 @@ from scipy.integrate import quad
 from matplotlib.ticker import LogLocator
 import copy
 
-from HaloMassFunction import get_M_Jeans, SHMF_BestFit_dN_dlgx  , HMF_2Dbestfit, integrand_oldversion 
+from HaloMassFunction import get_M_Jeans, SHMF_BestFit_dN_dlgx, HMF_2Dbestfit, integrand_oldversion, \
+get_cumulativeSHMF_sigma_correction
 from physical_constants import *
 from HaloProperties import Vel_Virial_analytic, Temperature_Virial_analytic, get_gas_lognH_analytic, \
 get_mass_density_analytic, inversefunc_Temperature_Virial_analytic
@@ -62,6 +63,66 @@ def integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF
     heating_per_bin = heating_per_sub * N_subs_per_bin
     SHMF_heating = np.sum(heating_per_bin)
     return SHMF_heating
+
+def integrate_SHMF_heating_for_single_host_with_variance(redshift, lgx_min, lgx_max, lgM, SHMF_model, 
+                                                        variance_factor_list, correction_model):
+    #variance_factor_list: list of factors for variance, e.g., [1, 2, 3] means 1, 2, and 3 sigma levels
+    #correction_model: 'superPoisson' or 'supersubPoisson', or 'None'
+    lg_x_bin_edges = np.linspace(lgx_min, lgx_max, 50)
+    lg_x_bin_centers = 0.5*(lg_x_bin_edges[1:] + lg_x_bin_edges[:-1])
+    lg_x_bin_width = lg_x_bin_edges[1] - lg_x_bin_edges[0]
+    dN_dlgx_mean = SHMF_BestFit_dN_dlgx(lg_x_bin_centers, redshift, SHMF_model)
+    N_subs_per_bin_mean = dN_dlgx_mean * lg_x_bin_width
+    
+    N_cumulative_mean = np.cumsum(N_subs_per_bin_mean[::-1])[::-1]
+    
+    # calculate variance
+    sigma_Poisson = np.sqrt(N_cumulative_mean)
+    Poisson_corr = get_cumulativeSHMF_sigma_correction(N_cumulative_mean, correction_model)
+    sigma_Poissoncorr = sigma_Poisson * Poisson_corr
+
+    # calculate average heating rate
+    Mhost = 10**lgM
+    m_subs = Mhost * 10**lg_x_bin_centers
+    heating_per_sub = np.array([get_DF_heating_useCs(Mhost, m, redshift) for m in m_subs])
+    heating_per_bin_mean = heating_per_sub * N_subs_per_bin_mean
+    heating_mean = np.sum(heating_per_bin_mean)
+    
+    # get boundaries of different sigma levels
+    heating_upper_list = []
+    heating_lower_list = []
+    
+    for variance_factor in variance_factor_list:
+        # Upper boundary: +n sigma
+        N_cumulative_upper = N_cumulative_mean + variance_factor * sigma_Poissoncorr
+        # Lower boundary: -n sigma
+        N_cumulative_lower = N_cumulative_mean - variance_factor * sigma_Poissoncorr
+        N_cumulative_lower = np.maximum(N_cumulative_lower, 0.0)  
+        
+        # convert back to differential SHMF
+        def cumulative_to_differential(N_cumulative):
+            N_subs_per_bin = np.zeros_like(N_cumulative)
+            N_subs_per_bin[:-1] = N_cumulative[:-1] - N_cumulative[1:]
+            N_subs_per_bin[-1] = N_cumulative[-1]
+            return N_subs_per_bin
+        
+        N_subs_per_bin_upper = cumulative_to_differential(N_cumulative_upper)
+        N_subs_per_bin_lower = cumulative_to_differential(N_cumulative_lower)
+        
+        #heating rates
+        heating_per_bin_upper = heating_per_sub * N_subs_per_bin_upper
+        heating_per_bin_lower = heating_per_sub * N_subs_per_bin_lower
+        
+        heating_upper = np.sum(heating_per_bin_upper)
+        heating_lower = np.sum(heating_per_bin_lower)
+        
+        heating_upper_list.append(heating_upper)
+        heating_lower_list.append(heating_lower)
+    
+    return heating_upper_list, heating_lower_list, heating_mean
+
+    
+
 
 def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_model):
     '''

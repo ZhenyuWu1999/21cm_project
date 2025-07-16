@@ -478,7 +478,7 @@ def plot_Mratio_dN_dlogMratio():
     N_bestfit = 10**bestfit_lg_number_density * log_bin_widths
     cumulative_bestfit = np.cumsum(N_bestfit[::-1])[::-1]
 
-    #Now plot the cumulative subhalo mass function (no Possion correction)
+    #Now plot the cumulative subhalo mass function (no Poisson correction)
     fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')
     for i in range(num_M_bins):
         cumulative_matrix = cumulative_sub_host_Mratio_list[i]
@@ -493,10 +493,10 @@ def plot_Mratio_dN_dlogMratio():
         
         # plt.plot(bins[:-1][resolved_mask], mean_cumulative[resolved_mask], 'o-', color=colors[i], label=labels[i], markersize=4, linewidth=2)
 
-        std_Possion = np.sqrt(mean_cumulative)  # Poisson error
+        std_Poisson = np.sqrt(mean_cumulative)  # Poisson error
         print(f"Mean cumulative for bin {i}: {mean_cumulative}")
-        one_sigma_upper = mean_cumulative + std_Possion
-        one_sigma_lower = mean_cumulative - std_Possion
+        one_sigma_upper = mean_cumulative + std_Poisson
+        one_sigma_lower = mean_cumulative - std_Poisson
         # 1-sigma shaded region
         # plt.fill_between(bins[:-1][resolved_mask],one_sigma_lower[resolved_mask], one_sigma_upper[resolved_mask],
         #                  color=colors[i], alpha=0.15)
@@ -519,7 +519,7 @@ def plot_Mratio_dN_dlogMratio():
 
 
 
-    #Now plot the cumulative subhalo mass function (with Possion correction)
+    #Now plot the cumulative subhalo mass function (with Poisson correction)
     fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')
     for i in range(num_M_bins):
         cumulative_matrix = cumulative_sub_host_Mratio_list[i]
@@ -534,13 +534,13 @@ def plot_Mratio_dN_dlogMratio():
         
         # plt.plot(bins[:-1][resolved_mask], mean_cumulative[resolved_mask], 'o-', color=colors[i], label=labels[i], markersize=4, linewidth=2)
 
-        std_Possion = np.sqrt(mean_cumulative)  # Poisson error
-        Possion_corr = get_cumulativeSHMF_sigma_correction(mean_cumulative,'supersubPossion')
+        std_Poisson = np.sqrt(mean_cumulative)  # Poisson error
+        Poisson_corr = get_cumulativeSHMF_sigma_correction(mean_cumulative,'supersubPoisson')
         print(f"Mean cumulative for bin {i}: {mean_cumulative}")
-        print(f"Poisson correction factor for bin {i}: {Possion_corr}")
-        std_Possioncorr = std_Possion * Possion_corr  # corrected Poisson error
-        one_sigma_upper = mean_cumulative + std_Possioncorr
-        one_sigma_lower = mean_cumulative - std_Possioncorr
+        print(f"Poisson correction factor for bin {i}: {Poisson_corr}")
+        std_Poissoncorr = std_Poisson * Poisson_corr  # corrected Poisson error
+        one_sigma_upper = mean_cumulative + std_Poissoncorr
+        one_sigma_lower = mean_cumulative - std_Poissoncorr
         # 1-sigma shaded region
         # plt.fill_between(bins[:-1][resolved_mask],one_sigma_lower[resolved_mask], one_sigma_upper[resolved_mask],
         #                  color=colors[i], alpha=0.15)
@@ -556,14 +556,14 @@ def plot_Mratio_dN_dlogMratio():
     ax.set_yscale('log')
     plt.legend()
     plt.grid(True, alpha=0.3)
-    filename = os.path.join(output_dir, f'SHMF_cumulative_Possioncorr_snap_{snapNum}.png')
+    filename = os.path.join(output_dir, f'SHMF_cumulative_Poissoncorr_snap_{snapNum}.png')
     plt.tight_layout()
     plt.savefig(filename, dpi=300)
     print(f"Cumulative SHMF plot saved to {filename}")
 
 
 
-    #plot the ratio between sigma and sigma_Possion vs mean cumulative
+    #plot the ratio between sigma and sigma_Poisson vs mean cumulative
     fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')
     for i in range(num_M_bins):
         cumulative_matrix = cumulative_sub_host_Mratio_list[i]
@@ -572,15 +572,15 @@ def plot_Mratio_dN_dlogMratio():
         std_cumulative = np.sqrt(var_cumulative)
         resolved_mask = bins[:-1] >= np.log10(critical_ratio_list[i])
         
-        std_Possion = np.sqrt(mean_cumulative)
-        mask = (std_Possion > 0) & (std_cumulative > 0) & resolved_mask
-        ratio_masked = std_cumulative[mask] / std_Possion[mask]
+        std_Poisson = np.sqrt(mean_cumulative)
+        mask = (std_Poisson > 0) & (std_cumulative > 0) & resolved_mask
+        ratio_masked = std_cumulative[mask] / std_Poisson[mask]
         mean_cumulative_masked = mean_cumulative[mask]
         plt.plot(mean_cumulative_masked, ratio_masked, 'o-', color=colors[i], label=labels[i], markersize=4, linewidth=2)
         
     #also plot correction from JB paperIII
     N_list = np.logspace(-3, 2, num=1000)  # N(>psi)
-    JB_corrections = get_cumulativeSHMF_sigma_correction(N_list, 'supersubPossion')
+    JB_corrections = get_cumulativeSHMF_sigma_correction(N_list, 'supersubPoisson')
     plt.plot(N_list, JB_corrections, linestyle='--', color='grey', label='fit of Jiang&van den Bosch paperIII', linewidth=2)
     plt.axhline(1, color='black', linestyle='--')
     ax.set_xscale('log')

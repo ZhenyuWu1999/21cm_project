@@ -8,7 +8,7 @@ from matplotlib.ticker import LogLocator
 import copy
 
 from HaloMassFunction import get_M_Jeans, SHMF_BestFit_dN_dlgx, HMF_2Dbestfit, integrand_oldversion, \
-get_cumulativeSHMF_sigma_correction
+get_cumulativeSHMF_sigma_correction, get_normalized_SHMF_Cumulative, onetime_sample_SHMF_for_Ntot
 from physical_constants import *
 from HaloProperties import Vel_Virial_analytic, Temperature_Virial_analytic, get_gas_lognH_analytic, \
 get_mass_density_analytic, inversefunc_Temperature_Virial_analytic
@@ -74,6 +74,7 @@ def integrate_SHMF_heating_for_single_host_with_variance(redshift, lgx_min, lgx_
     dN_dlgx_mean = SHMF_BestFit_dN_dlgx(lg_x_bin_centers, redshift, SHMF_model)
     N_subs_per_bin_mean = dN_dlgx_mean * lg_x_bin_width
     
+    #N_cumulative: N(>m/M)
     N_cumulative_mean = np.cumsum(N_subs_per_bin_mean[::-1])[::-1]
     
     # calculate variance
@@ -121,8 +122,45 @@ def integrate_SHMF_heating_for_single_host_with_variance(redshift, lgx_min, lgx_
     
     return heating_upper_list, heating_lower_list, heating_mean
 
-    
 
+def integrate_SHMF_heating_for_single_host_PoissonSampling(redshift, lgx_min, lgx_max, lgM, SHMF_model, n_samples, verbose=True):
+    
+    lg_x_vals, F_vals, N_mean = get_normalized_SHMF_Cumulative(lgx_min, lgx_max, redshift, SHMF_model)
+    if verbose:
+        print(f"Mean total number of subhalos: {N_mean:.2f}")
+        print(f"F_vals range: [{F_vals[0]:.3f}, {F_vals[-1]:.3f}]")
+
+    #plot histogram of the generated lg_psi and compare with BestFit_z model
+    lg_x_bin_edges = np.linspace(lgx_min, lgx_max, 50)
+    lg_x_bin_centers = 0.5*(lg_x_bin_edges[1:] + lg_x_bin_edges[:-1])
+    lg_x_bin_width = lg_x_bin_edges[1] - lg_x_bin_edges[0]
+    n_bins = len(lg_x_bin_centers)
+
+    dN_dlgx_mean = SHMF_BestFit_dN_dlgx(lg_x_bin_centers, redshift, SHMF_model)
+    theoretical_counts = dN_dlgx_mean * lg_x_bin_width
+
+    SHMF_heating_for_host_samples = []
+    for i in range(n_samples):
+        #Ntot_sample = round(N_mean)  # Use mean as test case, without Poisson fluctuations
+        Ntot_sample = np.random.poisson(N_mean) #with Poisson fluctuations
+        if verbose:
+            if (i + 1) % 100 == 0:
+                print(f"  Completed {i + 1}/{n_samples} samples")
+            
+        # Bin the sample
+        if Ntot_sample == 0:
+            SHMF_heating_for_host_samples.append(0.0)
+        else:
+            # Sample individual subhalo masses (psi values)
+            sampled_lg_psi = onetime_sample_SHMF_for_Ntot(lg_x_vals, F_vals, Ntot_sample)
+            #directly sum the heating of all subhalos without binning
+            Mhost = 10**lgM
+            m_subs = Mhost * 10**sampled_lg_psi
+            heating_of_subs = np.array([get_DF_heating_useCs(Mhost, m, redshift) for m in m_subs])
+            heating_sum = np.sum(heating_of_subs)
+            SHMF_heating_for_host_samples.append(heating_sum)
+    SHMF_heating_for_host_samples = np.array(SHMF_heating_for_host_samples)
+    return SHMF_heating_for_host_samples
 
 def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_model):
     '''

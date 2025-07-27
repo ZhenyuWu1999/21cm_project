@@ -309,23 +309,29 @@ def plot_hmfhist(redshift):
         
     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/'
     output_dir = os.path.join(base_dir, 'analysis')
-    filename = os.path.join(output_dir, f'HMFhistogram_z_{redshift}.png')
+    # filename = os.path.join(output_dir, f'HMFhistogram_z_{redshift}.png')
+    filename = os.path.join(output_dir, f'HMFhistogram_z_{redshift}_smallbox.png')
     scale_factor = 1.0/(1.+redshift)
     comoving_factor = scale_factor**3
     delta_lgM = 0.2
-    lgM_bin_edges = np.arange(6, 15+delta_lgM, delta_lgM) #log10(M [Msun/h])
+    # lgM_bin_edges = np.arange(6, 15+delta_lgM, delta_lgM) #log10(M [Msun/h])
+    lgM_bin_edges = np.arange(4, 10+delta_lgM, delta_lgM) #log10(M [Msun/h])
     lgM_bin_centers = (lgM_bin_edges[:-1] + lgM_bin_edges[1:])/2
     
     HMF_lgM_sheth99 = np.array([HMF_Colossus(10**lgM, redshift, 'sheth99')* np.log(10)*10**lgM for lgM in lgM_bin_centers])
     HMF_lgM_sheth99_comoving = HMF_lgM_sheth99*comoving_factor
     nhalo_in_bin_comoving = HMF_lgM_sheth99_comoving*delta_lgM
-    boxsize1_cMpc = 200
-    boxsize2_cMpc = 150
-    boxsize3_cMpc = 100
+    # boxsize1_cMpc = 200
+    # boxsize2_cMpc = 150
+    # boxsize3_cMpc = 100
+    boxsize1_cMpc = 50
+    boxsize2_cMpc = 10
+    boxsize3_cMpc = 5
+    boxsize4_cMpc = 1
     Nhalo_in_bin_box1 = nhalo_in_bin_comoving*(boxsize1_cMpc*h_Hubble)**3
     Nhalo_in_bin_box2 = nhalo_in_bin_comoving*(boxsize2_cMpc*h_Hubble)**3
     Nhalo_in_bin_box3 = nhalo_in_bin_comoving*(boxsize3_cMpc*h_Hubble)**3
-
+    Nhalo_in_bin_box4 = nhalo_in_bin_comoving*(boxsize4_cMpc*h_Hubble)**3
 
     # Create the figure and plot the histograms
     fig = plt.figure(figsize=(10, 7), facecolor='white')
@@ -354,6 +360,13 @@ def plot_hmfhist(redshift):
         alpha=0.7, 
         color='green', 
         label=f'Box {boxsize3_cMpc} cMpc')
+    
+    # Fourth boxsize case
+    ax.bar(lgM_bin_centers, Nhalo_in_bin_box4,
+        width=width*0.7,
+        alpha=0.7,
+        color='royalblue',
+        label=f'Box {boxsize4_cMpc} cMpc')
 
     # Set axis labels and title
     ax.set_xlabel(r'$\log_{10}(\mathrm{M} \, [\mathrm{M}_{\odot}/\mathrm{h}])$', fontsize=15)
@@ -365,9 +378,10 @@ def plot_hmfhist(redshift):
 
 
     # Add ticks for each dex (order of magnitude)
-    x_major_ticks = np.arange(6, 15, 1)  # Major ticks for each dex on x-axis
+    x_major_ticks = np.arange(4, 15, 1)  # Major ticks for each dex on x-axis
     ax.set_xticks(x_major_ticks)
-    ax.set_xlim(6.0, 15.0)  # Adjust x limits for better visualization
+    # ax.set_xlim(6.0, 15.0)  # Adjust x limits for better visualization
+    ax.set_xlim(4.0, 10.0)  # Adjust x limits for better visualization
 
     # Set y-axis to have major ticks at each power of 10
     ax.yaxis.set_major_locator(ticker.LogLocator(base=10, numticks=15))
@@ -772,6 +786,227 @@ def integrand_oldversion(ln_m_over_M, logM, z, SHMF_model, *bestfitparams):
 
 
 
+def plot_shmfhist(redshift):
+    base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/'
+    output_dir = os.path.join(base_dir, 'analysis')
+    filename = os.path.join(output_dir, f'SHMFhistogram_z_{redshift}.png')
+    #plot the BestFit SHMF histogram, x= m/M
+    lgx_bin_edges = np.arange(-4, 0.0+0.1, 0.1)  #log10(m/M)
+    lgx_bin_centers = (lgx_bin_edges[:-1] + lgx_bin_edges[1:])/2
+    delta_lgx = lgx_bin_edges[1] - lgx_bin_edges[0]
+    #calculate the SHMF for each bin center
+    SHMF_lgx_bestfit = np.array([SHMF_BestFit_dN_dlgx(lgx, redshift, 'BestFit_z') for lgx in lgx_bin_centers])
+    Nsubhalo_in_bin = SHMF_lgx_bestfit * delta_lgx  #number of subhalos in each bin
+
+    #also compare with mass resolution
+    mass_resolution = 1000 #Msun/h
+    sub_mass_resolution = 50 * mass_resolution  #minimum subhalo mass
+    lg_host_mass_list = [6.0, 6.5, 7.0, 7.5] #Msun/h
+    color_list = ['blue','green','orange','red']
+    critical_ratio_list = []
+    for lg_host_mass in lg_host_mass_list:
+        host_mass = 10**lg_host_mass
+        critical_ratio = sub_mass_resolution / host_mass
+        critical_ratio_list.append(critical_ratio)
+    lg_critical_ratio_list = np.log10(critical_ratio_list)
+
+    fig, ax = plt.subplots(figsize=(10, 7), facecolor='white')
+    # Plot the histogram
+    width = delta_lgx * 0.9  # Slightly narrower than the bin
+    ax.bar(lgx_bin_centers, Nsubhalo_in_bin,
+           width=width, 
+           alpha=0.7,  
+           label=f'SHMF at z={redshift}')
+    # Set axis labels and title
+    ax.set_xlabel(r'$\log_{10}(m/M)$', fontsize=15)
+    ax.set_ylabel(r'Number of subhalos in bin', fontsize=15)
+    ax.set_title(f'Subhalo Mass Function Histogram at z = {redshift}', fontsize=16)
+    # Set logarithmic y-scale for better visualization
+    ax.set_yscale('log')
+    ax.axhline(y=1, color='black', linestyle='-', linewidth=1.5, alpha=0.7)
+    # Add ticks for each dex (order of magnitude)
+    x_major_ticks = np.arange(-4, 0, 1)  # Major ticks for each dex on x-axis
+    
+    ax.set_xticks(x_major_ticks)
+    ax.set_xlim(-4.0, 0.0)  # Adjust x limits
+    ax.set_ylim(1e-3, 1e2)    
+    ax.yaxis.set_major_locator(ticker.LogLocator(base=10, numticks=15))
+    #use vertical lines to indicate the critical ratio
+    for i, lg_critical_ratio in enumerate(lg_critical_ratio_list):
+        ax.axvline(x=lg_critical_ratio, color=color_list[i], linestyle='--', linewidth=2.0, alpha=1.0, label=f"host: lg(M/[Msun/h]) = {lg_host_mass_list[i]:.1f}, sub: 50x 1000 Msun/h")
+    plt.legend(loc='upper right', frameon=True, fontsize=12)
+    ax.text(0.2, 0.9, f'Bin width = {delta_lgx:.2f} dex',
+            transform=ax.transAxes, fontsize=15,
+            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+
+def run_shmfhist():
+    z_list = [15, 10, 8, 6, 0]
+    # z_list = [15]
+    for z in z_list:
+        plot_shmfhist(z)
+
+
+#----------------------------------- Variation of SHMF and its correction -----------------------------------
+
+#correction factor for the variance of the cumulative SHMF, Equation 16 in Jiang & van den Bosch paperIII
+def get_cumulativeSHMF_sigma_correction(N_avg, correction_model):
+    if correction_model == 'superPoisson': #BK10
+        epsilon = 0.18
+        return np.sqrt(1+epsilon**2*N_avg)
+    elif correction_model == 'supersubPoisson': #Jiang & van den Bosch paperIII, including both super and sub Poissonian correction
+        N0 = 0.12
+        x = np.sqrt(N_avg/N0)
+        eta = 0.09
+        epsilon = 0.18
+        return (1 - eta*x**2 * np.exp(-x)) * np.sqrt(1+epsilon**2*N_avg)
+    elif correction_model == 'None':
+        return np.ones_like(N_avg)  # No correction, return 1 for all N_avg
+
+
+
+
+#------------------------------ Random Sampling of SHMF -----------------------------------
+#use inverse transform sampling from the cumulative SHMF, see section 5.1 of Hiroshima+ 2022
+#SHMF_model = "BestFit_z": BestFit of TNG + redshift evolution fit
+
+def get_normalized_SHMF_Cumulative(lgx_min, lgx_max, redshift, SHMF_model):
+    """
+    return: P(<psi) = N(< m/M)/Ntot_mean, not to be confused with N(> m/M)
+    """
+    lg_x_bin_edges = np.linspace(lgx_min, lgx_max, 50)
+    lg_x_bin_centers = 0.5*(lg_x_bin_edges[1:] + lg_x_bin_edges[:-1])
+    lg_x_bin_width = lg_x_bin_edges[1] - lg_x_bin_edges[0]
+    dN_dlgx_mean = SHMF_BestFit_dN_dlgx(lg_x_bin_centers, redshift, SHMF_model)
+    N_subs_per_bin_mean = dN_dlgx_mean * lg_x_bin_width
+
+    # Calculate N(<psi): cumulative from left to right
+    N_cumulative_less_than = np.cumsum(N_subs_per_bin_mean)
+    # print("N_cumulative_less_than:", N_cumulative_less_than)
+    # Normalize to probability distribution [0, 1]
+    N_tot_mean = N_cumulative_less_than[-1]
+    F_cumulative_bins = N_cumulative_less_than / N_tot_mean
+    # Add the leftmost point: F = 0 at psi = psi_min
+    F_cumulative = np.concatenate([[0.0], F_cumulative_bins])
+    return lg_x_bin_edges, F_cumulative, N_tot_mean
+
+def onetime_sample_SHMF_for_Ntot(lg_x_values, F_cumulative, Ntot):
+    """
+    Sample subhalo mass function for given total number using inverse transform
+    
+    Parameters:
+    -----------
+    lg_x_values, F_cumulative: array, the shape of SHMF probability P(psi < x)
+        taken from get_normalized_SHMF_Cumulative
+    Ntot : int
+        total number of subhalos to generate
+    Returns:
+    --------
+    sampled_lg_psi : array
+        array of sampled log10(psi) values (length = Ntot)
+    """
+    if Ntot == 0:
+        return np.array([])
+    
+    # Generate uniform random numbers [0, 1]
+    u_values = np.random.uniform(0, 1, Ntot)
+    
+    # Inverse transform: F^(-1)(u) using linear interpolation
+    sampled_lg_psi = np.interp(u_values, F_cumulative, lg_x_values)
+    
+    return sampled_lg_psi
+
+
+
+def test_SHMF_sampling():
+    base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/'
+    output_dir = os.path.join(base_dir, 'analysis')
+
+    redshift = 15
+    SHMF_model = "BestFit_z"
+    lgx_min = -4
+    lgx_max =  0
+    lg_x_vals, F_vals, N_mean = get_normalized_SHMF_Cumulative(-4, 0, redshift, SHMF_model)
+    print(f"Mean total number of subhalos: {N_mean:.2f}")
+    print(f"F_vals range: [{F_vals[0]:.3f}, {F_vals[-1]:.3f}]")
+
+
+    #plot histogram of the generated lg_psi and compare with BestFit_z model
+    lg_x_bin_edges = np.linspace(lgx_min, lgx_max, 50)
+    lg_x_bin_centers = 0.5*(lg_x_bin_edges[1:] + lg_x_bin_edges[:-1])
+    lg_x_bin_width = lg_x_bin_edges[1] - lg_x_bin_edges[0]
+    n_bins = len(lg_x_bin_centers)
+
+    dN_dlgx_mean = SHMF_BestFit_dN_dlgx(lg_x_bin_centers, redshift, SHMF_model)
+    theoretical_counts = dN_dlgx_mean * lg_x_bin_width
+
+    n_samples = 500
+    sample_results = []
+    for i in range(n_samples):
+        #Ntot_sample = round(N_mean)  # Use mean as test case, without Poisson fluctuations
+        Ntot_sample = np.random.poisson(N_mean) #with Poisson fluctuations
+
+        if (i + 1) % 100 == 0:
+            print(f"  Completed {i + 1}/{n_samples} samples")
+        
+        # Bin the sample
+        if Ntot_sample == 0:
+            sample_counts = np.zeros(n_bins)
+        else:
+            # Sample individual subhalo masses (psi values)
+            sampled_lg_psi = onetime_sample_SHMF_for_Ntot(lg_x_vals, F_vals, Ntot_sample)
+            sample_counts, _ = np.histogram(sampled_lg_psi, bins=lg_x_bin_edges)
+        sample_results.append(sample_counts)
+    
+    # Convert to numpy array for easier manipulation
+
+    sample_results = np.array(sample_results)  # Shape: [n_samples, n_bins]
+    # Convert differential counts to cumulative N(>psi)
+    sample_cumulative = np.zeros_like(sample_results)
+    for i in range(n_samples):
+        sample_cumulative[i, :] = np.cumsum(sample_results[i, ::-1])[::-1]
+
+    theoretical_cumulative = np.zeros_like(theoretical_counts)
+    theoretical_cumulative = np.cumsum(theoretical_counts[::-1])[::-1]
+
+    # Calculate statistics for cumulative data
+    mean_cumulative = np.mean(sample_cumulative, axis=0)
+    std_cumulative = np.std(sample_cumulative, axis=0)
+
+    fig, ax1 = plt.subplots(1, 1, figsize=(10, 7), facecolor='white')
+
+
+    # Plot cumulative N(>psi) with dashed bounds
+    ax1.plot(lg_x_bin_centers, mean_cumulative, 'b-', linewidth=2,
+            label=f'Sampled mean ({n_samples} samples)', marker='o', markersize=4)
+
+    # Plot ±1σ bounds with dashed lines
+    ax1.plot(lg_x_bin_centers, mean_cumulative + std_cumulative, 'b--', linewidth=1.5, 
+            alpha=0.8)
+    ax1.plot(lg_x_bin_centers, mean_cumulative - std_cumulative, 'b--', linewidth=1.5, 
+            alpha=0.8, label='±1σ with Poisson')
+    
+    ax1.plot(lg_x_bin_centers, theoretical_cumulative, 'r-', linewidth=3,
+            label='Theoretical SHMF model', marker='s', markersize=4)
+    
+    sqrt_n_error = np.sqrt(theoretical_cumulative)  
+    ax1.errorbar(lg_x_bin_centers, theoretical_cumulative, yerr=sqrt_n_error,
+            fmt='rs-', linewidth=3, markersize=4, capsize=3, capthick=1,
+            label=r'Theoretical ± $\sqrt{N}$', alpha=0.2)
+
+    ax1.set_xlabel('lg(m/M)', fontsize=14)
+    ax1.set_ylabel('N(> m/M)',fontsize=14)
+    ax1.set_title(f'Cumulative SHMF: {n_samples} iterations, mean N={N_mean:.2f}', fontsize=16)
+    ax1.set_yscale('log')
+    ax1.set_ylim(bottom=1e-3)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'SHMF_Poisson_sampling_z_{redshift}.png'), dpi=300)
+
+
+
 #----------------------------------- Mass Limits -----------------------------------
 def T_CMB(z):
     return T0_CMB*(1+z)
@@ -868,26 +1103,14 @@ def plot_M_Jeans():
     plt.legend(fontsize=14)
     plt.savefig('/home/zwu/21cm_project/unified_model/Analytic_results/M_Jeans_z.png',dpi=300)
 
-#correction factor for the variance of the cumulative SHMF, Equation 16 in Jiang & van den Bosch paperIII
-def get_cumulativeSHMF_sigma_correction(N_avg, correction_model):
-    if correction_model == 'superPoisson': #BK10
-        epsilon = 0.18
-        return np.sqrt(1+epsilon**2*N_avg)
-    elif correction_model == 'supersubPoisson': #Jiang & van den Bosch paperIII, including both super and sub Poissonian correction
-        N0 = 0.12
-        x = np.sqrt(N_avg/N0)
-        eta = 0.09
-        epsilon = 0.18
-        return (1 - eta*x**2 * np.exp(-x)) * np.sqrt(1+epsilon**2*N_avg)
-    elif correction_model == 'None':
-        return np.ones_like(N_avg)  # No correction, return 1 for all N_avg
-
-
 
 if __name__ == "__main__":
     # HMF_ratio_2Dbestfit(9, 0.0)
-    run_shmf_redshift_evolution()
+    # run_shmf_redshift_evolution()
   
     # plot_M_Jeans()
     # run_hmf_redshift_evolution()
     # run_hmfhist()
+    # run_shmfhist()
+
+    test_SHMF_sampling()

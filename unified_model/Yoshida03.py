@@ -10,11 +10,12 @@ from scipy.interpolate import interp1d
 from colossus.cosmology import cosmology
 
 
-from physical_constants import h_Hubble, H0_s, Omega_m, Omega_b, Ombh2, Myr, cosmo, Msun, mu_minihalo, eV, kB, Mpc
+from physical_constants import h_Hubble, H0_s, Omega_m, Omega_b, Ombh2, Myr, cosmo, Msun, mu_minihalo, eV, kB, Mpc, mp
 from HaloProperties import Temperature_Virial_analytic, get_gas_lognH_analytic, \
 inversefunc_Temperature_Virial_analytic, get_mass_density_analytic
 from Grackle_cooling import run_constdensity_model
-from Analytic_Model import integrate_SHMF_heating_for_single_host
+from Analytic_Model import integrate_SHMF_heating_for_single_host, \
+integrate_SHMF_heating_for_single_host_with_variance, integrate_SHMF_heating_for_single_host_PoissonSampling
 from HaloMassFunction import T_CMB
 from utilities import integrate_ode_z
 
@@ -150,7 +151,7 @@ def get_nH_Tegmark97(z):
     #nH in cm^-3
     return 23*((1+z)/100)**3*h_Hubble**2*Omega_b/0.015
 
-def get_fH2_Tegmark97(T, z=None):
+def get_H2abundance_formed_Tegmark97(T, z=None):
     #H2 mass fraction for Tvir
     #Tegmark 1997 Eq.17
     #T in K, return fH2
@@ -163,7 +164,7 @@ def get_fH2_Tegmark97(T, z=None):
     
     return 3.5e-4 * (T/1e3)**1.52*(1+high_order_term)**(-1)
 
-def get_critical_fH2_Tegmark97(T, z):
+def get_critical_H2abundance_Tegmark(T, z):
     #where cooling time = Hubble time(z), modify z to 1+z for accuracy at low z
     #Eq.11 Tegmark 1997
     T3 = T/1e3
@@ -177,41 +178,99 @@ def get_Tvir_Tegmark97(M, z):
 
 def get_Tvir_Yoshida03(M, z, mean_molecular_weight):
     #M in Msun
-    Delta = 180
+    Delta = 200
     T =  1.98e4*(mean_molecular_weight/0.6)*(M*h_Hubble/1e8)**(2/3) \
         *(Omega_m*Delta/18/np.pi**2)**(1/3)*(1+z)/10
     return T
 
 def get_fH2_Yoshida03(T):
+    #mass fraction of H2 in Tvir halo, Yoshida03 fit
     #for Tvir = 2300*(0.5**(2/3)) K, fH2 = 8e-5 (see section 4 of Yoshida 2003) 
     
     return 1.254e-9*T**1.52
+def get_ss_factor_WG11(Tgas, NH2):
+    x = NH2 / 5.0e14
+    b5 = np.sqrt(2*kB*Tgas/2/mp)/(1e5 * 1e-2) 
+    f_sh = 0.965 / (1 + x/b5)**1.1 + 0.035 / (1+x)**0.5 * np.exp(-8.5e-4*(1+x)**(1/2))
+    return f_sh
 
-def get_H2_mass_frac_equilibrium(T, z, J21, self_shielding):
-    lognH = get_gas_lognH_analytic(z)
-    nH = 10**lognH  
+def get_H2_mass_frac_equilibrium(T, nH, z, J21, self_shielding, ss_model = 'DB98'):
+    if nH == None:
+        lognH = get_gas_lognH_analytic(z)
+        nH = 10**lognH  
     kHM = get_kHM_GP98(T)
     if self_shielding:
         fH2_without_LW = get_fH2_Yoshida03(T)
-        C = 0.2
         Mvir = inversefunc_Temperature_Virial_analytic(T, z, mean_molecular_weight=mu_minihalo)  # Mvir in Msun
         halo_density = get_mass_density_analytic(z)
         halo_volume = Mvir * Msun / halo_density
         Rvir = (3 * halo_volume / (4 * np.pi))**(1/3)  # Rvir in m
         Rvir_cm = Rvir * 1e2  # Convert to cm
-        N_H2 = C*fH2_without_LW*nH*Rvir_cm
-        Fshield = min(1, (N_H2/1.0e14)**(-3/4))  # self-shielding factor, N_H2 in cm^(-2)
+        if ss_model == 'DB98':
+            C = 0.2
+            N_H2 = C*fH2_without_LW*nH*Rvir_cm
+            Fshield = min(1, (N_H2/1.0e14)**(-3/4))  # self-shielding factor, N_H2 in cm^(-2)
+        elif ss_model == 'WG11':
+            C = 0.2
+            N_H2 = C*fH2_without_LW*nH*Rvir_cm #debug: NH2 and Tgas?
+            Fshield = get_ss_factor_WG11(T, N_H2)  # self-shielding factor
+        else:
+            raise ValueError("Invalid self-shielding model. Must be 'DB98' or 'WG11'.")
         k_diss = get_kdiss_Yoshida03(J21, Fshield)
         print("Rvir_cm = ", Rvir_cm, "cm, nH = ", nH, "cm^-3, N_H2 = ", N_H2, "cm^-2")
         print("T = ", T, "K, J21 = ", J21, "Fshield = ", Fshield, "k_diss = ", k_diss)
     else:
         k_diss = get_kdiss_Yoshida03(J21, 1.0)
-    xe = 1.0e-4
-    f_H2_eq = 2 * kHM * nH * xe /k_diss  #mass fraction of H2 in equilibrium
+    xe = xe_interp_func(z)  
+    ne = nH * xe
+    # ne = 1e-4, debug
+    f_H2_eq = 2 * kHM * ne /k_diss  #multiply by 2 to get the mass fraction of H2 in equilibrium
     return f_H2_eq
+
+def get_H2_mass_frac_eq_Agarwal(T, nH, z, J21, spectral_type, self_shielding):
+
+    if spectral_type == "T4":
+        beta = 3; alpha = 2000
+    elif spectral_type == "T5":
+        beta = 0.9; alpha = 0.1
+
+    if self_shielding:
+        fH2_without_LW = get_fH2_Yoshida03(T)
+        Mvir = inversefunc_Temperature_Virial_analytic(T, z, mean_molecular_weight=mu_minihalo)  # Mvir in Msun
+        halo_density = get_mass_density_analytic(z)
+        halo_volume = Mvir * Msun / halo_density
+        Rvir = (3 * halo_volume / (4 * np.pi))**(1/3)  # Rvir in m
+        Rvir_cm = Rvir * 1e2  # Convert to cm
+        #use WG11
+        C = 0.2
+        N_H2 = C*fH2_without_LW*nH*Rvir_cm #debug: NH2 and Tgas?
+        Fshield = get_ss_factor_WG11(T, N_H2)  # self-shielding factor
+        print(f"T = {T} K, spectral_type = {spectral_type}, J21 = {J21}, Fshield = {Fshield}") 
+    else: 
+        Fshield = 1.0  # no self-shielding
+
+    kform_1 = get_kHM_GP98(T)
+    kform_2 =  get_K_Tegmark97(3, T, np.nan) 
+    k_HM_detach =  1.0e-10 * alpha * J21
+    kform_eff = kform_1 * kform_2*nH / (kform_2*nH + k_HM_detach)
+    k_H2I_diss = 1.0e-12 * beta * J21 * Fshield
+    xe = xe_interp_func(z)  
+    ne = nH * xe
+    f_H2_eq = 2 * kform_eff * ne / k_H2I_diss  #multiply by 2 to get the mass fraction of H2 in equilibrium
+
+    return f_H2_eq
+
+    
 
 
 def test_Tvir():
+    # compare with halo mass-Tvir in John Wise paper, R500 used in their model?
+    # M_in_Msun_test = inversefunc_Temperature_Virial_analytic(7000, z, mean_molecular_weight=1.2) #Mvir in Msun
+    # print("M_in_Msun_test = ", M_in_Msun_test)
+    # Tvir_test = Temperature_Virial_analytic(6e6, 15, mean_molecular_weight=1.23)
+    # print("Tvir_test = ", Tvir_test)
+
+
     #compare Tvir from Yoshida03, Tegmark97 and our model
     z = 20
     M_list = np.logspace(4, 8, 50)
@@ -235,6 +294,7 @@ def test_Tvir():
     plt.savefig(filename, dpi=300)
 
     print("test Tvir, M = 1e6 Msun/h, z = 20, Tvir_Yoshida = ", get_Tvir_Yoshida03(1e6/h_Hubble, z, 1.2))
+    print("test Tvir, M = 6e5 Msun/h, z = 23, Tvir_Yoshida = ", get_Tvir_Yoshida03(6e5/h_Hubble, 23, 1.2))
 
 #check the H2 formation and dissociation timescale mentioned in Yoshida 2003
 def test_H2_form_diss_timescale():
@@ -250,16 +310,34 @@ def test_H2_form_diss_timescale():
     t_form_Myr = t_form / Myr
     print("t_form = ", t_form_Myr, "Myr")
 
+
+    T = 3000
+    nH = 1
+    z = 20.7
     J21 = 0.1
     Fshield = 1.0
     k_diss = get_kdiss_Yoshida03(J21, Fshield)  
     t_diss = 1.0 / k_diss
     t_diss_Myr = t_diss / Myr
     print("t_diss = ", t_diss_Myr, "Myr, approx", 1e12/J21/Myr, "Myr")
-    fH2_eq = get_H2_mass_frac_equilibrium(T, 17, J21, self_shielding=False)
-    print("fH2_eq = ", fH2_eq)
+    fH2_eq = get_H2_mass_frac_equilibrium(T, nH, z, J21, self_shielding=False)
+    print(f"fH2_eq = {fH2_eq}, using T = {T} K, nH = {nH} cm^-3 (central gas to collapse)")
+    nH = 10**get_gas_lognH_analytic(z)  # get nH from analytic model
+    fH2_eq = get_H2_mass_frac_equilibrium(T, None, z, J21, self_shielding=False)
+    print(f"fH2_eq = {fH2_eq}, using T = {T} K, nH from get_gas_lognH_analytic(z) = {nH} cm^-3")
 
-
+    #compare with O'Shea & Norman 2008, Eq.3 example
+    print("\nO'Shea & Norman 2008, Eq.3 example:")
+    T = 2000
+    ne = 1.0e-4
+    k_HM = get_kHM_GP98(T)
+    F21 = 1.0
+    J21 = F21 / (4 *np.pi)
+    k_diss = get_kdiss_Yoshida03(J21, 1.0) 
+    print("k_diss = ", k_diss, "s^-1")
+    fH2 = k_HM * ne / k_diss
+    print("fH2 = ", fH2)
+    
 
 
 
@@ -308,53 +386,95 @@ def compare_Hubble_timescale_and_nH():
     plt.savefig(filename, dpi=300)
 
 
-def test_fH2_Tegmark():
-    z_list = np.array([100, 50, 25])
-    nH_Tegmark = get_nH_Tegmark97(z_list)
-    print("nH_Tegmark = ", nH_Tegmark)
-    T_list = np.logspace(2, 4, 50)
-    All_critical_fH2 = []
-    All_H2_formation = []
-    for z in z_list:
-        fH2_critical = np.array([get_critical_fH2_Tegmark97(T, z) for T in T_list])
-        fH2_formation = np.array([get_fH2_Tegmark97(T, z) for T in T_list])
-        All_critical_fH2.append(fH2_critical)
-        All_H2_formation.append(fH2_formation)
-    All_critical_fH2 = np.array(All_critical_fH2)
-    All_H2_formation = np.array(All_H2_formation)
-
-    fig = plt.figure(figsize=(8, 6))
-    linestyles = ['-',':','--']
-    for i, z in enumerate(z_list):
-        plt.plot(T_list, All_critical_fH2[i], label='critical fraction, z='+str(z), linestyle=linestyles[i], color='k')
-        plt.plot(T_list, All_H2_formation[i], label='H2 produced, z='+str(z), linestyle=linestyles[i], color='red')
-    plt.xscale('log')
-    plt.yscale('log')
-    plt.xlabel('T [K]')
-    plt.ylabel('fH2')
-    plt.title('Tegmark 1997 model')
-    plt.legend()
-    plt.tight_layout()
-    filename = os.path.join("Analytic_results/Yoshida03", "Tegmark_fH2_vs_T_z.png")
-    plt.savefig(filename, dpi=300)
-
-def test_fH2():
+def test_fH2_scaling():
     z = 20
     M = 1.0e6/h_Hubble #Msun
-    T1 = get_Tvir_Yoshida03(M, z, 1.0)
-    T2 = Temperature_Virial_analytic(M, z, 1.0)
+    T1 = get_Tvir_Yoshida03(M, z, 1.2)
+    T2 = Temperature_Virial_analytic(M, z, mu_minihalo)
     print("T_vir_Yoshida03 = ", T1)
     print("T_vir_analytic = ", T2)
     print("T_vir_Yoshida03 / T_vir_analytic = ", T1/T2)
 
     M_test = 5.0e5/h_Hubble #Msun
-    T_test = get_Tvir_Yoshida03(M_test, z, 1.0)
+    T_test = get_Tvir_Yoshida03(M_test, z, 1.2)
 
     fH2_test = get_fH2_Yoshida03(T_test)
     print("fH2_test = ", fH2_test)
-    fH2_test_Tegmark = get_fH2_Tegmark97(T_test)
+    fH2_test_Tegmark = get_H2abundance_formed_Tegmark97(T_test)
     print("fH2_test_Tegmark = ", fH2_test_Tegmark)
     print("fH2_test / fH2_test_Tegmark = ", fH2_test/fH2_test_Tegmark)
+
+
+def test_Tegmark_model():
+    zvir_list = np.array([25, 50, 100])
+    nH_Tegmark = get_nH_Tegmark97(zvir_list)
+    print("nH_Tegmark = ", nH_Tegmark)
+    T_list = np.logspace(2, 4, 50)
+    All_critical_fH2 = []
+    for z in zvir_list:
+        fH2_critical = np.array([get_critical_H2abundance_Tegmark(T, z) for T in T_list])
+        All_critical_fH2.append(fH2_critical)
+    All_critical_fH2 = np.array(All_critical_fH2)
+    fH2_scaling_Tegmark = np.array([get_H2abundance_formed_Tegmark97(T, z) for T in T_list])
+    fH2_scaling_Yoshida = np.array([get_fH2_Yoshida03(T)/2 for T in T_list])
+
+
+    #now numerically solve Tegmark's ODE and plot the final H2 abundance at z=17 
+    print("Using a full list of Tvir for different zvir ...")
+    xe_data_CAMB = np.loadtxt('xe_evolution.dat', skiprows=1)  # Skip first row
+    z_CAMB = xe_data_CAMB[:, 0]  # First column (redshift)
+    xe_CAMB = xe_data_CAMB[:, 1]  # Second column (free electron fraction)
+    #do not start at very high z (z>>300) because Tegmark's xe(z) is not accurate there
+    z_start = 300
+    xe_interp_func = interp1d(z_CAMB, xe_CAMB, bounds_error=False, fill_value='extrapolate')
+    xe_at_z_start = xe_interp_func(z_start)
+    fH2_at_z_start = 1.0e-7
+    z_final = 17
+    Tvir_fulllist = np.logspace(np.log10(100), np.log10(5000), 30) 
+    finalxe_intTegmark_allresults = []
+    finalfH2_intTegmark_allresults = []
+    for zvir in zvir_list:
+        finalxe_for_zvir = np.zeros(len(Tvir_fulllist))
+        finalfH2_for_zvir = np.zeros(len(Tvir_fulllist))
+        for j, Tvir in enumerate(Tvir_fulllist):
+            print("calculating Tvir = ", Tvir, "K, zvir = ", zvir)
+            y_initial = np.array([xe_at_z_start, fH2_at_z_start])
+            result = integrate_ode_z(dxefH2_dz_Tegmark97,z_initial=z_start,y_initial=y_initial,
+                                                   z_final=z_final,ode_args=(zvir, Tvir))
+            finalxe = result['y'][0][-1]  # Get the final xe value
+            finalfH2 = result['y'][1][-1]  # Get the final fH2 value
+            finalxe_for_zvir[j] = finalxe
+            finalfH2_for_zvir[j] = finalfH2
+        finalxe_intTegmark_allresults.append(finalxe_for_zvir)
+        finalfH2_intTegmark_allresults.append(finalfH2_for_zvir)
+    finalxe_intTegmark_allresults = np.array(finalxe_intTegmark_allresults)
+    finalfH2_intTegmark_allresults = np.array(finalfH2_intTegmark_allresults)
+
+    #plot final fH2 vs Tvir for different zvir
+    
+
+    fig = plt.figure(figsize=(8, 6))
+    linestyles = ["--", ":", '-']
+
+    for i, z in enumerate(zvir_list):
+        plt.plot(T_list, All_critical_fH2[i], label='critical fraction, z='+str(z), linestyle=linestyles[i], color='k')
+    plt.plot(T_list, fH2_scaling_Tegmark, label='H2 formation scaling Tegmark 1997', color='red')
+    plt.plot(T_list, fH2_scaling_Yoshida, label='H2 formation scaling Yoshida 2003', color='blue')
+    
+    for i, zvir in enumerate(zvir_list):
+        plt.plot(Tvir_fulllist, finalfH2_intTegmark_allresults[i], 
+                label=f'zvir={zvir}', color='green', linestyle=linestyles[i])
+    
+    
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.xlabel('T [K]')
+    plt.ylabel('n(H2)/n(H)')
+    plt.title('Tegmark 1997 model')
+    plt.legend()
+    plt.tight_layout()
+    filename = os.path.join("Analytic_results/Yoshida03", "Tegmark_fH2_vs_T_z.png")
+    plt.savefig(filename, dpi=300)
 
 def x_t_Tegmark97(x0, t, n, T):
     k1 = get_K_Tegmark97(1, T, 0)  # k1 doesn't depend on z in this case
@@ -413,7 +533,7 @@ def dxefH2_dz_Tegmark97(z, y, z_vir, T_vir):
     return np.array([dxe_dz, dfH2_dz])
     
 
-def plot_xe_vs_z():#debug: n and T fixed?
+def plot_xefH2_vs_z():#debug: n and T fixed?
 
     xe_data_CAMB = np.loadtxt('xe_evolution.dat', skiprows=1)  # Skip first row
     z_CAMB = xe_data_CAMB[:, 0]  # First column (redshift)
@@ -444,23 +564,14 @@ def plot_xe_vs_z():#debug: n and T fixed?
     
 
 
-    z_list = np.logspace(np.log10(15), np.log10(z_start), 1000)
-    t_list_colossus = np.array([cosmo.age(z) for z in z_list]) * 1e3 * Myr  # Convert to s
-    nH_list = np.array([get_nH_Tegmark97(z) for z in z_list])
-    print("z_list = ", z_list)
-    print("t_list_colossus = ", t_list_colossus)
-    print("nH_list = ", nH_list)
+    # z_list = np.logspace(np.log10(15), np.log10(z_start), 1000)
+    # t_list_colossus = np.array([cosmo.age(z) for z in z_list]) * 1e3 * Myr  # Convert to s
+    # nH_list = np.array([get_nH_Tegmark97(z) for z in z_list])
+    # print("z_list = ", z_list)
+    # print("t_list_colossus = ", t_list_colossus)
+    # print("nH_list = ", nH_list)
 
-    #1. xe(z) analytic result given by Eq. 15 in Tegmark 1997
-    # X_t_results_all = []
-    # for i in range(len(T_const_nH_combinations)):
-    #     T_const = T_const_nH_combinations[i][0]
-    #     nH_at_zvir = T_const_nH_combinations[i][1]
-    #     # Calculate xe at each z using the analytical solution
-    #     x0 = xe_at_z_start
-    #     n, T = nH_at_zvir, T_const
-    #     x_t_results = x_t_Tegmark97(x0, t_list_colossus, n, T)
-    #     X_t_results_all.append(x_t_results)
+        # x_t_results = x_t_Tegmark97(x0, t_list_colossus, n, T)
     
     #2. xe(z) from integration of Eq. 12 in Tegmark 1997
     xefH2_intTegmark_allresults = []
@@ -476,9 +587,6 @@ def plot_xe_vs_z():#debug: n and T fixed?
             # print("result (xe, fH2): ", result['y'])
             xefH2_intTegmark_allresults.append(result)
 
-    # z_list, xe_list = integrate_xe(T_const)
-    # ax.plot(z_list, xe_list, label=f'T = {T_const} K', color='blue')
-
     colors = ['b', 'g', 'r']
     linestyles = ["--", ":", '-']
 
@@ -488,6 +596,7 @@ def plot_xe_vs_z():#debug: n and T fixed?
     ax.plot(z_CAMB[CAMB_mask], xe_CAMB[CAMB_mask], label='CAMB data', color='k', linestyle='-')
     ax.plot(xe_intPeebles_result['z'], xe_intPeebles_result['y'][0], label='Peebles 1999', color='orange', linestyle='--')
     ax.plot(xefH2_intTegmark_Tgas['z'], xefH2_intTegmark_Tgas['y'][0], label='Tegmark+Tgas model', color='purple', linestyle='-.')
+    # marker_list = ['o', 's', 'x'] #for each zvir  
     for i in range(len(Tvir_list)):
         for j in range(len(zvir_list)):
             result = xefH2_intTegmark_allresults[i*len(zvir_list) + j]
@@ -495,6 +604,10 @@ def plot_xe_vs_z():#debug: n and T fixed?
             xe = result['y'][0]
             label = f'Tegmark+ Tvir={Tvir_list[i]} K, zvir={zvir_list[j]}'
             ax.plot(z, xe, label=label, color=colors[i], linestyle=linestyles[j])
+
+            # t = np.array([cosmo.age(_z) for _z in z]) * 1e3 * Myr  # Convert to s
+            # x_t = np.array([x_t_Tegmark97(3.0e-4, _t, get_nH_Tegmark97(zvir_list[j]), Tvir_list[i]) for _t in t])
+            # ax.scatter(z[::50], x_t[::50], color=colors[i], marker=marker_list[j], s=10)  
             
     ax.invert_xaxis()
     ax.set_xscale('log')
@@ -521,61 +634,38 @@ def plot_xe_vs_z():#debug: n and T fixed?
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlabel('Redshift (z)', fontsize=14)
-    ax.set_ylabel('H2 Fraction (fH2)', fontsize=14)
+    ax.set_ylabel('n(H2)/n(H)', fontsize=14)
     ax.grid()
     ax.legend()
     plt.tight_layout()
     filename = os.path.join("Analytic_results/Yoshida03", f"fH2_vs_z.png")
     plt.savefig(filename, dpi=300)
 
-    #now plot final fH2 and use a full list of Tvir and plot fH2 at z = 17
-    print("Using a full list of Tvir for different zvir ...")
+
+#plot the H2 mass fraction vs Tvir for Yoshida 2003 model
+def plot_Yoshida03_fH2_vs_Tvir():
+    Tvir_fulllist = np.logspace(np.log10(100), np.log10(8000), 50) 
+
     z_final = 17
-    zvir_list = [25, 50, 100]
-    Tvir_fulllist = np.logspace(np.log10(100), np.log10(10000), 30) 
-    finalxe_intTegmark_allresults = []
-    finalfH2_intTegmark_allresults = []
-    for zvir in zvir_list:
-        finalxe_for_zvir = np.zeros(len(Tvir_fulllist))
-        finalfH2_for_zvir = np.zeros(len(Tvir_fulllist))
-        for j, Tvir in enumerate(Tvir_fulllist):
-            print("calculating Tvir = ", Tvir, "K, zvir = ", zvir)
-            y_initial = np.array([xe_at_z_start, fH2_at_z_start])
-            result = integrate_ode_z(dxefH2_dz_Tegmark97,z_initial=z_start,y_initial=y_initial,
-                                                   z_final=z_final,ode_args=(zvir, Tvir))
-            finalxe = result['y'][0][-1]  # Get the final xe value
-            finalfH2 = result['y'][1][-1]  # Get the final fH2 value
-            finalxe_for_zvir[j] = finalxe
-            finalfH2_for_zvir[j] = finalfH2
-        finalxe_intTegmark_allresults.append(finalxe_for_zvir)
-        finalfH2_intTegmark_allresults.append(finalfH2_for_zvir)
-    finalxe_intTegmark_allresults = np.array(finalxe_intTegmark_allresults)
-    finalfH2_intTegmark_allresults = np.array(finalfH2_intTegmark_allresults)
-
-    #plot final fH2 vs Tvir for different zvir
-    fig, ax = plt.subplots(figsize=(8, 6))
-    linestyles = ["--", ":", '-']
-
-    for i, zvir in enumerate(zvir_list):
-        ax.plot(Tvir_fulllist, 2*finalfH2_intTegmark_allresults[i], 
-                label=f'zvir={zvir}', color='k', linestyle=linestyles[i])
-    #also compare with Yoshida 2003 
-    fH2_Yoshida03 = get_fH2_Yoshida03(Tvir_fulllist)
-    ax.plot(Tvir_fulllist, fH2_Yoshida03, label='Yoshida 2003', color='blue', linestyle='-')
-    finalxe_zvir25 = finalxe_intTegmark_allresults[0]
+    # finalxe_zvir25 = finalxe_intTegmark_allresults[0]
     nHhalo_zfinal = get_nH_Tegmark97(z_final)
-    Fshield = 1.0
+    fH2_Yoshida03 = get_fH2_Yoshida03(Tvir_fulllist)
+
     fH2_Yoshida03_LWhigh = np.zeros(len(Tvir_fulllist))
     fH2_Yoshida03_LWlow_shield = np.zeros(len(Tvir_fulllist))
     fH2_Yoshida03_LWlow = np.zeros(len(Tvir_fulllist))
     for i, Tvir in enumerate(Tvir_fulllist):
-        fH2_Yoshida03_LWhigh[i] = get_H2_mass_frac_equilibrium(Tvir, z_final, 0.1, self_shielding=False)
-        fH2_Yoshida03_LWlow_shield[i] = get_H2_mass_frac_equilibrium(Tvir, z_final, 0.01, self_shielding=True)
-        fH2_Yoshida03_LWlow[i] = get_H2_mass_frac_equilibrium(Tvir, z_final, 0.01, self_shielding=False)
-    #multiply by 2 to convert from number density to mass fraction
-    ax.plot(Tvir_fulllist, fH2_Yoshida03_LWhigh, label='Yoshida 2003 LW(J21 = 0.1)', color='green', linestyle='--')
-    ax.plot(Tvir_fulllist, fH2_Yoshida03_LWlow_shield, label='Yoshida 2003 LW(J21 = 0.01) with self-shielding', color='green', linestyle='-.')
-    ax.plot(Tvir_fulllist, fH2_Yoshida03_LWlow, label='Yoshida 2003 LW(J21 = 0.01)', color='green', linestyle=':')
+        fH2_Yoshida03_LWhigh[i] = get_H2_mass_frac_equilibrium(Tvir, None, z_final, 0.1, self_shielding=False)
+        fH2_Yoshida03_LWlow_shield[i] = get_H2_mass_frac_equilibrium(Tvir, None, z_final, 0.01, self_shielding=True)
+        fH2_Yoshida03_LWlow[i] = get_H2_mass_frac_equilibrium(Tvir, None, z_final, 0.01, self_shielding=False)
+    
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.gca()
+    ax.plot(Tvir_fulllist, fH2_Yoshida03, label='Yoshida 2003', color='blue', linestyle='-')
+    mask = (Tvir_fulllist > 200)
+    ax.plot(Tvir_fulllist[mask], fH2_Yoshida03_LWhigh[mask], label='Yoshida 2003 LW(J21 = 0.1)', color='green', linestyle='--')
+    ax.plot(Tvir_fulllist[mask], fH2_Yoshida03_LWlow_shield[mask], label='Yoshida 2003 LW(J21 = 0.01) with self-shielding', color='green', linestyle='-.')
+    ax.plot(Tvir_fulllist[mask], fH2_Yoshida03_LWlow[mask], label='Yoshida 2003 LW(J21 = 0.01)', color='green', linestyle=':')
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlabel('Tvir [K]', fontsize=14)
@@ -584,22 +674,98 @@ def plot_xe_vs_z():#debug: n and T fixed?
     ax.grid()
     ax.legend()
     plt.tight_layout()
-    filename = os.path.join("Analytic_results/Yoshida03", f"final_fH2_vs_Tvir.png")
+    filename = os.path.join("Analytic_results/Yoshida03", f"Yoshida03_fH2_vs_Tvir.png")
     plt.savefig(filename, dpi=300)
 
+#find the critical fH2 for each T
+def find_critical_fH2(timescale_array, initial_fH2_list, T_list, t_Hubble_Myr):
+    fH2_critical = np.ones(len(T_list))
+    
+    for i in range(len(T_list)):
+        found = False
+        for j in range(len(initial_fH2_list) - 1, 0, -1):
+            ct1 = timescale_array[i, j]
+            ct2 = timescale_array[i, j - 1]
+            if (not np.isnan(ct1)) and (not np.isnan(ct2)):
+                if ct1 < 0.0 and ct2 < 0.0:
+                    if -ct1 <= t_Hubble_Myr and -ct2 > t_Hubble_Myr:
+                        fH2_critical[i] = initial_fH2_list[j]
+                        found = True
+                        break
+                elif ct1 <0.0 and ct2 > 0.0 and -ct1 <= t_Hubble_Myr:
+                    fH2_critical[i] = initial_fH2_list[j]
+                    found = True
+                    break
+        if not found:
+            if np.all(np.isnan(timescale_array[i, :])): #all nan, near 1e4K
+                fH2_critical[i] = initial_fH2_list[0]
+            elif 0 < np.nanmax(-timescale_array[i, :]) < t_Hubble_Myr:
+                fH2_critical[i] = initial_fH2_list[0]
+            elif np.nanmin(-timescale_array[i, :]) > t_Hubble_Myr or np.nanmax(timescale_array[i, :])> 0.0: #max cooling not enough or all net heating
+                fH2_critical[i] = initial_fH2_list[-1]
+                
+    return fH2_critical
 
-#plot the mass fraction of H2 in halos with/without LW background
-def plot_Yoshida03_with_LW():
-    pass
+#auxiliary function to add a mass axis on top of the temperature axis 
+def add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM, lgM_to_Tvir):
+    """
+    add a mass axis on top of the temperature axis in ax1
+    Parameters:
+    - ax1: matplotlib Axes object with temperature axis
+    - T_list: Tvir list [K]
+    - z: redshift
+    - Tvir_to_lgM: function, Tvir -> log10(M)
+    - lgM_to_Tvir: function, log10(M) -> Tvir
+    returns:
+    - ax2: new Axes object with mass axis
+    """
+    ax2 = ax1.twiny()
+    ax2.set_xlim(ax1.get_xlim())
+    ax2.set_xscale('log')
 
+    lgM_min = Tvir_to_lgM(min(T_list), z)
+    lgM_max = Tvir_to_lgM(max(T_list), z)
+    desired_log_masses = np.arange(int(np.floor(lgM_min)), int(np.ceil(lgM_max)) + 1)
+
+    T_ticks_top = [lgM_to_Tvir(lgM, z) for lgM in desired_log_masses]
+    valid_data = [(Tvir, 10**lgM, lgM) for Tvir, lgM in zip(T_ticks_top, desired_log_masses)
+                if min(T_list) <= Tvir <= max(T_list)]
+
+    if valid_data:
+        T_ticks_top, M_ticks, log_masses = zip(*valid_data)
+        # Set major ticks on top axis
+        ax2.set_xticks(T_ticks_top)
+        mass_labels = [f"$10^{{{int(lgM)}}}$" for lgM in log_masses]
+        ax2.set_xticklabels(mass_labels)
+        ax2.xaxis.set_major_locator(FixedLocator(T_ticks_top))
+        
+        # Generate minor ticks for mass axis
+        minor_tick_temps = []
+        if log_masses:
+            first_lgM = log_masses[0]
+            prev_lgM = first_lgM - 1  # Previous decade
+            for multiplier in [2, 3, 4, 5, 6, 7, 8, 9]:
+                minor_mass_lgM = prev_lgM + np.log10(multiplier)
+                minor_temp = lgM_to_Tvir_minihalo(minor_mass_lgM, z)
+                if min(T_list) <= minor_temp <= max(T_list):
+                    minor_tick_temps.append(minor_temp)
+        for i in range(len(log_masses)):
+            current_lgM = log_masses[i]
+            for multiplier in [2, 3, 4, 5, 6, 7, 8, 9]:
+                minor_mass_lgM = current_lgM + np.log10(multiplier)
+                minor_temp = lgM_to_Tvir_minihalo(minor_mass_lgM, z)
+                if min(T_list) <= minor_temp <= max(T_list):
+                    minor_tick_temps.append(minor_temp)
+        
+        # Set minor ticks
+        ax2.xaxis.set_minor_locator(FixedLocator(minor_tick_temps))
+        ax2.set_xlabel(r'Halo Mass [M$_\odot$/h]', fontsize=15)
+        ax2.tick_params(labelsize=12)
+        ax2.tick_params(axis='x', which='minor', labelbottom=False, labeltop=False)
+
+    return ax2
 
 def plot_fH2_vs_T(z):
-
-    #debug: compare halo mass-Tvir in John Wise paper
-    # M_in_Msun_test = inversefunc_Temperature_Virial_analytic(7000, z, mean_molecular_weight=1.0) #Mvir in Msun
-    # print("M_in_Msun_test = ", M_in_Msun_test)
-    # Tvir_test = Temperature_Virial_analytic(6e6, 15, mean_molecular_weight=1.23)
-    # print("Tvir_test = ", Tvir_test)
 
     output_dir = "/home/zwu/21cm_project/unified_model/Analytic_results/Yoshida03"
 
@@ -681,13 +847,6 @@ def plot_fH2_vs_T(z):
         print("interpolated_rate = ", -interpolated_rate)
 
 
-    
-
-
-
-            
-
-
     # print("cooling_timescale_all = ", cooling_timescale_all)
     # print("cooling_rate_all = ", cooling_rate_all)
     # print("energy in the unit cell = ",cooling_timescale_all*cooling_rate_all) 
@@ -747,43 +906,13 @@ def plot_fH2_vs_T(z):
                 fH2_zero_netcooling[i] = initial_fH2_list[0]
             elif np.nanmin(cooling_rate_with_DF_all[i, :]) > 0.0: #all positive (net heating)
                 fH2_zero_netcooling[i] = initial_fH2_list[-1]
-
-
-    #find the critical fH2 for each T
-    def find_critical_fH2(timescale_array, initial_fH2_list, T_list, t_Hubble_Myr):
-        fH2_critical = np.ones(len(T_list))
-        
-        for i in range(len(T_list)):
-            found = False
-            for j in range(len(initial_fH2_list) - 1, 0, -1):
-                ct1 = timescale_array[i, j]
-                ct2 = timescale_array[i, j - 1]
-                if (not np.isnan(ct1)) and (not np.isnan(ct2)):
-                    if ct1 < 0.0 and ct2 < 0.0:
-                        if -ct1 <= t_Hubble_Myr and -ct2 > t_Hubble_Myr:
-                            fH2_critical[i] = initial_fH2_list[j]
-                            found = True
-                            break
-                    elif ct1 <0.0 and ct2 > 0.0 and -ct1 <= t_Hubble_Myr:
-                        fH2_critical[i] = initial_fH2_list[j]
-                        found = True
-                        break
-            if not found:
-                if np.all(np.isnan(timescale_array[i, :])): #all nan, near 1e4K
-                    fH2_critical[i] = initial_fH2_list[0]
-                elif 0 < np.nanmax(-timescale_array[i, :]) < t_Hubble_Myr:
-                    fH2_critical[i] = initial_fH2_list[0]
-                elif np.nanmin(-timescale_array[i, :]) > t_Hubble_Myr or np.nanmax(timescale_array[i, :])> 0.0: #max cooling not enough or all net heating
-                    fH2_critical[i] = initial_fH2_list[-1]
-                    
-        return fH2_critical
+    
 
     fH2_critical = find_critical_fH2(cooling_timescale_all, initial_fH2_list, T_list, t_Hubble_Myr)
     fH2_with_DF_critical = find_critical_fH2(cooling_timescale_with_DF_all, initial_fH2_list, T_list, t_Hubble_Myr)
 
-    fH2_Tegmark = np.array([get_fH2_Tegmark97(T, z) for T in T_list])
     fH2_Yoshida = get_fH2_Yoshida03(T_list)
-    fH2_critical_Tegmark = np.array([get_critical_fH2_Tegmark97(T, z) for T in T_list])
+    fH2_critical_Tegmark = np.array([get_critical_H2abundance_Tegmark(T, z) for T in T_list])
     line_styles = {
     'tegmark_crit': {'color': 'black', 'linestyle': '-', 'linewidth': 2.5, 
                 'label': 'Critical line (Tegmark97)'},
@@ -807,65 +936,9 @@ def plot_fH2_vs_T(z):
     print("max cooling timescale with DF = ", np.nanmax(cooling_timescale_with_DF_all))
     print("min cooling timescale with DF = ", np.nanmin(cooling_timescale_with_DF_all))
     print("min(abs(cooling timescale with DF)) = ", np.nanmin(np.abs(cooling_timescale_with_DF_all)))
-    # exit()
+    
 
-    def add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM, lgM_to_Tvir):
-        """
-        add a mass axis on top of the temperature axis in ax1
-        Parameters:
-        - ax1: matplotlib Axes object with temperature axis
-        - T_list: Tvir list [K]
-        - z: redshift
-        - Tvir_to_lgM: function, Tvir -> log10(M)
-        - lgM_to_Tvir: function, log10(M) -> Tvir
-        returns:
-        - ax2: new Axes object with mass axis
-        """
-        ax2 = ax1.twiny()
-        ax2.set_xlim(ax1.get_xlim())
-        ax2.set_xscale('log')
 
-        lgM_min = Tvir_to_lgM(min(T_list), z)
-        lgM_max = Tvir_to_lgM(max(T_list), z)
-        desired_log_masses = np.arange(int(np.floor(lgM_min)), int(np.ceil(lgM_max)) + 1)
-
-        T_ticks_top = [lgM_to_Tvir(lgM, z) for lgM in desired_log_masses]
-        valid_data = [(Tvir, 10**lgM, lgM) for Tvir, lgM in zip(T_ticks_top, desired_log_masses)
-                    if min(T_list) <= Tvir <= max(T_list)]
-
-        if valid_data:
-            T_ticks_top, M_ticks, log_masses = zip(*valid_data)
-            # Set major ticks on top axis
-            ax2.set_xticks(T_ticks_top)
-            mass_labels = [f"$10^{{{int(lgM)}}}$" for lgM in log_masses]
-            ax2.set_xticklabels(mass_labels)
-            ax2.xaxis.set_major_locator(FixedLocator(T_ticks_top))
-            
-            # Generate minor ticks for mass axis
-            minor_tick_temps = []
-            if log_masses:
-                first_lgM = log_masses[0]
-                prev_lgM = first_lgM - 1  # Previous decade
-                for multiplier in [2, 3, 4, 5, 6, 7, 8, 9]:
-                    minor_mass_lgM = prev_lgM + np.log10(multiplier)
-                    minor_temp = lgM_to_Tvir_minihalo(minor_mass_lgM, z)
-                    if min(T_list) <= minor_temp <= max(T_list):
-                        minor_tick_temps.append(minor_temp)
-            for i in range(len(log_masses)):
-                current_lgM = log_masses[i]
-                for multiplier in [2, 3, 4, 5, 6, 7, 8, 9]:
-                    minor_mass_lgM = current_lgM + np.log10(multiplier)
-                    minor_temp = lgM_to_Tvir_minihalo(minor_mass_lgM, z)
-                    if min(T_list) <= minor_temp <= max(T_list):
-                        minor_tick_temps.append(minor_temp)
-            
-            # Set minor ticks
-            ax2.xaxis.set_minor_locator(FixedLocator(minor_tick_temps))
-            ax2.set_xlabel(r'Halo Mass [M$_\odot$/h]', fontsize=15)
-            ax2.tick_params(labelsize=12)
-            ax2.tick_params(axis='x', which='minor', labelbottom=False, labeltop=False)
-
-        return ax2
 
 
     T_grid, fH2_grid = np.meshgrid(T_list, initial_fH2_list, indexing='ij')
@@ -934,6 +1007,8 @@ def plot_fH2_vs_T(z):
     plt.savefig(os.path.join(output_dir, f"cooling_rate_vs_T_fH2_z{z}_withDF.png"), dpi=300)
 
 
+
+    exit()
 
     #3. 2D color plot for cooling timescale
     masked_lg_cooling_timescale_all = np.ma.masked_invalid(np.log10(-cooling_timescale_all))
@@ -1046,14 +1121,470 @@ def plot_fH2_vs_T(z):
     """
 
 
+def calculate_DF_heating_with_variance(z, lgM, variance_factors):
+
+    heating_dict = {}
+    
+    if 0 in variance_factors:
+        heating_dict[0] = integrate_SHMF_heating_for_single_host(z, -3, 0, lgM, "BestFit_z")
+    
+    variance_list = [f for f in variance_factors if f != 0]
+    if variance_list:
+        upper_rates, lower_rates, mean_rate = integrate_SHMF_heating_for_single_host_with_variance(
+            z, -3, 0, lgM, "BestFit_z", variance_list, 'None')
+        
+        for i, factor in enumerate(variance_list):
+            heating_dict[factor] = upper_rates[i]      # +nσ
+            heating_dict[-factor] = lower_rates[i]     # -nσ
+    return heating_dict
+
+
+def plot_fH2_vs_T_with_DFvariance(z):
+
+    output_dir = "/home/zwu/21cm_project/unified_model/Analytic_results/Yoshida03"
+
+    #test different Hubble timescale
+    t_Hubble_Tegmark = get_Hubble_timescale_Tegmark97(z)
+    t_Hubble_colossus = cosmo.age(z)*1e3
+    print(f"t_Hubble_Tegmark = {t_Hubble_Tegmark} Myr")
+    print(f"t_Hubble_colossus = {t_Hubble_colossus} Myr")
+    # t_Hubble_Myr = get_Hubble_timescale_Tegmark97(z)
+    t_Hubble_Myr = t_Hubble_colossus
+    # t_Hubble_Myr = 1.0/H0_s/Myr
+
+    lognH = get_gas_lognH_analytic(z)
+    # lognH = np.log10(500)
+    print("lognH = ", lognH)
+    nH = 10**lognH
+    print("nH = ", nH)
+
+    #plot fH2 vs T
+    T_list = np.logspace(2, np.log10(1.1e4), 50)
+    initial_fH2_list = np.logspace(-6, -1, 50)
+    cooling_rate_for_initial_fH2 = np.zeros(len(initial_fH2_list))
+    cooling_timescale_for_initial_fH2 = np.zeros(len(initial_fH2_list))
+    cooling_timescale_all = np.zeros((len(T_list), len(initial_fH2_list)))
+    cooling_rate_all = np.zeros((len(T_list), len(initial_fH2_list)))
+    final_fH2_all = np.zeros((len(T_list), len(initial_fH2_list)))
+
+    #first loop over T_list, then initial_fH2_list for debugging
+    for i in range(len(T_list)):
+        Tvir = T_list[i]
+        print("Tvir = ", Tvir)
+        for j in range(len(initial_fH2_list)):
+            fH2 = initial_fH2_list[j]
+            cooling_data = run_constdensity_model(
+                False, z, lognH, 0.0, 0.0, 
+                Tvir, 0.0, f_H2=fH2, UVB_flag=False, 
+                Compton_Xray_flag=False, dynamic_final_flag=False)
+            cooling_time = cooling_data['cooling_time']
+            cooling_timescale_for_initial_fH2[j] = cooling_time.in_units('Myr')[0].v
+            cooling_rate_for_initial_fH2[j] = cooling_data['cooling_rate'][0].v
+            final_fH2_all[i, j] = cooling_data['H2I_density'][0].v/cooling_data['density'][0].v
+
+        print("final_fH2 = ", final_fH2_all[i, :])
+        print("cooling_timescale_for_initial_fH2 = ", cooling_timescale_for_initial_fH2)
+
+        #interpolate cooling rate and cooling timescale as a function of final fH2
+        sorted_indices = np.argsort(final_fH2_all[i, :])
+        sorted_final_fH2 = final_fH2_all[i, :][sorted_indices]
+        sorted_cooling_timescales = cooling_timescale_for_initial_fH2[sorted_indices]
+        sorted_cooling_rates = cooling_rate_for_initial_fH2[sorted_indices]
+        valid_mask = (
+            (sorted_cooling_timescales < 0) &
+            (sorted_cooling_rates < 0)
+        )
+        x = np.log10(sorted_final_fH2[valid_mask])
+        y_timescale = np.log10(np.abs(sorted_cooling_timescales[valid_mask]))
+        y_rate = np.log10(np.abs(sorted_cooling_rates[valid_mask]))
+        interp_timescale_log = interp1d(x, y_timescale, bounds_error=False, fill_value=np.nan)
+        interp_rate_log = interp1d(x, y_rate, bounds_error=False, fill_value=np.nan)
+
+        log_fH2_targets = np.log10(np.array(initial_fH2_list))
+        interpolated_timescale = 10 ** interp_timescale_log(log_fH2_targets)
+        interpolated_rate = 10 ** interp_rate_log(log_fH2_targets)
+        cooling_timescale_all[i, :] = -interpolated_timescale
+        print("interpolated_timescale = ", -interpolated_timescale)
+        cooling_rate_all[i, :] = -interpolated_rate
+        print("interpolated_rate = ", -interpolated_rate)
+
+    #include DF heating
+    print("Calculating DF heating...")
+    # sigma level
+    variance_factors = [0, 1, 3]  # 0=mean, ±1σ, ±3σ
+    scenario_labels = {0: 'mean', 1: '+1σ', -1: '-1σ', 3: '+3σ', -3: '-3σ'}
+
+    print("Calculating DF heating with variance...")
+
+    heating_results = {factor: np.zeros(len(T_list)) for factor in [0, 1, -1, 3, -3]}
+    normalized_heating_results = {factor: np.zeros(len(T_list)) for factor in [0, 1, -1, 3, -3]}
+    fH2_critical_results = {}
+
+
+    # DF_heating_list = np.zeros(len(T_list))
+    # normalized_heating_list = np.zeros(len(T_list))
+    # for i in range(len(T_list)):
+    #     Tvir = T_list[i]
+    #     M_in_Msun = inversefunc_Temperature_Virial_analytic(Tvir, z, mean_molecular_weight=mu_minihalo) #Mvir in Msun
+    #     Mvir = M_in_Msun * h_Hubble #Msun/h
+    #     lgM = np.log10(Mvir)
+    #     DF_heating = integrate_SHMF_heating_for_single_host(z, -3, 0, lgM, "BestFit_z")
+    #     DF_heating_erg = DF_heating * 1.0e7 # erg/s
+    #     halo_density = get_mass_density_analytic(z)
+    #     halo_volume = M_in_Msun * Msun / halo_density
+    #     halo_volume_cm3 = halo_volume * 1.0e6 # cm^3
+    #     DF_heating_density = DF_heating_erg / halo_volume_cm3 # erg/s/cm^3
+    #     normalized_heating = DF_heating_density/nH**2 # erg/s*cm^3
+
+    #     DF_heating_list[i] = DF_heating_density
+    #     normalized_heating_list[i] = normalized_heating
+    
+    # cooling_rate_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
+    # cooling_timescale_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
+
+    # for i in range(len(T_list)):
+    #     for j in range(len(initial_fH2_list)):
+    #         cooling_rate = cooling_rate_all[i, j]
+    #         cooling_timescale = cooling_timescale_all[i, j]
+            
+    #         if not np.isnan(cooling_rate) and not np.isnan(cooling_timescale):
+    #             energy_density_in_cell = cooling_rate * cooling_timescale
+    #             #debug factor * DF heating
+    #             cooling_rate_with_DF = cooling_rate + normalized_heating_list[i]
+    #             cooling_rate_with_DF_all[i, j] = cooling_rate_with_DF
+
+    #             if cooling_rate_with_DF != 0:
+    #                 cooling_timescale_with_DF = energy_density_in_cell / cooling_rate_with_DF
+    #                 cooling_timescale_with_DF_all[i, j] = cooling_timescale_with_DF
+    
+
+    for i in range(len(T_list)):
+        Tvir = T_list[i]
+        M_in_Msun = inversefunc_Temperature_Virial_analytic(Tvir, z, mean_molecular_weight=mu_minihalo)
+        Mvir = M_in_Msun * h_Hubble
+        lgM = np.log10(Mvir)
+        
+        # calculate DF heating for different variance factors
+        heating_dict = calculate_DF_heating_with_variance(z, lgM, variance_factors)
+        
+        # convert to normalized heating density
+        halo_density = get_mass_density_analytic(z)
+        halo_volume = M_in_Msun * Msun / halo_density
+        halo_volume_cm3 = halo_volume * 1.0e6
+        
+        for factor in [0, 1, -1, 3, -3]:
+            if factor in heating_dict:
+                DF_heating_erg = heating_dict[factor] * 1.0e7
+                DF_heating_density = DF_heating_erg / halo_volume_cm3
+                normalized_heating = DF_heating_density / nH**2
+                
+                heating_results[factor][i] = DF_heating_density
+                normalized_heating_results[factor][i] = normalized_heating
+
+    # calculate critical fH2 for each scenario
+    for factor in [0, 1, -1, 3, -3]:
+        if factor in normalized_heating_results:
+            cooling_rate_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
+            cooling_timescale_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
+            
+            for i in range(len(T_list)):
+                for j in range(len(initial_fH2_list)):
+                    cooling_rate = cooling_rate_all[i, j]
+                    cooling_timescale = cooling_timescale_all[i, j]
+                    
+                    if not np.isnan(cooling_rate) and not np.isnan(cooling_timescale):
+                        energy_density_in_cell = cooling_rate * cooling_timescale
+                        cooling_rate_with_DF = cooling_rate + normalized_heating_results[factor][i]
+                        cooling_rate_with_DF_all[i, j] = cooling_rate_with_DF
+                        
+                        if cooling_rate_with_DF != 0:
+                            cooling_timescale_with_DF = energy_density_in_cell / cooling_rate_with_DF
+                            cooling_timescale_with_DF_all[i, j] = cooling_timescale_with_DF
+            
+            # 计算critical fH2
+            fH2_critical_results[factor] = find_critical_fH2(cooling_timescale_with_DF_all, initial_fH2_list, T_list, t_Hubble_Myr)
+
+    print("DF heating calculation with variance completed.")
+    fH2_critical = find_critical_fH2(cooling_timescale_all, initial_fH2_list, T_list, t_Hubble_Myr)
+
+
+    #compare with H2 formed (Yoshida model)
+    Tvir_fulllist = np.logspace(np.log10(100), np.log10(8000), 50) 
+
+    z_final = 17
+    # finalxe_zvir25 = finalxe_intTegmark_allresults[0]
+    nHhalo_zfinal = get_nH_Tegmark97(z_final)
+    fH2_Yoshida03 = get_fH2_Yoshida03(Tvir_fulllist)
+
+    # fH2_Yoshida03_LWmax_shield = np.zeros(len(Tvir_fulllist))
+    # fH2_Yoshida03_LWhigh = np.zeros(len(Tvir_fulllist))
+    # fH2_Yoshida03_LWlow_shield = np.zeros(len(Tvir_fulllist))
+    # fH2_Yoshida03_LWlow = np.zeros(len(Tvir_fulllist))
+    LW_scenarios = [(0.01, False), (0.01, True), (1.0, True), (1.0e3, True)] #(J21, self_shielding)
+    LW_labels = ['LW(J21 = 0.01)', 'LW(J21 = 0.01, ss', 
+                 'LW(J21 = 1.0, ss)', 'LW(J21 = 1000, ss)']
+    LW_colors = ['green', 'green', 'yellow', 'red']
+    LW_linestyles = [':', '-.', '-.', '-.']
+    fH2_Yoshida03_LW_allresults = np.zeros((len(LW_scenarios), len(Tvir_fulllist)))
+    # for i, Tvir in enumerate(Tvir_fulllist):
+    #     fH2_Yoshida03_LWmax[i] = get_H2_mass_frac_equilibrium(Tvir, None, z_final, 0.1, self_shielding=True)
+    #     fH2_Yoshida03_LWhigh[i] = get_H2_mass_frac_equilibrium(Tvir, None, z_final, 1.0, self_shielding=False)
+    #     fH2_Yoshida03_LWlow_shield[i] = get_H2_mass_frac_equilibrium(Tvir, None, z_final, 0.01, self_shielding=True)
+    #     fH2_Yoshida03_LWlow[i] = get_H2_mass_frac_equilibrium(Tvir, None, z_final, 0.01, self_shielding=False)
+    ss_model = "WG11"
+    for i, (J21, self_shielding_flag) in enumerate(LW_scenarios):
+        for j, Tvir in enumerate(Tvir_fulllist):
+            fH2_Yoshida03_LW_allresults[i, j] = get_H2_mass_frac_equilibrium(
+                Tvir, None, z_final, J21, self_shielding=self_shielding_flag, ss_model=ss_model
+            )
+
+    #LW results should not exceed fH2_Yoshida03(maximum)
+    for i in range(len(LW_scenarios)):
+        fH2_Yoshida03_LW_allresults[i, :] = np.minimum(fH2_Yoshida03_LW_allresults[i, :], fH2_Yoshida03[:])
+    
+
+    fig, ax1 = plt.subplots(figsize=(9, 7))
+    ax1.plot(T_list, fH2_critical, label='No heating')
+    ax1.plot(T_list, fH2_critical_results[0], label='Mean DF heating')
+
+    # add variance bands
+    ax1.fill_between(T_list, fH2_critical_results[-1], fH2_critical_results[1], 
+                    alpha=0.3, label='±1σ SHMF DF heating')
+    ax1.fill_between(T_list, fH2_critical_results[-3], fH2_critical_results[3], 
+                    alpha=0.15, label='±3σ SHMF DF heating')
+    
+    ax1.plot(Tvir_fulllist, fH2_Yoshida03, label='Yoshida 2003', color='blue', linestyle='-')
+    mask = (Tvir_fulllist > 200)
+    # ax1.plot(Tvir_fulllist[mask], fH2_Yoshida03_LWhigh[mask], label='Yoshida 2003 LW(J21 = 0.1)', color='green', linestyle='--')
+    # ax1.plot(Tvir_fulllist[mask], fH2_Yoshida03_LWlow_shield[mask], label='Yoshida 2003 LW(J21 = 0.01) with self-shielding', color='green', linestyle='-.')
+    # ax1.plot(Tvir_fulllist[mask], fH2_Yoshida03_LWlow[mask], label='Yoshida 2003 LW(J21 = 0.01)', color='green', linestyle=':')
+    for i, (J21, self_shielding_flag) in enumerate(LW_scenarios):
+        ax1.plot(Tvir_fulllist[mask], fH2_Yoshida03_LW_allresults[i, mask], 
+                 color=LW_colors[i], linestyle=LW_linestyles[i], label =LW_labels[i])
+
+    ax1.set_xscale('log')
+    ax1.set_yscale('log')
+    # ax1.set_ylim(1e-7, 1e-1)
+    ax1.set_xlabel('Temperature [K]', fontsize=15)
+    ax1.set_ylabel('Molecular Hydrogen Fraction $f_{H_2}$', fontsize=15)
+    ax1.legend(fontsize=12, loc='best', framealpha=0.5)
+    #also add a mass axis on top
+    ax2 = add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM_minihalo, lgM_to_Tvir_minihalo)
+
+    plt.title(f'Critical $f_{{H_2}}$ vs Temperature at z = {z}', fontsize=16)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"fH2_vs_T_with_DFvariance_z{z}_WG11.png"), dpi=300)
+
+
+
+
+def plot_fH2_vs_T_from_SHMF_sampling(z):
+
+    output_dir = "/home/zwu/21cm_project/unified_model/Analytic_results/Yoshida03"
+
+    #test different Hubble timescale
+    t_Hubble_Tegmark = get_Hubble_timescale_Tegmark97(z)
+    t_Hubble_colossus = cosmo.age(z)*1e3
+    print(f"t_Hubble_Tegmark = {t_Hubble_Tegmark} Myr")
+    print(f"t_Hubble_colossus = {t_Hubble_colossus} Myr")
+    # t_Hubble_Myr = get_Hubble_timescale_Tegmark97(z)
+    t_Hubble_Myr = t_Hubble_colossus
+    # t_Hubble_Myr = 1.0/H0_s/Myr
+
+    lognH = get_gas_lognH_analytic(z)
+    # lognH = np.log10(500)
+    print("lognH = ", lognH)
+    nH = 10**lognH
+    print("nH = ", nH)
+
+    #plot fH2 vs T
+    T_list = np.logspace(2, np.log10(1.1e4), 50)
+    initial_fH2_list = np.logspace(-6, -1, 50)
+    cooling_rate_for_initial_fH2 = np.zeros(len(initial_fH2_list))
+    cooling_timescale_for_initial_fH2 = np.zeros(len(initial_fH2_list))
+    cooling_timescale_all = np.zeros((len(T_list), len(initial_fH2_list)))
+    cooling_rate_all = np.zeros((len(T_list), len(initial_fH2_list)))
+    final_fH2_all = np.zeros((len(T_list), len(initial_fH2_list)))
+
+    #first loop over T_list, then initial_fH2_list for debugging
+    for i in range(len(T_list)):
+        Tvir = T_list[i]
+        print("Tvir = ", Tvir)
+        for j in range(len(initial_fH2_list)):
+            fH2 = initial_fH2_list[j]
+            cooling_data = run_constdensity_model(
+                False, z, lognH, 0.0, 0.0, 
+                Tvir, 0.0, f_H2=fH2, UVB_flag=False, 
+                Compton_Xray_flag=False, dynamic_final_flag=False)
+            cooling_time = cooling_data['cooling_time']
+            cooling_timescale_for_initial_fH2[j] = cooling_time.in_units('Myr')[0].v
+            cooling_rate_for_initial_fH2[j] = cooling_data['cooling_rate'][0].v
+            final_fH2_all[i, j] = cooling_data['H2I_density'][0].v/cooling_data['density'][0].v
+
+        print("final_fH2 = ", final_fH2_all[i, :])
+        print("cooling_timescale_for_initial_fH2 = ", cooling_timescale_for_initial_fH2)
+
+        #interpolate cooling rate and cooling timescale as a function of final fH2
+        sorted_indices = np.argsort(final_fH2_all[i, :])
+        sorted_final_fH2 = final_fH2_all[i, :][sorted_indices]
+        sorted_cooling_timescales = cooling_timescale_for_initial_fH2[sorted_indices]
+        sorted_cooling_rates = cooling_rate_for_initial_fH2[sorted_indices]
+        valid_mask = (
+            (sorted_cooling_timescales < 0) &
+            (sorted_cooling_rates < 0)
+        )
+        x = np.log10(sorted_final_fH2[valid_mask])
+        y_timescale = np.log10(np.abs(sorted_cooling_timescales[valid_mask]))
+        y_rate = np.log10(np.abs(sorted_cooling_rates[valid_mask]))
+        interp_timescale_log = interp1d(x, y_timescale, bounds_error=False, fill_value=np.nan)
+        interp_rate_log = interp1d(x, y_rate, bounds_error=False, fill_value=np.nan)
+
+        log_fH2_targets = np.log10(np.array(initial_fH2_list))
+        interpolated_timescale = 10 ** interp_timescale_log(log_fH2_targets)
+        interpolated_rate = 10 ** interp_rate_log(log_fH2_targets)
+        cooling_timescale_all[i, :] = -interpolated_timescale
+        print("interpolated_timescale = ", -interpolated_timescale)
+        cooling_rate_all[i, :] = -interpolated_rate
+        print("interpolated_rate = ", -interpolated_rate)
+
+    #include DF heating
+    print("Calculating DF heating and critical fH2 from SHMF sampling...")
+
+    n_samples = 500
+    fH2_critical_all_samples = np.full((n_samples, len(T_list)), np.nan)
+
+    for i in range(len(T_list)):
+        Tvir = T_list[i]
+        M_in_Msun = inversefunc_Temperature_Virial_analytic(Tvir, z, mean_molecular_weight=mu_minihalo)
+        Mvir = M_in_Msun * h_Hubble
+        lgM = np.log10(Mvir)
+        lgx_min = -4
+        lgx_max = 0
+        SHMF_model = "BestFit_z"
+
+        heating_of_samples = integrate_SHMF_heating_for_single_host_PoissonSampling(z, 
+                            lgx_min, lgx_max, lgM, SHMF_model, n_samples, verbose=False)
+
+
+        # convert to normalized heating density
+        halo_density = get_mass_density_analytic(z)
+        halo_volume = M_in_Msun * Msun / halo_density
+        halo_volume_cm3 = halo_volume * 1.0e6
+        DF_heating_erg = heating_of_samples * 1.0e7
+        DF_heating_density = DF_heating_erg / halo_volume_cm3
+        normalized_heating = DF_heating_density / nH**2
+
+
+        # Calculate critical fH2 for each sample
+        for sample_idx in range(n_samples):
+            current_heating = normalized_heating[sample_idx]
+            
+            cooling_rate_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
+            cooling_timescale_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
+            
+            # Only need to calculate for current temperature i
+            for j in range(len(initial_fH2_list)):
+                cooling_rate = cooling_rate_all[i, j]
+                cooling_timescale = cooling_timescale_all[i, j]
+                
+                if not np.isnan(cooling_rate) and not np.isnan(cooling_timescale):
+                    energy_density_in_cell = cooling_rate * cooling_timescale
+                    cooling_rate_with_DF = cooling_rate + current_heating
+                    cooling_rate_with_DF_all[i, j] = cooling_rate_with_DF
+                    
+                    if cooling_rate_with_DF != 0:
+                        cooling_timescale_with_DF = energy_density_in_cell / cooling_rate_with_DF
+                        cooling_timescale_with_DF_all[i, j] = cooling_timescale_with_DF
+            
+            # Calculate critical fH2 for current sample at current temperature
+            fH2_critical = find_critical_fH2(cooling_timescale_with_DF_all, initial_fH2_list, T_list, t_Hubble_Myr)
+            fH2_critical_all_samples[sample_idx, i] = fH2_critical[i]  # Only take current temperature value
+
+    # Statistical analysis
+    fH2_critical_mean = np.mean(fH2_critical_all_samples, axis=0)
+    fH2_critical_std = np.std(fH2_critical_all_samples, axis=0)
+    fH2_critical_median = np.median(fH2_critical_all_samples, axis=0)
+    # 1, 2, 3 sigma equivalent percentiles
+    fH2_critical_p16, fH2_critical_p84 = np.percentile(fH2_critical_all_samples, [16, 84], axis=0)
+    fH2_critical_p025, fH2_critical_p975 = np.percentile(fH2_critical_all_samples, [2.5, 97.5], axis=0)
+    fH2_critical_p0015, fH2_critical_p9985 = np.percentile(fH2_critical_all_samples, [0.15, 99.85], axis=0)
+
+    print("DF heating calculation with random sampling completed.")
+
+    fH2_critical = find_critical_fH2(cooling_timescale_all, initial_fH2_list, T_list, t_Hubble_Myr)
+
+    #compare with H2 formed (Yoshida model)
+    Tvir_fulllist = np.logspace(np.log10(100), np.log10(8000), 50) 
+
+    # z_final = 17
+    # finalxe_zvir25 = finalxe_intTegmark_allresults[0]
+    # nHhalo_zfinal = get_nH_Tegmark97(z_final)
+    fH2_Yoshida03 = get_fH2_Yoshida03(Tvir_fulllist)
+
+
+    LW_scenarios = [(1, 'T4', True), (1, 'T5', True), (1.0e3, 'T4', True), (1.0e3, 'T5', True)] #(J21, spectral_type, self_shielding)
+    LW_labels = ['LW(J21 = 1, T4, ss)', 'LW(J21 = 1, T5, ss)',
+                    'LW(J21 = 1000, T4, ss)', 'LW(J21 = 1000, T5, ss)']
+
+    LW_colors = ['green', 'blue', 'green', 'blue']
+    LW_linestyles = [':', ':', '-.', '-.']
+    fH2_Yoshida03_LW_allresults = np.zeros((len(LW_scenarios), len(Tvir_fulllist)))
+    ss_model = "WG11"
+    lognH = get_gas_lognH_analytic(z)
+    nH = 10**lognH  
+    for i, (J21, spectral_type, self_shielding_flag) in enumerate(LW_scenarios):
+        for j, Tvir in enumerate(Tvir_fulllist):
+            fH2_Yoshida03_LW_allresults[i, j] = get_H2_mass_frac_eq_Agarwal(Tvir, nH, z, J21, 
+                                                spectral_type, self_shielding_flag)
+
+    #LW results should not exceed fH2_Yoshida03(maximum)
+    for i in range(len(LW_scenarios)):
+        fH2_Yoshida03_LW_allresults[i, :] = np.minimum(fH2_Yoshida03_LW_allresults[i, :], fH2_Yoshida03[:])
+    
+
+
+    fig, ax1 = plt.subplots(figsize=(9, 7))
+    ax1.plot(Tvir_fulllist, fH2_Yoshida03, label='Yoshida 2003', color='k', linestyle='-')
+    mask = (Tvir_fulllist > 200)
+    for i in range(len(LW_scenarios)):
+        ax1.plot(Tvir_fulllist[mask], fH2_Yoshida03_LW_allresults[i, mask], 
+                 color=LW_colors[i], linestyle=LW_linestyles[i], label =LW_labels[i])
+
+    ax1.plot(T_list, fH2_critical, color = 'k', label='No heating')
+    ax1.plot(T_list, fH2_critical_mean, color = 'r', label='Mean DF heating')  
+    ax1.fill_between(T_list, fH2_critical_p16, fH2_critical_p84, 
+                     alpha=0.4, color = 'orange', label='16th-84th Percentile Range of DF heating')
+    ax1.fill_between(T_list, fH2_critical_p025, fH2_critical_p975,
+                        alpha=0.2, color = 'orange', label='2.5th-97.5th Percentile Range of DF heating')
+    ax1.fill_between(T_list, fH2_critical_p0015, fH2_critical_p9985,
+                        alpha=0.1, color = 'orange', label='0.15th-99.85th Percentile Range of DF heating')
+    ax1.set_xscale('log')
+    ax1.set_yscale('log')
+    ax1.set_xlabel('Temperature [K]', fontsize=15)
+    ax1.set_ylabel('Molecular Hydrogen Fraction $f_{H_2}$', fontsize=15)
+    ax1.legend(fontsize=12, loc='best', framealpha=0.5)
+    #also add a mass axis on top
+    ax2 = add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM_minihalo, lgM_to_Tvir_minihalo)
+
+    plt.title(f'Critical $f_{{H_2}}$ vs Temperature at z = {z} (SHMF Sampling)', fontsize=16)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"fH2_vs_T_from_SHMF_sampling_z{z}.png"), dpi=300)
+
+
+                
+    
+
 if __name__ == "__main__":
     # compare_Hubble_timescale_and_nH()
-    # plot_fH2_vs_T(z = 15)
-    # test_fH2_Tegmark()
-    # test_fH2()
-    test_Tvir()
+    # test_Tvir()
+    # test_fH2_scaling()
     # test_k1()
+    # test_Tegmark_model()
+
+
+    # plot_xefH2_vs_z()
     # test_H2_form_diss_timescale()
-
-
-    # plot_xe_vs_z()
+    # plot_Yoshida03_fH2_vs_Tvir()
+    # plot_fH2_vs_T(z = 15)
+    # plot_fH2_vs_T_with_DFvariance(z = 15)
+    plot_fH2_vs_T_from_SHMF_sampling(z = 15)

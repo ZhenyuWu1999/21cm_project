@@ -37,7 +37,7 @@ from pygrackle.utilities.evolve import add_to_data, calculate_collapse_factor
 
 from HaloProperties import get_gas_lognH_analytic, get_mass_density_analytic
 from Analytic_Model import get_heating_per_lgM
-from physical_constants import Msun, h_Hubble, Omega_m, Omega_b, rho_crit_z0_kgm3, G_grav, mp
+from physical_constants import Msun, h_Hubble, Omega_m, Omega_b, rho_crit_z0_kgm3, G_grav, mp, mu_minihalo
 
 
 def theta_from_z(z, z_m):
@@ -105,7 +105,16 @@ def test_rho_DM():
 
 
 def run_grackle_Omukai(initial_conditions, final_nH, use_DFheating_flag, 
-                       volumetric_heating_rate, use_LW_flag, lg_LW_J21):
+                       volumetric_heating_rate, use_LW_flag, LW_J21, spectrum_type):
+    # for modified reaction rates (Shang+ 2010 Table A1, Agarwal+ 2015, 2016)
+    alpha_LW = 0.0; beta_LW = 0.0
+    if spectrum_type == "T4":
+        alpha_LW = 2000; beta_LW = 3
+    elif spectrum_type == "T5":
+        alpha_LW = 0.1; beta_LW = 0.9
+    
+
+
     
     #get initial conditions
     #initial_nH: initial hydrogen nuclei number density in cm^-3, not total density
@@ -133,20 +142,20 @@ def run_grackle_Omukai(initial_conditions, final_nH, use_DFheating_flag,
     my_chemistry.metal_cooling = 0
     my_chemistry.dust_chemistry = 0
     my_chemistry.photoelectric_heating = 0
-    my_chemistry.CaseBRecombination = 0
+    my_chemistry.CaseBRecombination = 1
     my_chemistry.cie_cooling = 1   #Flag to enable H2 collision-induced emission cooling from Ripamonti & Abel (2004).
     my_chemistry.h2_optical_depth_approximation = 1  # H2 cooling attenuation from Ripamonti & Abel (2004)
-    # my_chemistry.grackle_data_file = os.path.join(grackle_data_dir, "cloudy_metals_2008_3D.h5")
+    my_chemistry.grackle_data_file = os.path.join(grackle_data_dir, "cloudy_metals_2008_3D.h5")
     # my_chemistry.grackle_data_file = os.path.join(grackle_data_dir, "CloudyData_UVB=HM2012.h5")
-    my_chemistry.grackle_data_file = os.path.join(grackle_data_dir, "CloudyData_UVB=HM2012_shielded.h5")
+    # my_chemistry.grackle_data_file = os.path.join(grackle_data_dir, "CloudyData_UVB=HM2012_shielded.h5")
     
     print("Using grackle data file: ", my_chemistry.grackle_data_file)
     my_chemistry.use_volumetric_heating_rate = 1
 
-    my_chemistry.UVbackground = 1
-    my_chemistry.self_shielding_method = 2
+    my_chemistry.UVbackground = 0
+    my_chemistry.self_shielding_method = 0 #for HI and HeI self-shielding, not relevant for H2 self-shielding
     my_chemistry.H2_self_shielding = 3
-    my_chemistry.LWbackground_intensity = 10**lg_LW_J21
+    my_chemistry.LWbackground_intensity = LW_J21
 
 
     # Set units
@@ -235,6 +244,7 @@ def run_grackle_Omukai(initial_conditions, final_nH, use_DFheating_flag,
     # print("time_units:", my_chemistry.time_units)
     gravitational_constant = (
         4.0 * np.pi * gravitational_constant_cgs *
+        # gravitational_constant_cgs *
         my_chemistry.density_units * my_chemistry.time_units**2)
 
     # some constants for the analytical free-fall solution
@@ -269,6 +279,7 @@ def run_grackle_Omukai(initial_conditions, final_nH, use_DFheating_flag,
                (fc["density"][0] * my_chemistry.density_units),
                fc["temperature"][0]))
         
+        print("volumetric heating rate:", fc["volumetric_heating_rate"])
         # test if internal energy is just adiabatic heating
 
         # use this to multiply by elemental densities if you are tracking those
@@ -283,6 +294,14 @@ def run_grackle_Omukai(initial_conditions, final_nH, use_DFheating_flag,
           fc["internal_energy"][0] * freefall_time_constant * \
           np.power(fc["density"][0], 0.5) * dt
 
+        #H2 photo-dissociation and H- photo-detachment under LW background
+        if use_LW_flag:
+            #H2 photo-dissociation
+            k31 = 1.0e-12 * beta_LW * LW_J21 * my_chemistry.time_units
+            fc.chemistry_data.k31 = k31
+            #H- photo-detachment
+            k27 = 1.0e-10 * alpha_LW * LW_J21 * my_chemistry.time_units
+            fc.chemistry_data.k27 = k27
         fc.solve_chemistry(dt)
 
         # update time
@@ -295,9 +314,9 @@ def run_grackle_Omukai(initial_conditions, final_nH, use_DFheating_flag,
 def main():
 
     #use Sugimara, Omukai & Inoue (2014) initial conditions
-    initial_redshift = 15.0
+    initial_redshift = 16.0
     initial_nH = 1.0e-1 # cm^-3, lower than get_gas_lognH_analytic() because the halo has not collapsed yet
-    initial_Tgas = 100
+    initial_Tgas = 21
     initial_ye = 3.7e-4
     initial_y_H2I = 2.0e-6
 
@@ -311,28 +330,29 @@ def main():
 
 
     volumetric_heating_rate = 0.0
-    use_DFheating_flag = 0
+    use_DFheating_flag = 1
 
     if use_DFheating_flag:
-        lgMhalo = 11 #Msun/h
-        DF_heating_data = get_heating_per_lgM([lgMhalo],[-3],[0],initial_redshift,'BestFit_z')
+        lgMhalo = 7 #Msun/h
+        DF_heating_data = get_heating_per_lgM([lgMhalo],[-3],[0],initial_redshift,'BestFit_z', mu_minihalo)
         tot_heating = DF_heating_data['Heating_singlehost']
         tot_heating_erg = tot_heating * 1.0e7 # erg/s
         halo_density = get_mass_density_analytic(initial_redshift)
         halo_volume = 10**lgMhalo * Msun / h_Hubble / halo_density
         halo_volume_cm3 = halo_volume * 1.0e6 # cm^3
         volumetric_heating_rate = tot_heating_erg / halo_volume_cm3
-        print(f"DF heating rate: {tot_heating_erg} erg/s, volumetric heating rate: {volumetric_heating_rate}")
+        print(f"DF heating rate: {tot_heating_erg} erg/s, volumetric heating rate: {volumetric_heating_rate} erg/cm^3/s")
 
         volumetric_heating_rate = volumetric_heating_rate[0]
 
     use_LW_flag = 1
-    lg_LW_J21 = 1
+    LW_J21 = 5
+    spectrum_type = "T4"  
 
     final_nH = 1e10 # cm^-3
 
     data = run_grackle_Omukai(initial_conditions, final_nH, use_DFheating_flag,
-                       volumetric_heating_rate, use_LW_flag, lg_LW_J21)
+                       volumetric_heating_rate, use_LW_flag, LW_J21, spectrum_type)
     
     print(data.keys())    
     
@@ -343,12 +363,6 @@ def main():
     #     'mean_molecular_weight', 'time', 'force_factor'])
     
     print(data['time'].in_units('Myr'))
-
-    output_dir = '/home/zwu/21cm_project/unified_model/Grackle_Omukai_results'
-    output_name = os.path.join(output_dir, "Grackle_Omukai.png")
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
 
     time = data["time"].in_units("Myr")
     density = data["density"]
@@ -361,7 +375,8 @@ def main():
     if use_DFheating_flag:
         output_name += f"_DFheating_lgM_{lgMhalo}"
     if use_LW_flag:
-        output_name += f"_LW_{lg_LW_J21}"
+        output_name += f"_LW_{LW_J21}_spec_{spectrum_type}"
+
     output_name += ".png"
     output_name = os.path.join(output_dir, output_name)
     if not os.path.exists(output_dir):

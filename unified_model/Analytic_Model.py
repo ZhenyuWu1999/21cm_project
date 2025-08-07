@@ -39,17 +39,17 @@ def get_DF_heating_useVelVirial(M, m, redshft):
     DF_heating = I_DF* 4 * np.pi * (G_grav * m *Msun/h_Hubble) ** 2 / Vel_Virial_analytic(M/h_Hubble, redshft) *rho_g
     return DF_heating
 
-def get_DF_heating_useCs(M, m, redshft):
+def get_DF_heating_useCs(M, m, redshft, mean_molecular_weight=mu):
     #M, m in Msun/h
     #return DF heating in J/s
     rho_g = 200 * rho_b0*(1+redshft)**3 *Msun/Mpc**3
     I_DF = 1.0 #do not consider I_DF here
     Tvir = Temperature_Virial_analytic(M/h_Hubble, redshft)
-    Cs = np.sqrt(5.0/3.0 * kB * Tvir / (mu*mp))
+    Cs = np.sqrt(5.0/3.0 * kB * Tvir / (mean_molecular_weight*mp))
     DF_heating = I_DF* 4 * np.pi * (G_grav * m *Msun/h_Hubble) ** 2 / Cs *rho_g
     return DF_heating
 
-def integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF_model):
+def integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF_model, mean_molecular_weight=mu):
     lg_x_bin_edges = np.linspace(lgx_min, lgx_max, 50)
     lg_x_bin_centers = 0.5*(lg_x_bin_edges[1:]+lg_x_bin_edges[:-1])
     lg_x_bin_width = lg_x_bin_edges[1] - lg_x_bin_edges[0]
@@ -59,13 +59,13 @@ def integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF
     m_subs = Mhost * 10**lg_x_bin_centers
 
     #debug: useVelVirial or useCs
-    heating_per_sub = np.array([get_DF_heating_useCs(Mhost, m, redshift) for m in m_subs])
+    heating_per_sub = np.array([get_DF_heating_useCs(Mhost, m, redshift, mean_molecular_weight) for m in m_subs])
     heating_per_bin = heating_per_sub * N_subs_per_bin
     SHMF_heating = np.sum(heating_per_bin)
     return SHMF_heating
 
 def integrate_SHMF_heating_for_single_host_with_variance(redshift, lgx_min, lgx_max, lgM, SHMF_model, 
-                                                        variance_factor_list, correction_model):
+                                                        variance_factor_list, correction_model, mean_molecular_weight=mu):
     #variance_factor_list: list of factors for variance, e.g., [1, 2, 3] means 1, 2, and 3 sigma levels
     #correction_model: 'superPoisson' or 'supersubPoisson', or 'None'
     lg_x_bin_edges = np.linspace(lgx_min, lgx_max, 50)
@@ -85,7 +85,7 @@ def integrate_SHMF_heating_for_single_host_with_variance(redshift, lgx_min, lgx_
     # calculate average heating rate
     Mhost = 10**lgM
     m_subs = Mhost * 10**lg_x_bin_centers
-    heating_per_sub = np.array([get_DF_heating_useCs(Mhost, m, redshift) for m in m_subs])
+    heating_per_sub = np.array([get_DF_heating_useCs(Mhost, m, redshift, mean_molecular_weight) for m in m_subs])
     heating_per_bin_mean = heating_per_sub * N_subs_per_bin_mean
     heating_mean = np.sum(heating_per_bin_mean)
     
@@ -123,7 +123,7 @@ def integrate_SHMF_heating_for_single_host_with_variance(redshift, lgx_min, lgx_
     return heating_upper_list, heating_lower_list, heating_mean
 
 
-def integrate_SHMF_heating_for_single_host_PoissonSampling(redshift, lgx_min, lgx_max, lgM, SHMF_model, n_samples, verbose=True):
+def integrate_SHMF_heating_for_single_host_PoissonSampling(redshift, lgx_min, lgx_max, lgM, SHMF_model, n_samples, mean_molecular_weight=mu, verbose=True):
     
     lg_x_vals, F_vals, N_mean = get_normalized_SHMF_Cumulative(lgx_min, lgx_max, redshift, SHMF_model)
     if verbose:
@@ -156,13 +156,13 @@ def integrate_SHMF_heating_for_single_host_PoissonSampling(redshift, lgx_min, lg
             #directly sum the heating of all subhalos without binning
             Mhost = 10**lgM
             m_subs = Mhost * 10**sampled_lg_psi
-            heating_of_subs = np.array([get_DF_heating_useCs(Mhost, m, redshift) for m in m_subs])
+            heating_of_subs = np.array([get_DF_heating_useCs(Mhost, m, redshift, mean_molecular_weight) for m in m_subs])
             heating_sum = np.sum(heating_of_subs)
             SHMF_heating_for_host_samples.append(heating_sum)
     SHMF_heating_for_host_samples = np.array(SHMF_heating_for_host_samples)
     return SHMF_heating_for_host_samples
 
-def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_model):
+def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_model, mean_molecular_weight=mu):
     '''
     return:
     data_dict = {'lgM_list':lgM_list, 
@@ -174,7 +174,7 @@ def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_mod
     for index, lgM in enumerate(lgM_list):
         lgx_min = lgx_min_list[index]
         lgx_max = lgx_max_list[index]
-        heating = integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF_model)
+        heating = integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF_model, mean_molecular_weight)
         dN_dlgM = HMF_2Dbestfit(lgM, redshift)
         Heating_singlehost.append(heating)
         Heating_perlgM.append(heating*dN_dlgM)

@@ -581,7 +581,7 @@ def plot_cosmic_DFheating(redshift, snapNum = None):
     plt.xlabel(r'lgM [M$_{\odot}$/h]',fontsize=14)
     plt.savefig(filename,dpi=300)
 
-
+#compare cooling and DF heating for massive halos at low-z
 def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
 
     print(f"plotting DF heating and cooling in a single host halo at z = {redshift:.2f} ...")
@@ -817,135 +817,7 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
                     f"{plot_cooling_datasets[1]['data'][i].item():.2e}, "
                     f"{plot_cooling_datasets[2]['data'][i].item():.2e}\n")
 
-                        
-
-def Analytic_model(redshift):
-
-
-
-    exit()
-
-    #check contribution to heating (analytical result)
-    M_Jeans = get_M_Jeans(redshift)
-    print("Jeans mass: ",M_Jeans)
-    lgM_limits = [4, 14]  # Limits for log10(M [Msun/h])
-
-    lgM_list = np.linspace(lgM_limits[0], lgM_limits[1],50)
-    #x = m/M
-    #set Jeans mass as min subhalo mass (and test other values)
-    lgx_min_MJeans_list = np.array([np.log10(M_Jeans/10**lgM_list[j]) for j in range(len(lgM_list))])
-    lgx_min_3_list = np.array([np.log10(1e-3) for j in range(len(lgM_list))])
-    lgx_min_5_list = np.array([np.log10(1e-5) for j in range(len(lgM_list))])
-    
-    #require max subhalo ratio to be 0.1 to avoid major mergers (and test other values)
-    lgx_max_0_list = np.array([np.log10(1.0) for j in range(len(lgM_list))])
-    lgx_max_half_list = np.array([np.log10(0.5) for j in range(len(lgM_list))])
-    lgx_max_1_list = np.array([np.log10(1.0e-1) for j in range(len(lgM_list))])
-    lgx_max_2_list = np.array([np.log10(1.0e-2) for j in range(len(lgM_list))])
-
-    #cooling and heating
-    cooling_Z2_list = []
-    cooling_Z6_list = []
-    for lgM in lgM_list:
-        cooling_Z2, cooling_Z6 = get_EqCooling_for_single_host(10**lgM, redshift)
-        cooling_Z2_list.append(cooling_Z2)
-        cooling_Z6_list.append(cooling_Z6)
-    cooling_Z2_list = np.array(cooling_Z2_list)
-    cooling_Z6_list = np.array(cooling_Z6_list)
-
-    data_minMJeans_max1 = get_heating_per_lgM(lgM_list, lgx_min_MJeans_list, lgx_max_1_list, redshift, 'BestFit_z')
-    data_min5_max1 = get_heating_per_lgM(lgM_list, lgx_min_5_list, lgx_max_1_list, redshift, 'BestFit_z')
-    data_min3_max1 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'BestFit_z')
-    data_min3_max0 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'BestFit_z')
-    data_min3_max2 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_2_list, redshift, 'BestFit_z')
-    data_min3_max1_Bosch16evolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'Bosch16evolved')
-    data_min3_max1_Bosch16unevolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'Bosch16unevolved')
-
-    #heating per logM (old version)
-    ln_m_over_M_limits = [np.log(1e-3), np.log(1.0)]
-    DF_heating_perlogM_old = []
-    for logM in lgM_list:
-        result, error = quad(integrand_oldversion, ln_m_over_M_limits[0], ln_m_over_M_limits[1], args=(logM, redshift, 'Bosch2016'))
-
-        if (abs(error) > 0.01 * abs(result)):
-            print(f"Warning: error in integration is large: {error} at z={redshift}, logM={logM}")
-        DF_heating_perlogM_old.append(result)
-    DF_heating_perlogM_old = np.array(DF_heating_perlogM_old)
-    label_old = r'$m/M \in [10^{-3},1]$, Bosch16evolved'
-
-
-    data_plots = [data_minMJeans_max1, data_min5_max1, data_min3_max1,data_min3_max0,data_min3_max2,
-                  data_min3_max1_Bosch16evolved, data_min3_max1_Bosch16unevolved]
-    colors = ['g','b','r','r','r',
-              'grey','grey']
-    labels = [r'$[m_J/M,10^{-1}]$ BestFit',r'$[10^{-5},10^{-1}]$ BestFit',r'$[10^{-3},10^{-1}]$ BestFit',r'$[10^{-3},1]$ BestFit',r'$[10^{-3},10^{-2}]$ BestFit',
-                r'$[10^{-3},10^{-1}]$ Bosch16evolved',r'$[10^{-3},10^{-1}]$ Bosch16unevolved']
-    linestyle = ['-', '-.', '--', ':', ':',
-                 '-','--']
-    linewidth = [1,1,1,2,1,
-                 1,1]
-    #plot heating for Single host M
-    output_dir = '/home/zwu/21cm_project/unified_model/Analytic_results'
-    filename = os.path.join(output_dir,f"DF_heating_singlehost_z{redshift:.2f}_muionized.png")
-
-    
-    fig, ax1 = plt.subplots(figsize=(8, 6), facecolor='white')
-    for i in range(len(data_plots)):
-        data = data_plots[i]
-        ax1.plot(data['lgM_list'],1e7*data['Heating_singlehost'],colors[i],linestyle=linestyle[i],linewidth=linewidth[i],label=labels[i])
-    ax1.plot(lgM_list,cooling_Z2_list,'k-',label='Cooling Z=1e-2')
-    ax1.plot(lgM_list,cooling_Z6_list,'k--',label='Cooling Z=1e-6')
-    ax1.legend()
-    ax1.set_xlim([min(lgM_list),max(lgM_list)])
-    ax1.set_yscale('log')
-    ax1.set_ylabel(r'Cooling and Heating [erg/s]',fontsize=14)
-    ax1.set_xlabel(r'lgM [M$_{\odot}$/h]',fontsize=14)
-    ax1.tick_params(axis='both', direction='in')
-    
-
-    ax2 = ax1.twiny()
-    ax2.set_xlim(ax1.get_xlim())
-
-    # Define clean Tvir ticks (integer powers of 10)
-    Tvir_min = lgM_to_Tvir(min(lgM_list), redshift)
-    Tvir_max = lgM_to_Tvir(max(lgM_list), redshift)
-    Tvir_locator = LogLocator(base=10)
-    Tvir_ticks = Tvir_locator.tick_values(Tvir_min, Tvir_max)
-    lgM_ticks_top = [Tvir_to_lgM(Tvir, redshift) for Tvir in Tvir_ticks]
-
-    # Filter valid ticks within the plot limits
-    valid_ticks = [(lgM, Tvir) for lgM, Tvir in zip(lgM_ticks_top, Tvir_ticks) if min(lgM_list) <= lgM <= max(lgM_list)]
-    lgM_ticks_top, Tvir_ticks = zip(*valid_ticks)
-
-    # Set the ticks and labels
-    ax2.set_xticks(lgM_ticks_top)
-    ax2.set_xticklabels([f"$10^{int(np.log10(Tvir))}$" for Tvir in Tvir_ticks])
-    ax2.set_xlabel(r'Virial Temperature [K]', fontsize=14)
-    ax2.tick_params(axis='x', direction='in')
-
-    plt.tight_layout()
-    plt.savefig(filename,dpi=300)
-
-
-
-    # #plot heating per logM
-    # filename = os.path.join(output_dir,f"DF_heating_perlogM_z{redshift:.2f}.png")
-    # fig = plt.figure(facecolor='white')
-    # for i in range(len(data_plots)): 
-    #     data = data_plots[i]
-    #     plt.plot(data['lgM_list'],1e7*data['Heating_perlgM'],colors[i],linestyle=linestyle[i],linewidth=linewidth[i],label=labels[i])
-    # #also compare with old version
-    # plt.plot(lgM_list,1e7*DF_heating_perlogM_old,'k-',label=label_old)
-    # gas_resolution, dark_matter_resolution = get_simulation_resolution('TNG50-1')
-    # plt.axvline(np.log10(50*dark_matter_resolution), color='black', linestyle='--',label='50 particles')
-    # plt.legend()
-    # plt.xlim([min(lgM_list),max(lgM_list)])
-    # plt.ylim([1e35,1e43])
-    # plt.yscale('log')
-    # plt.ylabel(r'DF heating per lgM [erg/s (Mpc/h)$^{-3}$ dex$^{-1}$]',fontsize=14)
-    # plt.xlabel(r'lgM [M$_{\odot}$/h]',fontsize=14)
-    # plt.savefig(filename,dpi=300)
-
+                    
 
 def run_heating_cooling_singlehost():
     plot_global_heating_cooling_singlehost(0, 10, 15)
@@ -1027,53 +899,3 @@ if __name__ == "__main__":
     # plot_global_heating_cooling_singlehost(15, 11)
 
 
-    # Analytic_model(0)
-
-    # for z in [15, 12, 10, 8, 6]:
-    #     Analytic_model(z)
-    # z = 12
-    # lgM = 7.0
-    # heating_singlehost = integrate_SHMF_heating_for_single_host(z, -3, -1, lgM, 'BestFit_z')
-    # get_NonEqCooling_for_single_host(10**lgM, z, heating_singlehost)
-
-
-    # cooling and heating profile
-    # concentration_model = 'ludlow16'
-    # output_dir = f'/home/zwu/21cm_project/unified_model/Analytic_results/cooling_heating_profile/'
-
-    
-    # for z in [2]:
-    #     for M in [1e13, 1e14, 1e15]:
-    #         print(f"z={z}, M={M:.2e}")
-    #         compare_cooling_heating_profile(output_dir, M, z, -3, -1, 'Bosch16evolved', 'ludlow16')
-    
-    # plot_cooling_heating_at_r_Rvir(12, 16, 0.1, 2, 'BestFit_z', 'ludlow16')
-
-    '''
-    for z in [6]:
-        output_dir = os.path.join(output_dir, f'z6')
-        for M in [1e7, 1e10, 1e12]:
-            print(f"z={z}, M={M:.2e}")
-            compare_cooling_heating_profile(output_dir, M, z, -3, -1, 'BestFit_z', 'ludlow16')
-    '''
-    '''
-    for z in [10]:
-        output_dir = os.path.join(output_dir, f'z10')
-        for M in [1e7, 1e10, 1e11]:
-            print(f"z={z}, M={M:.2e}")
-            compare_cooling_heating_profile(output_dir, M, z, -3, -1, 'BestFit_z', 'ludlow16')
-    '''
-    '''
-    for z in [12]:
-        output_dir = os.path.join(output_dir, f'z12')
-        for M in [1e7, 1e10, 1e11]:
-            print(f"z={z}, M={M:.2e}")
-            compare_cooling_heating_profile(output_dir, M, z, -3, -1, 'BestFit_z', 'ludlow16')
-    '''
-
-    # for z in [15]:
-    #     output_dir = os.path.join(output_dir, f'z15')
-    #     for M in [1e7, 1e10]:
-    #         print(f"z={z}, M={M:.2e}")
-    #         compare_cooling_heating_profile(output_dir, M, z, -3, -1, 'BestFit_z', 'ludlow16')
-    

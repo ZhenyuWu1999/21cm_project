@@ -389,3 +389,18 @@ if __name__ == "__main__":
 
 
 
+    # cooling and heating profile
+    # concentration_model = 'ludlow16'
+    # output_dir = f'/home/zwu/21cm_project/unified_model/Analytic_results/cooling_heating_profile/'
+
+    
+    # for z in [2]:
+    #     for M in [1e13, 1e14, 1e15]:
+    #         print(f"z={z}, M={M:.2e}")
+    #         compare_cooling_heating_profile(output_dir, M, z, -3, -1, 'Bosch16evolved', 'ludlow16')
+    
+    # plot_cooling_heating_at_r_Rvir(12, 16, 0.1, 2, 'BestFit_z', 'ludlow16')
+
+
+
+

@@ -21,13 +21,13 @@ from TNGDataHandler import load_processed_data
 from Config import simulation_set, Kim2005_result
 from DF_Ostriker99_wake_structure import Idf_Ostriker99_nosingularity_Vtrmin
 
-def lgM_to_Tvir(lgM, z):
+def lgM_to_Tvir(lgM, z, mean_molecular_weight=mu):
     #lgM in Msun/h
-    Tvir = Temperature_Virial_analytic(10**lgM/h_Hubble, z)
+    Tvir = Temperature_Virial_analytic(10**lgM/h_Hubble, z, mean_molecular_weight)  # Tvir in K
     return Tvir
 
-def Tvir_to_lgM(Tvir, z):
-    Mvir = inversefunc_Temperature_Virial_analytic(Tvir, z) #Mvir in Msun
+def Tvir_to_lgM(Tvir, z, mean_molecular_weight=mu):
+    Mvir = inversefunc_Temperature_Virial_analytic(Tvir, z, mean_molecular_weight) #Mvir in Msun
     lgM = np.log10(Mvir * h_Hubble)  # convert to lgM [M_sun/h]
     return lgM
 
@@ -188,7 +188,7 @@ def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_mod
     return data_dict
 
 
-def get_EqCooling_for_single_host(Mvir, redshift, param_sets, debug_print=False):
+def get_EqCooling_for_single_host(Mvir, redshift, param_sets, mean_molecular_weight=mu):
     """
     Calculate cooling rates for multiple parameter sets
     Parameters:
@@ -210,7 +210,7 @@ def get_EqCooling_for_single_host(Mvir, redshift, param_sets, debug_print=False)
     
     UVB_flag = False
     Compton_Xray_flag = False
-    dynamic_final_flag = True
+    dynamic_final_flag = False
     
     # Pre-calculate common values
     mass_density = get_mass_density_analytic(redshift)
@@ -220,34 +220,44 @@ def get_EqCooling_for_single_host(Mvir, redshift, param_sets, debug_print=False)
     nH = 10**lognH
     specific_heating_rate = 0.0
     volumetric_heating_rate = 0.0
-    temperature = Temperature_Virial_analytic(Mvir/h_Hubble, redshift)
+    temperature = Temperature_Virial_analytic(Mvir/h_Hubble, redshift, mean_molecular_weight)
     
     # Iterate through all parameter sets
     for params in param_sets:
+        print("parameters: ", params)
         gas_metallicity = params['gas_metallicity']
         f_H2 = params['f_H2']
-        
+
+        params_for_constdensity = {
+            "evolve_cooling": False,
+            "redshift": redshift,
+            "lognH": lognH,
+            "specific_heating_rate": specific_heating_rate,
+            "volumetric_heating_rate": volumetric_heating_rate,
+            "temperature": temperature,
+            "gas_metallicity": gas_metallicity,
+            "f_H2": f_H2,
+        }
         cooling_Eq = run_constdensity_model(
-            False, redshift, lognH, specific_heating_rate, volumetric_heating_rate, 
-            temperature, gas_metallicity, f_H2=f_H2, UVB_flag=UVB_flag, 
+            params_for_constdensity, UVB_flag=UVB_flag, 
             Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag,
-            
+            converge_when_setup=True,
         )
-        
+
         normalized_cooling = cooling_Eq["cooling_rate"].v
         cooling_rate = normalized_cooling * nH**2
         tot_cooling_rate = cooling_rate * volume_vir_cm3
 
         #debug
-        if(debug_print):
-            print(f"Mvir: {Mvir:.3e} Msun/h")
-            print("nH: ", nH)
-            print("mass_density: ", mass_density)
-            print("temperature: ", temperature)
-            print("Cooling rate: ", cooling_rate)
-            print("Cooling rate (normalized): ", normalized_cooling)
-            print("Volume virial: ", volume_vir_cm3)
-            print("Total cooling rate: ", tot_cooling_rate)
+        # if(debug_print):
+        #     print(f"Mvir: {Mvir:.3e} Msun/h")
+        #     print("nH: ", nH)
+        #     print("mass_density: ", mass_density)
+        #     print("temperature: ", temperature)
+        #     print("Cooling rate: ", cooling_rate)
+        #     print("Cooling rate (normalized): ", normalized_cooling)
+        #     print("Volume virial: ", volume_vir_cm3)
+        #     print("Total cooling rate: ", tot_cooling_rate)
         
         # Create result dictionary with all input parameters and the cooling rate
         result = -tot_cooling_rate  # Add the cooling rate
@@ -289,16 +299,30 @@ def get_EqCoolingDensity(r_Rvir, Mvir, redshift, concentration_model, param_sets
     for params in param_sets:
         gas_metallicity = params['gas_metallicity']
         f_H2 = params['f_H2']
+
+        params_for_constdensity = {
+            "evolve_cooling": False,
+            "redshift": redshift,
+            "lognH": local_lognH_NFW,
+            "specific_heating_rate": specific_heating_rate,
+            "volumetric_heating_rate": volumetric_heating_rate,
+            "temperature": temperature,
+            "gas_metallicity": gas_metallicity,
+            "f_H2": f_H2,
+        }
         
         cooling_Eq_NFW = run_constdensity_model(
-            False, redshift, local_lognH_NFW, specific_heating_rate, volumetric_heating_rate, 
-            temperature, gas_metallicity, f_H2, UVB_flag=UVB_flag, 
-            Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag
+            params_for_constdensity, UVB_flag=UVB_flag, 
+            Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag,
+            converge_when_setup=True,
         )
+
+        params_for_constdensity["lognH"] = local_lognH_core
+
         cooling_Eq_core = run_constdensity_model(
-            False, redshift, local_lognH_core, specific_heating_rate, volumetric_heating_rate, 
-            temperature, gas_metallicity, f_H2, UVB_flag=UVB_flag, 
-            Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag
+            params_for_constdensity, UVB_flag=UVB_flag, 
+            Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag,
+            converge_when_setup=True,
         )
         
         all_cooling_Eq_NFW_results.append(cooling_Eq_NFW["cooling_rate"].v*local_nH_NFW_cm3**2)
@@ -597,6 +621,7 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
     lgx_max_0_list = np.array([np.log10(1.0) for j in range(len(lgM_list))])
     lgx_max_1_list = np.array([np.log10(1.0e-1) for j in range(len(lgM_list))])
 
+    print("Calculating DF heating for host halo ...")
     # data_minMJeans_max1 = get_heating_per_lgM(lgM_list, lgx_min_MJeans_list, lgx_max_1_list, redshift, 'BestFit_z')
     data_min3_max1 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'BestFit_z')
     data_min3_max0 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'BestFit_z')
@@ -647,6 +672,7 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
     ]
     
     #then calculate cooling rates
+    print("calculating cooling rates for host halo ...")
     Z_Dekel = 0.3*10**(-0.17*redshift)
     cooling_param_sets = [
         {"gas_metallicity": 1.0e-6, "f_H2": 0.0},
@@ -820,14 +846,14 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
                     
 
 def run_heating_cooling_singlehost():
-    plot_global_heating_cooling_singlehost(0, 10, 15)
-    plot_global_heating_cooling_singlehost(1, 10, 15)
-    plot_global_heating_cooling_singlehost(2, 10, 15)
-    plot_global_heating_cooling_singlehost(3, 10, 14)
-    plot_global_heating_cooling_singlehost(4, 10, 14)
-    plot_global_heating_cooling_singlehost(5, 9, 13)
-    plot_global_heating_cooling_singlehost(6, 9, 13)
-    plot_global_heating_cooling_singlehost(7, 9, 12)
+    # plot_global_heating_cooling_singlehost(0, 10, 15)
+    # plot_global_heating_cooling_singlehost(1, 10, 15)
+    # plot_global_heating_cooling_singlehost(2, 10, 15)
+    # plot_global_heating_cooling_singlehost(3, 10, 14)
+    # plot_global_heating_cooling_singlehost(4, 10, 14)
+    # plot_global_heating_cooling_singlehost(5, 9, 13)
+    # plot_global_heating_cooling_singlehost(6, 9, 13)
+    # plot_global_heating_cooling_singlehost(7, 9, 12)
     plot_global_heating_cooling_singlehost(8, 9, 12)
 
 def plot_heating_cooling_ratio_singlehost():
@@ -880,7 +906,182 @@ def plot_heating_cooling_ratio_singlehost():
 
 
 
+#compare cooling and DF heating for minihalos at high-z
+def plot_global_heating_cooling_singlehost_minihalo(redshift):
 
+    print(f"plotting DF heating and cooling in a minihalo at z = {redshift:.2f} ...")
+    min_lgM = 6.0
+    max_lgM = 7.5
+    lgM_limits = [min_lgM, max_lgM]  # Limits for log10(M [Msun/h])
+    lgM_list = np.linspace(lgM_limits[0], lgM_limits[1],50)
+    #x = m/M
+    #set Jeans mass as min subhalo mass (and test other values)
+    lgx_min_3_list = np.array([np.log10(1e-3) for j in range(len(lgM_list))])
+    
+    #require max subhalo ratio to be 0.1 to avoid major mergers (and test other values)
+    lgx_max_0_list = np.array([np.log10(1.0) for j in range(len(lgM_list))])
+    lgx_max_1_list = np.array([np.log10(1.0e-1) for j in range(len(lgM_list))])
+
+    data_min3_max1 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'BestFit_z', mean_molecular_weight=mu_minihalo)
+    data_min3_max0 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'BestFit_z', mean_molecular_weight=mu_minihalo)
+
+ 
+    plot_heating_datasets = [
+        {
+            "data": data_min3_max1,
+            "color": 'r',
+            "label": r'$[10^{-3},10^{-1}]$ BestFit, f$_g = \Omega_b/\Omega_m$',
+            "linestyle": ':',
+            "linewidth": 2
+        },
+        {
+            "data": data_min3_max0,
+            "color": 'r',
+            "label": r'$[10^{-3},1]$ BestFit, f$_g = \Omega_b/\Omega_m$',
+            "linestyle": ':',
+            "linewidth": 4
+        },
+    ]
+    
+
+    #then calculate the cooling rates
+    cooling_param_sets = [
+        {"gas_metallicity": 0.0, "f_H2": 0.0, 
+         "color": "lime", "marker": "o", "markersize":10,
+         "label":"H2 = 0"},
+        {"gas_metallicity": 0.0, "f_H2": 1.0e-6,
+         "color": "cyan", "marker": "o", "markersize":10,
+         "label": "H2 = 1e-6"},
+        {"gas_metallicity": 0.0, "f_H2": 1.0e-5,
+         "color": "deepskyblue", "marker": "o", "markersize":10,
+         "label": "H2 = 1e-5"},
+        {"gas_metallicity": 0.0, "f_H2": 1.0e-4,
+         "color": "blue", "marker": "o", "markersize":10,
+         "label": "H2 = 1e-4"},
+    ]
+
+    fg_cooling = (Omega_b/Omega_m)*np.ones(len(cooling_param_sets))
+    fg_correction = fg_cooling/(Omega_b/Omega_m) 
+    fg_correction_sq = fg_correction**2
+
+    cooling_results = []
+    
+    for lgM in lgM_list:
+        Mvir = 10**lgM
+        c = get_concentration(Mvir/h_Hubble, redshift, 'ludlow16')
+        profile_correction_for_cooling = c**3*(c**2+5*c+10)/30/(c+1)**5 * c**3/3/f_core(c)**2
+        profile_correction_Dekel08 = c**3/(90*f_core(c))
+        print("lgM: ",lgM, "c: ",c, "profile_correction_for_cooling: ",profile_correction_for_cooling)
+        
+        cooling_result = get_EqCooling_for_single_host(Mvir, redshift, cooling_param_sets, mean_molecular_weight=mu_minihalo)
+
+        #debug: the effect of cooling density integral
+        #use Dekel08 profile correction for now
+        cooling_result = np.array(cooling_result) * profile_correction_for_cooling 
+        
+        cooling_results.append(cooling_result)
+    cooling_results = np.array(cooling_results) #shape: (len(lgM_list), len(cooling_param_sets))
+
+    #fg correction
+    for i in range(len(cooling_param_sets)):
+        cooling_results[:, i] *= fg_correction_sq[i]
+    
+
+    selected_heating_datasets_index = [0, 1]
+    heating_datasets = [plot_heating_datasets[i] for i in selected_heating_datasets_index]
+    output_dir = '/home/zwu/21cm_project/unified_model/Analytic_results/singlehost_minihalo'
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    filename = os.path.join(output_dir,f"DF_heating_singlehost_z{redshift:.2f}_profilefgcorr.png")
+
+
+    print("finish.")
+
+    exit()
+
+    fig, ax1 = plt.subplots(figsize=(8, 6), facecolor='white')
+    #plot heating
+    for dataset in heating_datasets:
+        ax1.plot(dataset["data"]["lgM_list"], 1e7*dataset["data"]["Heating_singlehost"], 
+                color=dataset["color"], 
+                label=dataset["label"],
+                linestyle=dataset["linestyle"], 
+                linewidth=dataset["linewidth"])
+    #plot cooling
+    for i, params in enumerate(cooling_param_sets):
+        ax1.scatter(
+            lgM_list,                      # x
+            cooling_results[:, i],         # y
+            edgecolors=params.get("color", "C0"),
+            facecolors="none",
+            label=params.get("label") ,
+            marker=params.get("marker", "o"),
+            s=params.get("markersize", 8),  
+        )
+
+    handles, labels = ax1.get_legend_handles_labels()
+    heating_keywords = ['Heating', 'BestFit', 'Bosch', 'Kim']
+    heating_handles_labels = [(h, l) for h, l in zip(handles, labels) if any(k in l for k in heating_keywords)]
+    cooling_handles_labels = [(h, l) for h, l in zip(handles, labels) if not any(k in l for k in heating_keywords)]
+
+    heating_handles, heating_labels = zip(*heating_handles_labels)
+    cooling_handles, cooling_labels = zip(*cooling_handles_labels)
+    legend1 = ax1.legend(heating_handles, heating_labels, loc='upper left', title='Heating')
+    legend2 = ax1.legend(cooling_handles, cooling_labels, loc='lower right', title='Cooling')
+    # Add back the first legend manually so it doesn't get overwritten
+    ax1.add_artist(legend1)
+
+
+    ax1.set_xlim([min(lgM_list),max(lgM_list)])
+    ax1.set_yscale('log')
+    ax1.set_ylabel(r'Cooling and Heating [erg/s]',fontsize=14)
+    ax1.set_xlabel(r'lgM [M$_{\odot}$/h]',fontsize=14)
+    ax1.tick_params(axis='both', direction='in')
+    ax1.grid(alpha = 0.3)
+
+    ax2 = ax1.twiny()
+    ax2.set_xlim(ax1.get_xlim())
+
+    # Define clean Tvir ticks (integer powers of 10)
+    Tvir_min = lgM_to_Tvir(min(lgM_list), redshift, mean_molecular_weight=mu_minihalo)
+    Tvir_max = lgM_to_Tvir(max(lgM_list), redshift, mean_molecular_weight=mu_minihalo)
+    Tvir_locator = LogLocator(base=10)
+    Tvir_ticks = Tvir_locator.tick_values(Tvir_min, Tvir_max)
+    lgM_ticks_top = [Tvir_to_lgM(Tvir, redshift, mean_molecular_weight=mu_minihalo) for Tvir in Tvir_ticks]
+
+    # Filter valid ticks within the plot limits
+    valid_ticks = [(lgM, Tvir) for lgM, Tvir in zip(lgM_ticks_top, Tvir_ticks) if min(lgM_list) <= lgM <= max(lgM_list)]
+    lgM_ticks_top, Tvir_ticks = zip(*valid_ticks)
+
+    # Set the ticks and labels
+    ax2.set_xticks(lgM_ticks_top)
+    ax2.set_xticklabels([f"$10^{int(np.log10(Tvir))}$" for Tvir in Tvir_ticks])
+    # ax2.set_xlabel(r'Virial Temperature [K] ($\mu$ ='+f'{mu})', fontsize=14)
+    ax2.set_xlabel(r'Virial Temperature [K]', fontsize=14)
+    ax2.tick_params(axis='x', direction='in')
+
+    plt.tight_layout()
+    plt.savefig(filename,dpi=300)
+
+
+
+    """
+    #also save the heating and cooling results to a text file
+    lgM_list = np.array(lgM_list)
+    txt_filename = os.path.join(output_dir,f"singlehost_z{redshift:.2f}.txt")
+    with open(txt_filename, 'w') as f:
+        f.write("lgM, Heating_singlehost[erg/s](data_min3_max1, data_min3_max0, data_min3_max0_fg005), Cooling_singlehost[erg/s](Z=1e-6, Z=1e-2, Z=Z_Dekel; fg=0.05)\n")
+        for i in range(len(lgM_list)):
+            f.write(f"{float(lgM_list[i]):.2f}, "
+                    f"{float(1e7 * data_min3_max1['Heating_singlehost'][i]):.2e}, "
+                    f"{float(1e7 * data_min3_max0['Heating_singlehost'][i]):.2e}, "
+                    f"{float(1e7 * data_min3_max0_fg005['Heating_singlehost'][i]):.2e}, "
+                    f"{plot_cooling_datasets[0]['data'][i].item():.2e}, "
+                    f"{plot_cooling_datasets[1]['data'][i].item():.2e}, "
+                    f"{plot_cooling_datasets[2]['data'][i].item():.2e}\n")
+
+                    
+    """
 
 if __name__ == "__main__":
     
@@ -893,9 +1094,7 @@ if __name__ == "__main__":
 
     #2. cimpare heating and cooling for a single host halo
     # run_heating_cooling_singlehost()
-    plot_heating_cooling_ratio_singlehost()
+    # plot_heating_cooling_ratio_singlehost()
 
-    # plot_global_heating_cooling_singlehost(12, 11)
-    # plot_global_heating_cooling_singlehost(15, 11)
-
+    plot_global_heating_cooling_singlehost_minihalo(redshift = 15)
 

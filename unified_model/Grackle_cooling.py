@@ -64,6 +64,8 @@ def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate,
 
   
     tiny_number = 1e-20
+    if f_H2 == 0.0:
+        f_H2 = tiny_number
     
     nH = 10**lognH 
     
@@ -106,15 +108,15 @@ def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate,
     if Compton_Xray_flag:
         my_chemistry.Compton_xray_heating = 1
     
-    if redshift <= 6:
+    if redshift <= 8:
         state = "ionized"
     else:
         state = "neutral"
 
     density = nH * mass_hydrogen_cgs
     
-    if gas_metallicity == 0 or np.log10(gas_metallicity)<-6:
-        gas_metallicity = 1e-6  #valid range minimum value
+    if gas_metallicity == 0 or np.log10(gas_metallicity)<-8:
+        gas_metallicity = 1.0e-8  #cloudy_metals_2008_3D.h5 valid range>1e-6; not important for other files
     #metallicity = 0.0 # Solar   #assume primordial gas
     metal_mass_fraction = gas_metallicity * my_chemistry.SolarMetalFractionByMass
     #(SolarMetalFractionByMass: 0.01295)
@@ -125,7 +127,7 @@ def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate,
     
     #temperature = np.logspace(1, 9, 200)
     max_iterations = 10000
-    
+
     fc = setup_fluid_container(
         my_chemistry,
         density=density,
@@ -210,6 +212,7 @@ def plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2):
                 UVB_flag=UVB_flag, Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag)
         data_alldensity.append(data)
 
+
     fig, ax = plt.subplots(figsize=(8,6))
     colors = plt.cm.rainbow(np.linspace(0, 1, len(lognH_list)))
     for i, data in enumerate(data_alldensity):
@@ -221,16 +224,16 @@ def plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2):
         ax.plot(data["temperature"].v[pos_mask], cooling_rate[pos_mask], color=colors[i], linestyle='dashed')
 
     #plot Dekel08 cooling rate
-    ax.plot(temperature_Dekel08, Lambda23_Dekel08*1.0e-23, color='black', linestyle='dotted', label='Dekel+08')
+    # ax.plot(temperature_Dekel08, Lambda23_Dekel08*1.0e-23, color='black', linestyle='dotted', label='Dekel+08')
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlabel('Temperature [K]', fontsize=14)
     ax.set_ylabel(r'Cooling rate $\Lambda$/$n_H^2$ [erg cm$^3$/s]', fontsize=14)
-    ax.set_title(f'Cooling rate at z={redshift}, Z={metallicity_Zsun}Z$_\odot$', fontsize=16)
+    ax.set_title(f'Cooling rate at z={redshift} (Z={metallicity_Zsun}Z$_\odot$, H2 fraction={f_H2})', fontsize=16)
     ax.legend()
     ax.set_ylim(1e-29, 1e-20)
     # ax.set_ylim(1e-27, 1e-21)
-    ax.tick_params(axis='both', direction='in')
+    ax.tick_params(which='both', direction='in', labelsize=12)
     plt.tight_layout()
     filename_ext = ''
     if UVB_flag:
@@ -243,152 +246,48 @@ def plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2):
     filename = f'Cooling_rate_z{redshift}_Z{metallicity_Zsun:.1e}Zsun{filename_ext}.png'
     plt.savefig(os.path.join(output_dir, filename), dpi=300)
 
-"""
-def test_coolingcell():
-    UVB_flag = False
-    Compton_Xray_flag = False
-    dynamic_final_flag = True
 
-    redshift = 15.0
-    lognH = -1.0
-    nH = 10**lognH
-    specific_heating_rate = 0.0
-    volumetric_heating_rate = 0.0
-    temperature = 1.0e3
-    gas_metallicity = 1.0e-6
-
-    cooling_Eq = run_constdensity_model(False,redshift,lognH,specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity, 
-                             UVB_flag=UVB_flag, Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag)
-
-    print("Equilibrium cooling rate:")
-    print(cooling_Eq["cooling_rate"].v)
-
-    heating = -cooling_Eq["cooling_rate"].v[0]
-    volumetric_heating_rate = 1.0* heating * nH**2
-
-    cooling_NonEq = run_constdensity_model(True,redshift,lognH,specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity,
-                             UVB_flag=UVB_flag, Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag)
-
-    print("time = ", cooling_NonEq["time"].v)
-    print("Non-equilibrium cooling rate:")
-    print(cooling_NonEq["cooling_rate"])
-    print("temperature = ", cooling_NonEq["temperature"].v)
-
-
-def thermal_bremsstrahlung(T):
-    T_keV = kB*T/(1.0e3*eV)
-    return 7.2*1.0e-24*np.sqrt(T_keV)
-
-
-def test_TNGhalo_cooling(snapNum):
-    base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
-    processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
-                                f'processed_halos_snap_{snapNum}.h5')
-    data = load_processed_data(processed_file)
-    redshift = data.header['Redshift']
-    print(f"Redshift: {redshift}")
-
-    #get basic info: mass, Tvir, DF_heating_without_I, Mach nunber, nH, metallicity
-    host_indices = data.subhalo_data['host_index'].value
-    host_masses = data.halo_data['GroupMass'].value[host_indices]  # Msun/h
-    host_Tvir = data.halo_data['GroupTvir'].value[host_indices]  # K
-    host_gasmetallicity = data.halo_data['GroupGasMetallicity'].value[host_indices]  # dimensionless
-    host_gasmetallicity_Zsun = host_gasmetallicity / Zsun
-    host_t_ff = data.halo_data['Group_t_ff'].value[host_indices]  # s
-    host_M200 = data.halo_data['Group_M_Crit200'].value[host_indices]  # Msun/h
-    host_R200 = data.halo_data['Group_R_Crit200'].value[host_indices]  # Mpc
-    host_lognH = get_gas_lognH_numerical(host_M200/h_Hubble, host_R200)
-    host_lognH_analytic = get_gas_lognH_analytic(redshift)
-
-    sub_masses = data.subhalo_data['SubMass'].value  # Msun/h
-    mach_numbers = data.subhalo_data['mach_number'].value
-    DF_heating_withoutIDF = data.subhalo_data['DF_heating_withoutIDF'].value  # J/s
-    rel_vel_mags = data.subhalo_data['relative_velocity_magnitude'].value  # m/s
-
-    print("number of host halos: ", len(np.unique(host_indices)))
-    print("number of subhalos: ", len(sub_masses))
-
-    #select test subhalos
-    # test group 1: T closest to 1e5 K, Mach ~ 1.5
-    mask1 = (host_Tvir > 9.9e4) & (host_Tvir < 1.1e5) & (mach_numbers > 1.4) & (mach_numbers < 1.6)
-    test1_indices = np.where(mask1)[0]
-    print("number of test halos: ", len(test1_indices))
-    print("host halo indices: ", host_indices[test1_indices])
-    print("subhalo indices: ", test1_indices)
-    print("DF_heating_withoutIDF: ", DF_heating_withoutIDF[test1_indices])
     
-    print("------------------------------------------------------------")
-    #test group 2 
+    #also plot the final H2 fraction  (data["H2I_density"]/data["density"])
+    fig, ax2 = plt.subplots(figsize=(8,6))
+    for i, data in enumerate(data_alldensity):
+        H2_fraction = data["H2I_density"].v / data["density"].v
+        ax2.plot(data["temperature"].v, H2_fraction, color=colors[i], label=f'log(nH)={lognH_list[i]}')
+    ax2.set_xscale('log')
+    ax2.set_yscale('log')
+    ax2.set_xlabel('Temperature [K]', fontsize=14)
+    ax2.set_ylabel('H2 fraction', fontsize=14)
+    ax2.set_title(f'final H2 fraction at z={redshift} (Z={metallicity_Zsun}Z$_\odot$, initial H2 fraction={f_H2})', fontsize=16)
+    ax2.legend()
+    ax2.tick_params(which='both', direction='in', labelsize=12)
+    plt.tight_layout()
+    filename = f'final_H2_fraction_z{redshift}_Z{metallicity_Zsun:.1e}Zsun{filename_ext}.png'
+    plt.savefig(os.path.join(output_dir, filename), dpi=300)
 
-    mask2 = (host_Tvir > 3.3e5)
-    test2_indices = np.where(mask2)[0]
-    print("number of test halos: ", len(test2_indices))
-    print("host halo indices: ", host_indices[test2_indices])
-    print("subhalo indices: ", test2_indices)
-    print("DF_heating_withoutIDF: ", DF_heating_withoutIDF[test2_indices])
-    print("------------------------------------------------------------")
-    
-    print("\n\n")
-    for sub_index in test2_indices:
-        print(f"Test subhalo {sub_index}:")
-        print(f"Host halo index: {host_indices[sub_index]}")
-        print(f"Host halo mass: {host_masses[sub_index]} Msun/h")
-        print(f"subhalo mass: {sub_masses[sub_index]} Msun/h")
-        print("mass ratio: ", sub_masses[sub_index]/host_masses[sub_index])
-        
-        #run cooling model
-        lognH = host_lognH[sub_index]
-        temperature = host_Tvir[sub_index]
-        gas_metallicity = host_gasmetallicity_Zsun[sub_index]
-        print(f"lognH = {lognH}, Tvir = {temperature}, Z = {gas_metallicity} Zsun")
-        print("thermal bremsstrahlung rate: ", thermal_bremsstrahlung(temperature), "erg cm^3/s")
-
-        specific_heating_rate = 0.0
-        volumetric_heating_rate = 0.0
-        cooling_Eq = run_constdensity_model(False,redshift,lognH,specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity)
-        print("Equilibrium cooling rate:")
-        print(cooling_Eq["cooling_rate"])
-        DF_heating_erg = DF_heating_withoutIDF[sub_index] * 1e7  #erg/s
-        print("DF_heating_withoutIDF: ", DF_heating_erg, "erg/s")
-        wake_volume_cm = (host_R200[sub_index]*Mpc*1.0e2)**3 * np.pi * 4/3
-        wake_heating_rate = DF_heating_erg / wake_volume_cm
-        print("wake heating rate: ", wake_heating_rate, "erg/cm^3/s")
-        normalized_heating_rate = wake_heating_rate / (10**lognH)**2
-        print("normalized wake heating rate: ", normalized_heating_rate, "erg cm^3/s")
-
-        print("cooling time = ", cooling_Eq["cooling_time"], "= ", cooling_Eq["cooling_time"].v/Myr, "Myr")
-        print("host t_ff = ", host_t_ff[sub_index], "= ", host_t_ff[sub_index]/Myr, "Myr")
-        R200_tcross = host_R200[sub_index]*Mpc/ rel_vel_mags[sub_index]
-        print("R200/rel_vel = ", R200_tcross, "= ", R200_tcross/Myr, "Myr")
-
-        #now run non-equilibrium cooling model
-        # evolve_cooling = True
-        # dynamic_final_flag = False
-        # UVB_flag = False
-        # Compton_Xray_flag = False
-        # volumetric_heating_rate = np.abs(cooling_Eq["cooling_rate"][0]*1.1)
-        # cooling_NonEq = run_constdensity_model(evolve_cooling,redshift,lognH,specific_heating_rate, volumetric_heating_rate, temperature, gas_metallicity,
-        #                      UVB_flag=UVB_flag, Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag)
-
-        # print("time:")
-        # print(cooling_NonEq["time"])
-        # print("Non-equilibrium cooling rate:")
-        # print(cooling_NonEq["cooling_rate"])
-        print("\n\n")
-
-        # break
-"""
         
 
 if __name__ == "__main__":
     
-    redshift = 2
-    metallicity_Zsun = 0.3*10**(-0.17*redshift)  # Dekel & Birnboim (2006)
+    # redshift = 2
+    # metallicity_Zsun = 0.3*10**(-0.17*redshift)  # Dekel & Birnboim (2006)
+    redshift = 15
+    metallicity_Zsun = 1.0e-6
     f_H2 = 0.0
-    output_dir = './Grackle_results'
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    output_dir = '/home/zwu/21cm_project/unified_model/debug'
+    # if not os.path.exists(output_dir):
+    #     os.makedirs(output_dir)
     plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2)
     
-    # snapNum = 2
-    # test_TNGhalo_cooling(snapNum)
+
+    # run_constdensity_model(evolve_cooling=False,
+    #     redshift=7.0,
+    #     lognH=-1.72,
+    #     specific_heating_rate=0.0,
+    #     volumetric_heating_rate=0.0,
+    #     temperature=50000,
+    #     gas_metallicity=1.0e-6,
+    #     f_H2=0.0,
+    #     UVB_flag=False,
+    #     Compton_Xray_flag=False,
+    #     dynamic_final_flag=False
+    # )

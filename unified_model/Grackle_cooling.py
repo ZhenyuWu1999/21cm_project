@@ -15,9 +15,7 @@ from Config import simulation_set
 from TNGDataHandler import load_processed_data
 from HaloProperties import get_gas_lognH_analytic, get_gas_lognH_numerical
 
-def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate, 
-                           volumetric_heating_rate, temperature, gas_metallicity, 
-                           f_H2, **kwargs):
+def run_constdensity_model(params: dict, **kwargs):
     '''
     Wrapper function to set up and run constant density chemistry model.
     
@@ -56,11 +54,40 @@ def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate,
 
     '''
     
-    UVB_flag = kwargs.get('UVB_flag', True)
-    Compton_Xray_flag = kwargs.get('Compton_Xray_flag', False)
-    dynamic_final_flag = kwargs.get('dynamic_final_flag', False)
-    final_time = kwargs.get('final_time', 50.0)
-    data_file = kwargs.get('data_file', "CloudyData_UVB=HM2012.h5")
+    required = [
+        "evolve_cooling", "redshift", "lognH",
+        "specific_heating_rate", "volumetric_heating_rate",
+        "temperature", "gas_metallicity", "f_H2"
+    ]
+    missing = [k for k in required if k not in params]
+    if missing:
+        raise ValueError(f"Missing required params: {missing}")
+
+    evolve_cooling          = params["evolve_cooling"]
+    redshift                = params["redshift"]
+    lognH                   = params["lognH"]
+    specific_heating_rate   = params["specific_heating_rate"]
+    volumetric_heating_rate = params["volumetric_heating_rate"]
+    temperature             = params["temperature"]
+    gas_metallicity         = params["gas_metallicity"]
+    f_H2                    = params["f_H2"]
+
+    DEFAULTS = {
+    "UVB_flag": True,
+    "Compton_Xray_flag": False,
+    "dynamic_final_flag": False,
+    "final_time": 50.0,
+    "data_file": "CloudyData_UVB=HM2012.h5",
+    "converge_when_setup": True,
+    }
+
+    opts = {**DEFAULTS, **kwargs}
+    UVB_flag          = opts["UVB_flag"]
+    Compton_Xray_flag = opts["Compton_Xray_flag"]
+    dynamic_final_flag = opts["dynamic_final_flag"]
+    final_time        = opts["final_time"]
+    data_file         = opts["data_file"]
+    converge_when_setup = opts["converge_when_setup"]
 
   
     tiny_number = 1e-20
@@ -136,7 +163,7 @@ def run_constdensity_model(evolve_cooling,redshift,lognH, specific_heating_rate,
         state=state,
         metal_mass_fraction=metal_mass_fraction,
         dust_to_gas_ratio=None,
-        converge=True,
+        converge=converge_when_setup,
         tolerance=0.01,
         max_iterations=max_iterations)
     
@@ -207,9 +234,20 @@ def plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2):
     gas_metallicity = metallicity_Zsun
     data_alldensity = []
     for lognH in lognH_list:
-        data = run_constdensity_model(evolve_cooling,redshift,lognH,specific_heating_rate, 
-                volumetric_heating_rate, temperature, gas_metallicity, f_H2=f_H2,
-                UVB_flag=UVB_flag, Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag)
+        params_for_constdensity = {
+            "evolve_cooling": evolve_cooling,
+            "redshift": redshift,
+            "lognH": lognH,
+            "specific_heating_rate": specific_heating_rate,
+            "volumetric_heating_rate": volumetric_heating_rate,
+            "temperature": temperature,
+            "gas_metallicity": gas_metallicity,
+            "f_H2": f_H2
+        }
+
+        data = run_constdensity_model(params_for_constdensity,
+                UVB_flag=UVB_flag, Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag,
+                converge_when_setup=True)
         data_alldensity.append(data)
 
 
@@ -278,16 +316,3 @@ if __name__ == "__main__":
     #     os.makedirs(output_dir)
     plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2)
     
-
-    # run_constdensity_model(evolve_cooling=False,
-    #     redshift=7.0,
-    #     lognH=-1.72,
-    #     specific_heating_rate=0.0,
-    #     volumetric_heating_rate=0.0,
-    #     temperature=50000,
-    #     gas_metallicity=1.0e-6,
-    #     f_H2=0.0,
-    #     UVB_flag=False,
-    #     Compton_Xray_flag=False,
-    #     dynamic_final_flag=False
-    # )

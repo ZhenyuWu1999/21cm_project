@@ -217,8 +217,8 @@ def get_H2_mass_frac_equilibrium(T, nH, z, J21, self_shielding, ss_model = 'DB98
         else:
             raise ValueError("Invalid self-shielding model. Must be 'DB98' or 'WG11'.")
         k_diss = get_kdiss_Yoshida03(J21, Fshield)
-        print("Rvir_cm = ", Rvir_cm, "cm, nH = ", nH, "cm^-3, N_H2 = ", N_H2, "cm^-2")
-        print("T = ", T, "K, J21 = ", J21, "Fshield = ", Fshield, "k_diss = ", k_diss)
+        # print("Rvir_cm = ", Rvir_cm, "cm, nH = ", nH, "cm^-3, N_H2 = ", N_H2, "cm^-2")
+        # print("T = ", T, "K, J21 = ", J21, "Fshield = ", Fshield, "k_diss = ", k_diss)
     else:
         k_diss = get_kdiss_Yoshida03(J21, 1.0)
     xe = xe_interp_func(z)  
@@ -241,16 +241,17 @@ def get_H2_mass_frac_eq_Agarwal(T, nH, z, J21, spectral_type, self_shielding):
         halo_volume = Mvir * Msun / halo_density
         Rvir = (3 * halo_volume / (4 * np.pi))**(1/3)  # Rvir in m
         Rvir_cm = Rvir * 1e2  # Convert to cm
-        #use WG11
+        #use WG11, debug: NH2
         C = 0.2
         N_H2 = C*fH2_without_LW*nH*Rvir_cm #debug: NH2 and Tgas?
         Fshield = get_ss_factor_WG11(T, N_H2)  # self-shielding factor
-        print(f"T = {T} K, spectral_type = {spectral_type}, J21 = {J21}, Fshield = {Fshield}") 
+        # print(f"T = {T} K, spectral_type = {spectral_type}, J21 = {J21}, Fshield = {Fshield}") 
     else: 
         Fshield = 1.0  # no self-shielding
 
     kform_1 = get_kHM_GP98(T)
     kform_2 =  get_K_Tegmark97(3, T, np.nan) 
+    print("kform_1 = ", kform_1, "kform_2 = ", kform_2)
     k_HM_detach =  1.0e-10 * alpha * J21
     kform_eff = kform_1 * kform_2*nH / (kform_2*nH + k_HM_detach)
     k_H2I_diss = 1.0e-12 * beta * J21 * Fshield
@@ -786,42 +787,51 @@ def plot_fH2_vs_T(z):
 
 
     #plot fH2 vs T
-    T_list = np.logspace(2, np.log10(1.1e4), 50)
-    initial_fH2_list = np.logspace(-6, -1, 50)
+    T_list = np.logspace(2, np.log10(8500), 50)
+    initial_fH2_list = np.logspace(-6, -1, 100)
+
+    target_fH2_list = np.logspace(-6, -1, 100)
+    log_fH2_targets = np.log10(target_fH2_list)
     cooling_rate_for_initial_fH2 = np.zeros(len(initial_fH2_list))
     cooling_timescale_for_initial_fH2 = np.zeros(len(initial_fH2_list))
-    cooling_timescale_all = np.zeros((len(T_list), len(initial_fH2_list)))
-    cooling_rate_all = np.zeros((len(T_list), len(initial_fH2_list)))
     final_fH2_all = np.zeros((len(T_list), len(initial_fH2_list)))
-    # for j, fH2 in enumerate(initial_fH2_list):
+    final_fHM_all = np.zeros((len(T_list), len(initial_fH2_list))) #for debug
+    final_fH2II_all = np.zeros((len(T_list), len(initial_fH2_list))) #for debug
 
-    #     cooling_data = run_constdensity_model(
-    #     False, z, lognH, 0.0, 0.0, 
-    #     T_list, 0.0, f_H2=fH2, UVB_flag=False, 
-    #     Compton_Xray_flag=False, dynamic_final_flag=False)
-    #     cooling_time = cooling_data['cooling_time']
-    #     # print("cooling_time = ", cooling_time.in_units('Myr'))
-    #     cooling_timescale_all[:, j] = cooling_time.in_units('Myr')
-    #     # print("cooling_timescale_all = ", cooling_timescale_all[:,j])
-    #     cooling_rate_all[:, j] = cooling_data['cooling_rate']
+    cooling_timescale_all = np.zeros((len(T_list), len(target_fH2_list)))
+    cooling_rate_all = np.zeros((len(T_list), len(target_fH2_list)))
 
-    #first loop over T_list, then initial_fH2_list for debugging
+    #first loop over T_list, then initial_fH2_list
     for i in range(len(T_list)):
         Tvir = T_list[i]
         print("Tvir = ", Tvir)
         for j in range(len(initial_fH2_list)):
             fH2 = initial_fH2_list[j]
+
+            params_for_constdensity = {
+                "evolve_cooling": False,
+                "redshift": z,
+                "lognH": lognH,
+                "specific_heating_rate": 0.0,
+                "volumetric_heating_rate": 0.0,
+                "temperature": Tvir,
+                "gas_metallicity": 0.0,
+                "f_H2": fH2
+            }
             cooling_data = run_constdensity_model(
-                False, z, lognH, 0.0, 0.0, 
-                Tvir, 0.0, f_H2=fH2, UVB_flag=False, 
-                Compton_Xray_flag=False, dynamic_final_flag=False)
+                params_for_constdensity, UVB_flag=False, 
+                Compton_Xray_flag=False, dynamic_final_flag=False, converge_when_setup=True)
             cooling_time = cooling_data['cooling_time']
             cooling_timescale_for_initial_fH2[j] = cooling_time.in_units('Myr')[0].v
             cooling_rate_for_initial_fH2[j] = cooling_data['cooling_rate'][0].v
             final_fH2_all[i, j] = cooling_data['H2I_density'][0].v/cooling_data['density'][0].v
-
+            final_fHM_all[i, j] = cooling_data['HM_density'][0].v/cooling_data['density'][0].v #for debug
+            final_fH2II_all[i, j] = cooling_data['H2II_density'][0].v/cooling_data['density'][0].v #for debug
         print("final_fH2 = ", final_fH2_all[i, :])
-        print("cooling_timescale_for_initial_fH2 = ", cooling_timescale_for_initial_fH2)
+        # print("final_fHM = ", final_fHM_all[i, :]) #for debug
+        # print("final_fH2II = ", final_fH2II_all[i, :]) #for debug
+        # print("cooling_timescale_for_initial_fH2 = ", cooling_timescale_for_initial_fH2)
+
 
         #interpolate cooling rate and cooling timescale as a function of final fH2
         sorted_indices = np.argsort(final_fH2_all[i, :])
@@ -838,13 +848,13 @@ def plot_fH2_vs_T(z):
         interp_timescale_log = interp1d(x, y_timescale, bounds_error=False, fill_value=np.nan)
         interp_rate_log = interp1d(x, y_rate, bounds_error=False, fill_value=np.nan)
 
-        log_fH2_targets = np.log10(np.array(initial_fH2_list))
         interpolated_timescale = 10 ** interp_timescale_log(log_fH2_targets)
         interpolated_rate = 10 ** interp_rate_log(log_fH2_targets)
         cooling_timescale_all[i, :] = -interpolated_timescale
-        print("interpolated_timescale = ", -interpolated_timescale)
+        # print("interpolated_timescale = ", -interpolated_timescale)
         cooling_rate_all[i, :] = -interpolated_rate
-        print("interpolated_rate = ", -interpolated_rate)
+        # print("interpolated_rate = ", -interpolated_rate)
+
 
 
     # print("cooling_timescale_all = ", cooling_timescale_all)
@@ -860,7 +870,7 @@ def plot_fH2_vs_T(z):
         M_in_Msun = inversefunc_Temperature_Virial_analytic(Tvir, z, mean_molecular_weight=mu_minihalo) #Mvir in Msun
         Mvir = M_in_Msun * h_Hubble #Msun/h
         lgM = np.log10(Mvir)
-        DF_heating = integrate_SHMF_heating_for_single_host(z, -3, 0, lgM, "BestFit_z")
+        DF_heating = integrate_SHMF_heating_for_single_host(z, -3, 0, lgM, "BestFit_z",mean_molecular_weight=mu_minihalo)
         DF_heating_erg = DF_heating * 1.0e7 # erg/s
         halo_density = get_mass_density_analytic(z)
         halo_volume = M_in_Msun * Msun / halo_density
@@ -914,14 +924,14 @@ def plot_fH2_vs_T(z):
     fH2_Yoshida = get_fH2_Yoshida03(T_list)
     fH2_critical_Tegmark = np.array([get_critical_H2abundance_Tegmark(T, z) for T in T_list])
     line_styles = {
-    'tegmark_crit': {'color': 'black', 'linestyle': '-', 'linewidth': 2.5, 
+    'tegmark_crit': {'color': 'darkgreen', 'linestyle': '-', 'linewidth': 2.5, 
                 'label': 'Critical line (Tegmark97)'},
-    'grackle_crit': {'color': 'darkgreen', 'linestyle': '-', 'linewidth': 2, 
+    'grackle_crit': {'color': 'black', 'linestyle': '-', 'linewidth': 2, 
                 'label': 'Critical line (Grackle)'},
-    'grackle_df_crit': {'color': 'darkorange', 'linestyle': '-', 'linewidth': 2, 
+    'grackle_df_crit': {'color': 'orange', 'linestyle': '-', 'linewidth': 2, 
                    'label': 'Critical line with DF heating (Grackle)'},
     'yoshida_H2produced': {'color': 'dimgray', 'linestyle': '--', 'linewidth': 2, 
-                'label': r'H$_2$ produced $\propto$ T$^{1.52}$'},
+                'label': r'H$_2$ $\propto$ T$^{1.52}$ (Yoshida03, z=17)'},
     'zero_netcooling': {'color': 'magenta', 'linestyle': ':', 'linewidth': 2,
                 'label': 'cooling = DF heating'},
     }
@@ -953,24 +963,27 @@ def plot_fH2_vs_T(z):
     cmap=cmap, shading='auto',
     vmin=np.nanmin(masked_lg_cooling_rate), vmax=np.nanmax(masked_lg_cooling_rate)
     )
-    cb = plt.colorbar(c, label=r'log$_{10}$(cooling rate [erg cm$^3$ /s])')  # Add units if known
+    cb = plt.colorbar(c)
+    cb.set_label(r'log$_{10}$(cooling rate [erg cm$^3$ /s])', fontsize=14)
     mask_1e4 = (T_list <= 1e4)
-    ax1.plot(T_list[mask_1e4], fH2_critical_Tegmark[mask_1e4], **line_styles['tegmark_crit'])
+    # ax1.plot(T_list[mask_1e4], fH2_critical_Tegmark[mask_1e4], **line_styles['tegmark_crit'])
     ax1.plot(T_list, fH2_critical, **line_styles['grackle_crit'])
     ax1.plot(T_list, fH2_with_DF_critical, **line_styles['grackle_df_crit'])
     ax1.plot(T_list[mask_1e4], fH2_Yoshida[mask_1e4], **line_styles['yoshida_H2produced'])
-    ax1.plot(T_list, fH2_zero_netcooling, **line_styles['zero_netcooling'])
-    ax1.set_ylim(1e-6, 1e-1)
+    # ax1.plot(T_list, fH2_zero_netcooling, **line_styles['zero_netcooling'])
+    ax1.set_ylim(1e-6, 1e-2)
     ax1.set_xscale('log')
     ax1.set_yscale('log')
     ax1.set_xlabel('Temperature [K]', fontsize=15)
-    ax1.set_ylabel('Molecular Hydrogen Fraction $f_{H_2}$', fontsize=15)
-    legend = ax1.legend(fontsize=11, framealpha=0.5)
+    ax1.set_ylabel('H${_2}$ mass fraction', fontsize=15)
+    legend = ax1.legend(fontsize=14, framealpha=0.5)
     ax2 = add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM_minihalo, lgM_to_Tvir_minihalo)
-    plt.title('Cooling Rate vs Temperature and $f_{H_2}$')
+    # plt.title('Cooling Rate vs Temperature and H${_2}$ mass fraction',fontsize=16)
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f"cooling_rate_vs_T_fH2_z{z}.png"), dpi=300)
-    
+    print(f"Cooling rate plot saved to {os.path.join(output_dir, f'cooling_rate_vs_T_fH2_z{z}.png')}")
+
+    exit()
 
     #2. plot the cooling rate with DF heating
     linthresh = 1e-30  # use linear scale between -linthresh and linthresh, otherwise log scale
@@ -1126,12 +1139,12 @@ def calculate_DF_heating_with_variance(z, lgM, variance_factors):
     heating_dict = {}
     
     if 0 in variance_factors:
-        heating_dict[0] = integrate_SHMF_heating_for_single_host(z, -3, 0, lgM, "BestFit_z")
+        heating_dict[0] = integrate_SHMF_heating_for_single_host(z, -3, 0, lgM, "BestFit_z", mean_molecular_weight=mu_minihalo)
     
     variance_list = [f for f in variance_factors if f != 0]
     if variance_list:
         upper_rates, lower_rates, mean_rate = integrate_SHMF_heating_for_single_host_with_variance(
-            z, -3, 0, lgM, "BestFit_z", variance_list, 'None')
+            z, -3, 0, lgM, "BestFit_z", variance_list, 'None', mean_molecular_weight=mu_minihalo)
         
         for i, factor in enumerate(variance_list):
             heating_dict[factor] = upper_rates[i]      # +nσ
@@ -1173,10 +1186,19 @@ def plot_fH2_vs_T_with_DFvariance(z):
         print("Tvir = ", Tvir)
         for j in range(len(initial_fH2_list)):
             fH2 = initial_fH2_list[j]
+            params_for_constdensity = {
+                "evolve_cooling": False,
+                "redshift": z,
+                "lognH": lognH,
+                "specific_heating_rate": 0.0,
+                "volumetric_heating_rate": 0.0,
+                "temperature": Tvir,
+                "gas_metallicity": 0.0,
+                "f_H2": fH2
+            }
             cooling_data = run_constdensity_model(
-                False, z, lognH, 0.0, 0.0, 
-                Tvir, 0.0, f_H2=fH2, UVB_flag=False, 
-                Compton_Xray_flag=False, dynamic_final_flag=False)
+                params_for_constdensity, UVB_flag=False, 
+                Compton_Xray_flag=False, dynamic_final_flag=False, converge_when_setup=True)
             cooling_time = cooling_data['cooling_time']
             cooling_timescale_for_initial_fH2[j] = cooling_time.in_units('Myr')[0].v
             cooling_rate_for_initial_fH2[j] = cooling_data['cooling_rate'][0].v
@@ -1221,42 +1243,6 @@ def plot_fH2_vs_T_with_DFvariance(z):
     fH2_critical_results = {}
 
 
-    # DF_heating_list = np.zeros(len(T_list))
-    # normalized_heating_list = np.zeros(len(T_list))
-    # for i in range(len(T_list)):
-    #     Tvir = T_list[i]
-    #     M_in_Msun = inversefunc_Temperature_Virial_analytic(Tvir, z, mean_molecular_weight=mu_minihalo) #Mvir in Msun
-    #     Mvir = M_in_Msun * h_Hubble #Msun/h
-    #     lgM = np.log10(Mvir)
-    #     DF_heating = integrate_SHMF_heating_for_single_host(z, -3, 0, lgM, "BestFit_z")
-    #     DF_heating_erg = DF_heating * 1.0e7 # erg/s
-    #     halo_density = get_mass_density_analytic(z)
-    #     halo_volume = M_in_Msun * Msun / halo_density
-    #     halo_volume_cm3 = halo_volume * 1.0e6 # cm^3
-    #     DF_heating_density = DF_heating_erg / halo_volume_cm3 # erg/s/cm^3
-    #     normalized_heating = DF_heating_density/nH**2 # erg/s*cm^3
-
-    #     DF_heating_list[i] = DF_heating_density
-    #     normalized_heating_list[i] = normalized_heating
-    
-    # cooling_rate_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
-    # cooling_timescale_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
-
-    # for i in range(len(T_list)):
-    #     for j in range(len(initial_fH2_list)):
-    #         cooling_rate = cooling_rate_all[i, j]
-    #         cooling_timescale = cooling_timescale_all[i, j]
-            
-    #         if not np.isnan(cooling_rate) and not np.isnan(cooling_timescale):
-    #             energy_density_in_cell = cooling_rate * cooling_timescale
-    #             #debug factor * DF heating
-    #             cooling_rate_with_DF = cooling_rate + normalized_heating_list[i]
-    #             cooling_rate_with_DF_all[i, j] = cooling_rate_with_DF
-
-    #             if cooling_rate_with_DF != 0:
-    #                 cooling_timescale_with_DF = energy_density_in_cell / cooling_rate_with_DF
-    #                 cooling_timescale_with_DF_all[i, j] = cooling_timescale_with_DF
-    
 
     for i in range(len(T_list)):
         Tvir = T_list[i]
@@ -1398,123 +1384,168 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
     print("nH = ", nH)
 
     #plot fH2 vs T
-    T_list = np.logspace(2, np.log10(1.1e4), 50)
-    initial_fH2_list = np.logspace(-6, -1, 50)
-    cooling_rate_for_initial_fH2 = np.zeros(len(initial_fH2_list))
-    cooling_timescale_for_initial_fH2 = np.zeros(len(initial_fH2_list))
-    cooling_timescale_all = np.zeros((len(T_list), len(initial_fH2_list)))
-    cooling_rate_all = np.zeros((len(T_list), len(initial_fH2_list)))
-    final_fH2_all = np.zeros((len(T_list), len(initial_fH2_list)))
 
-    #first loop over T_list, then initial_fH2_list for debugging
-    for i in range(len(T_list)):
-        Tvir = T_list[i]
-        print("Tvir = ", Tvir)
-        for j in range(len(initial_fH2_list)):
-            fH2 = initial_fH2_list[j]
-            cooling_data = run_constdensity_model(
-                False, z, lognH, 0.0, 0.0, 
-                Tvir, 0.0, f_H2=fH2, UVB_flag=False, 
-                Compton_Xray_flag=False, dynamic_final_flag=False)
-            cooling_time = cooling_data['cooling_time']
-            cooling_timescale_for_initial_fH2[j] = cooling_time.in_units('Myr')[0].v
-            cooling_rate_for_initial_fH2[j] = cooling_data['cooling_rate'][0].v
-            final_fH2_all[i, j] = cooling_data['H2I_density'][0].v/cooling_data['density'][0].v
-
-        print("final_fH2 = ", final_fH2_all[i, :])
-        print("cooling_timescale_for_initial_fH2 = ", cooling_timescale_for_initial_fH2)
-
-        #interpolate cooling rate and cooling timescale as a function of final fH2
-        sorted_indices = np.argsort(final_fH2_all[i, :])
-        sorted_final_fH2 = final_fH2_all[i, :][sorted_indices]
-        sorted_cooling_timescales = cooling_timescale_for_initial_fH2[sorted_indices]
-        sorted_cooling_rates = cooling_rate_for_initial_fH2[sorted_indices]
-        valid_mask = (
-            (sorted_cooling_timescales < 0) &
-            (sorted_cooling_rates < 0)
-        )
-        x = np.log10(sorted_final_fH2[valid_mask])
-        y_timescale = np.log10(np.abs(sorted_cooling_timescales[valid_mask]))
-        y_rate = np.log10(np.abs(sorted_cooling_rates[valid_mask]))
-        interp_timescale_log = interp1d(x, y_timescale, bounds_error=False, fill_value=np.nan)
-        interp_rate_log = interp1d(x, y_rate, bounds_error=False, fill_value=np.nan)
-
-        log_fH2_targets = np.log10(np.array(initial_fH2_list))
-        interpolated_timescale = 10 ** interp_timescale_log(log_fH2_targets)
-        interpolated_rate = 10 ** interp_rate_log(log_fH2_targets)
-        cooling_timescale_all[i, :] = -interpolated_timescale
-        print("interpolated_timescale = ", -interpolated_timescale)
-        cooling_rate_all[i, :] = -interpolated_rate
-        print("interpolated_rate = ", -interpolated_rate)
-
-    #include DF heating
-    print("Calculating DF heating and critical fH2 from SHMF sampling...")
-
-    n_samples = 500
-    fH2_critical_all_samples = np.full((n_samples, len(T_list)), np.nan)
-
-    for i in range(len(T_list)):
-        Tvir = T_list[i]
-        M_in_Msun = inversefunc_Temperature_Virial_analytic(Tvir, z, mean_molecular_weight=mu_minihalo)
-        Mvir = M_in_Msun * h_Hubble
-        lgM = np.log10(Mvir)
-        lgx_min = -4
-        lgx_max = 0
-        SHMF_model = "BestFit_z"
-
-        heating_of_samples = integrate_SHMF_heating_for_single_host_PoissonSampling(z, 
-                            lgx_min, lgx_max, lgM, SHMF_model, n_samples, verbose=False)
+    converge_when_setup = False
+    # results_file = os.path.join(output_dir, "critical_fH2_results.npz")
+    results_file = os.path.join(output_dir, "critical_fH2_results_noconverge.npz") #converge_when_setup=False
 
 
-        # convert to normalized heating density
-        halo_density = get_mass_density_analytic(z)
-        halo_volume = M_in_Msun * Msun / halo_density
-        halo_volume_cm3 = halo_volume * 1.0e6
-        DF_heating_erg = heating_of_samples * 1.0e7
-        DF_heating_density = DF_heating_erg / halo_volume_cm3
-        normalized_heating = DF_heating_density / nH**2
+    use_precomputed_results = True
 
+    if os.path.exists(results_file) and use_precomputed_results:
+        print(f"Loading precomputed results from {results_file} ...")
+        data = np.load(results_file)
+        T_list = data['T_list']
+        fH2_critical = data['fH2_critical']
+        fH2_critical_mean = data['fH2_critical_mean']
+        fH2_critical_p16 = data['fH2_critical_p16']
+        fH2_critical_p84 = data['fH2_critical_p84']
+        fH2_critical_p025 = data['fH2_critical_p025']
+        fH2_critical_p975 = data['fH2_critical_p975']
+        fH2_critical_p0015 = data['fH2_critical_p0015']
+        fH2_critical_p9985 = data['fH2_critical_p9985']
+    else:
+        print("Running full calculation...")
 
-        # Calculate critical fH2 for each sample
-        for sample_idx in range(n_samples):
-            current_heating = normalized_heating[sample_idx]
-            
-            cooling_rate_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
-            cooling_timescale_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
-            
-            # Only need to calculate for current temperature i
+        T_list = np.logspace(2, np.log10(8500), 50)
+        initial_fH2_list = np.logspace(-6, -1, 100)
+        target_fH2_list = np.logspace(-6, -1, 100)
+        log_fH2_targets = np.log10(target_fH2_list)
+        cooling_rate_for_initial_fH2 = np.zeros(len(initial_fH2_list))
+        cooling_timescale_for_initial_fH2 = np.zeros(len(initial_fH2_list))
+        final_fH2_all = np.zeros((len(T_list), len(initial_fH2_list)))
+
+        cooling_timescale_all = np.zeros((len(T_list), len(target_fH2_list)))
+        cooling_rate_all = np.zeros((len(T_list), len(target_fH2_list)))
+
+        #first loop over T_list, then initial_fH2_list 
+        for i in range(len(T_list)):
+            Tvir = T_list[i]
+            print("Tvir = ", Tvir)
             for j in range(len(initial_fH2_list)):
-                cooling_rate = cooling_rate_all[i, j]
-                cooling_timescale = cooling_timescale_all[i, j]
+                fH2 = initial_fH2_list[j]
+                params_for_constdensity = {
+                    "evolve_cooling": False,
+                    "redshift": z,
+                    "lognH": lognH,
+                    "specific_heating_rate": 0.0,
+                    "volumetric_heating_rate": 0.0,
+                    "temperature": Tvir,
+                    "gas_metallicity": 0.0,
+                    "f_H2": fH2
+                }
+                cooling_data = run_constdensity_model(
+                    params_for_constdensity, UVB_flag=False, 
+                    Compton_Xray_flag=False, dynamic_final_flag=False, converge_when_setup=converge_when_setup)
+                cooling_time = cooling_data['cooling_time']
+                cooling_timescale_for_initial_fH2[j] = cooling_time.in_units('Myr')[0].v
+                cooling_rate_for_initial_fH2[j] = cooling_data['cooling_rate'][0].v
+                final_fH2_all[i, j] = cooling_data['H2I_density'][0].v/cooling_data['density'][0].v
+
+            print("final_fH2 = ", final_fH2_all[i, :])
+            print("cooling_timescale_for_initial_fH2 = ", cooling_timescale_for_initial_fH2)
+
+            #interpolate cooling rate and cooling timescale as a function of final fH2
+            sorted_indices = np.argsort(final_fH2_all[i, :])
+            sorted_final_fH2 = final_fH2_all[i, :][sorted_indices]
+            sorted_cooling_timescales = cooling_timescale_for_initial_fH2[sorted_indices]
+            sorted_cooling_rates = cooling_rate_for_initial_fH2[sorted_indices]
+            valid_mask = (
+                (sorted_cooling_timescales < 0) &
+                (sorted_cooling_rates < 0)
+            )
+            x = np.log10(sorted_final_fH2[valid_mask])
+            y_timescale = np.log10(np.abs(sorted_cooling_timescales[valid_mask]))
+            y_rate = np.log10(np.abs(sorted_cooling_rates[valid_mask]))
+            interp_timescale_log = interp1d(x, y_timescale, bounds_error=False, fill_value=np.nan)
+            interp_rate_log = interp1d(x, y_rate, bounds_error=False, fill_value=np.nan)
+
+            interpolated_timescale = 10 ** interp_timescale_log(log_fH2_targets)
+            interpolated_rate = 10 ** interp_rate_log(log_fH2_targets)
+            cooling_timescale_all[i, :] = -interpolated_timescale
+            print("interpolated_timescale = ", -interpolated_timescale)
+            cooling_rate_all[i, :] = -interpolated_rate
+            print("interpolated_rate = ", -interpolated_rate)
+
+        #include DF heating
+        print("Calculating DF heating and critical fH2 from SHMF sampling...")
+
+        n_samples = 500
+        fH2_critical_all_samples = np.full((n_samples, len(T_list)), np.nan)
+
+        for i in range(len(T_list)):
+            Tvir = T_list[i]
+            M_in_Msun = inversefunc_Temperature_Virial_analytic(Tvir, z, mean_molecular_weight=mu_minihalo)
+            Mvir = M_in_Msun * h_Hubble
+            lgM = np.log10(Mvir)
+            lgx_min = -4
+            lgx_max = 0
+            SHMF_model = "BestFit_z"
+
+            heating_of_samples = integrate_SHMF_heating_for_single_host_PoissonSampling(z, 
+                                lgx_min, lgx_max, lgM, SHMF_model, n_samples, mean_molecular_weight=mu_minihalo, verbose=False)
+
+
+            # convert to normalized heating density
+            halo_density = get_mass_density_analytic(z)
+            halo_volume = M_in_Msun * Msun / halo_density
+            halo_volume_cm3 = halo_volume * 1.0e6
+            DF_heating_erg = heating_of_samples * 1.0e7
+            DF_heating_density = DF_heating_erg / halo_volume_cm3
+            normalized_heating = DF_heating_density / nH**2
+
+
+            # Calculate critical fH2 for each sample
+            for sample_idx in range(n_samples):
+                current_heating = normalized_heating[sample_idx]
                 
-                if not np.isnan(cooling_rate) and not np.isnan(cooling_timescale):
-                    energy_density_in_cell = cooling_rate * cooling_timescale
-                    cooling_rate_with_DF = cooling_rate + current_heating
-                    cooling_rate_with_DF_all[i, j] = cooling_rate_with_DF
+                cooling_rate_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
+                cooling_timescale_with_DF_all = np.full((len(T_list), len(initial_fH2_list)), np.nan)
+                
+                # Only need to calculate for current temperature i
+                for j in range(len(initial_fH2_list)):
+                    cooling_rate = cooling_rate_all[i, j]
+                    cooling_timescale = cooling_timescale_all[i, j]
                     
-                    if cooling_rate_with_DF != 0:
-                        cooling_timescale_with_DF = energy_density_in_cell / cooling_rate_with_DF
-                        cooling_timescale_with_DF_all[i, j] = cooling_timescale_with_DF
-            
-            # Calculate critical fH2 for current sample at current temperature
-            fH2_critical = find_critical_fH2(cooling_timescale_with_DF_all, initial_fH2_list, T_list, t_Hubble_Myr)
-            fH2_critical_all_samples[sample_idx, i] = fH2_critical[i]  # Only take current temperature value
+                    if not np.isnan(cooling_rate) and not np.isnan(cooling_timescale):
+                        energy_density_in_cell = cooling_rate * cooling_timescale
+                        cooling_rate_with_DF = cooling_rate + current_heating
+                        cooling_rate_with_DF_all[i, j] = cooling_rate_with_DF
+                        
+                        if cooling_rate_with_DF != 0:
+                            cooling_timescale_with_DF = energy_density_in_cell / cooling_rate_with_DF
+                            cooling_timescale_with_DF_all[i, j] = cooling_timescale_with_DF
+                
+                # Calculate critical fH2 for current sample at current temperature
+                fH2_critical = find_critical_fH2(cooling_timescale_with_DF_all, initial_fH2_list, T_list, t_Hubble_Myr)
+                fH2_critical_all_samples[sample_idx, i] = fH2_critical[i]  # Only take current temperature value
 
-    # Statistical analysis
-    fH2_critical_mean = np.mean(fH2_critical_all_samples, axis=0)
-    fH2_critical_std = np.std(fH2_critical_all_samples, axis=0)
-    fH2_critical_median = np.median(fH2_critical_all_samples, axis=0)
-    # 1, 2, 3 sigma equivalent percentiles
-    fH2_critical_p16, fH2_critical_p84 = np.percentile(fH2_critical_all_samples, [16, 84], axis=0)
-    fH2_critical_p025, fH2_critical_p975 = np.percentile(fH2_critical_all_samples, [2.5, 97.5], axis=0)
-    fH2_critical_p0015, fH2_critical_p9985 = np.percentile(fH2_critical_all_samples, [0.15, 99.85], axis=0)
+        # Statistical analysis
+        fH2_critical_mean = np.mean(fH2_critical_all_samples, axis=0)
+        fH2_critical_std = np.std(fH2_critical_all_samples, axis=0)
+        fH2_critical_median = np.median(fH2_critical_all_samples, axis=0)
+        # 1, 2, 3 sigma equivalent percentiles
+        fH2_critical_p16, fH2_critical_p84 = np.percentile(fH2_critical_all_samples, [16, 84], axis=0)
+        fH2_critical_p025, fH2_critical_p975 = np.percentile(fH2_critical_all_samples, [2.5, 97.5], axis=0)
+        fH2_critical_p0015, fH2_critical_p9985 = np.percentile(fH2_critical_all_samples, [0.15, 99.85], axis=0)
+        print("DF heating calculation with random sampling completed.")
 
-    print("DF heating calculation with random sampling completed.")
-
-    fH2_critical = find_critical_fH2(cooling_timescale_all, initial_fH2_list, T_list, t_Hubble_Myr)
+        fH2_critical = find_critical_fH2(cooling_timescale_all, initial_fH2_list, T_list, t_Hubble_Myr)
+        # Save results to file
+        np.savez(results_file,
+            T_list=T_list,
+            fH2_critical=fH2_critical,
+            fH2_critical_mean=fH2_critical_mean,
+            fH2_critical_p16=fH2_critical_p16,
+            fH2_critical_p84=fH2_critical_p84,
+            fH2_critical_p025=fH2_critical_p025,
+            fH2_critical_p975=fH2_critical_p975,
+            fH2_critical_p0015=fH2_critical_p0015,
+            fH2_critical_p9985=fH2_critical_p9985)
+        print(f"Results saved to {results_file}")
 
     #compare with H2 formed (Yoshida model)
-    Tvir_fulllist = np.logspace(np.log10(100), np.log10(8000), 50) 
+    Tvir_fulllist = np.logspace(np.log10(100), np.log10(8500), 50) 
 
     # z_final = 17
     # finalxe_zvir25 = finalxe_intTegmark_allresults[0]
@@ -1522,33 +1553,38 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
     fH2_Yoshida03 = get_fH2_Yoshida03(Tvir_fulllist)
 
 
-    LW_scenarios = [(1, 'T4', True), (1, 'T5', True), (1.0e3, 'T4', True), (1.0e3, 'T5', True)] #(J21, spectral_type, self_shielding)
-    LW_labels = ['LW(J21 = 1, T4, ss)', 'LW(J21 = 1, T5, ss)',
-                    'LW(J21 = 1000, T4, ss)', 'LW(J21 = 1000, T5, ss)']
+    LW_scenarios = [(20, 'T4', True), (1700, 'T5', True), (100, 'T4', True), (15000, 'T5', True)] #(J21, spectral_type, self_shielding)
+    LW_labels = ['LW(J21 =20, T4, ss)', 'LW(J21 = 1700, T5, ss)',
+                    'LW(J21 = 100, T4, ss)', 'LW(J21 = 15000, T5, ss)']
+    # LW_scenarios = [(20, 'T4', True), (1700, 'T5', True), (0.01, 'T4', True), (0.1, 'T5', True)] #(J21, spectral_type, self_shielding)
+    # LW_labels = ['LW(J21 =20, T4, ss)', 'LW(J21 = 1700, T5, ss)',
+    #                 'LW(J21 = 0.01, T4, ss)', 'LW(J21 = 0.1, T5, ss)']
 
     LW_colors = ['green', 'blue', 'green', 'blue']
     LW_linestyles = [':', ':', '-.', '-.']
     fH2_Yoshida03_LW_allresults = np.zeros((len(LW_scenarios), len(Tvir_fulllist)))
     ss_model = "WG11"
     lognH = get_gas_lognH_analytic(z)
-    nH = 10**lognH  
+    # nH = 10**lognH  
+    nH = 1e2
+  
     for i, (J21, spectral_type, self_shielding_flag) in enumerate(LW_scenarios):
         for j, Tvir in enumerate(Tvir_fulllist):
             fH2_Yoshida03_LW_allresults[i, j] = get_H2_mass_frac_eq_Agarwal(Tvir, nH, z, J21, 
                                                 spectral_type, self_shielding_flag)
 
     #LW results should not exceed fH2_Yoshida03(maximum)
-    for i in range(len(LW_scenarios)):
-        fH2_Yoshida03_LW_allresults[i, :] = np.minimum(fH2_Yoshida03_LW_allresults[i, :], fH2_Yoshida03[:])
+    # for i in range(len(LW_scenarios)):
+    #     fH2_Yoshida03_LW_allresults[i, :] = np.minimum(fH2_Yoshida03_LW_allresults[i, :], fH2_Yoshida03[:])
     
 
 
     fig, ax1 = plt.subplots(figsize=(9, 7))
-    ax1.plot(Tvir_fulllist, fH2_Yoshida03, label='Yoshida 2003', color='k', linestyle='-')
+    ax1.plot(Tvir_fulllist, fH2_Yoshida03, label='Yoshida 2003', color='dimgrey', linestyle='--')
     mask = (Tvir_fulllist > 200)
-    for i in range(len(LW_scenarios)):
-        ax1.plot(Tvir_fulllist[mask], fH2_Yoshida03_LW_allresults[i, mask], 
-                 color=LW_colors[i], linestyle=LW_linestyles[i], label =LW_labels[i])
+    # for i in range(len(LW_scenarios)):
+    #     ax1.plot(Tvir_fulllist[mask], fH2_Yoshida03_LW_allresults[i, mask], 
+    #              color=LW_colors[i], linestyle=LW_linestyles[i], label =LW_labels[i])
 
     ax1.plot(T_list, fH2_critical, color = 'k', label='No heating')
     ax1.plot(T_list, fH2_critical_mean, color = 'r', label='Mean DF heating')  
@@ -1558,19 +1594,26 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
                         alpha=0.2, color = 'orange', label='2.5th-97.5th Percentile Range of DF heating')
     ax1.fill_between(T_list, fH2_critical_p0015, fH2_critical_p9985,
                         alpha=0.1, color = 'orange', label='0.15th-99.85th Percentile Range of DF heating')
+    
+    
     ax1.set_xscale('log')
     ax1.set_yscale('log')
+    ax1.set_ylim(top = 1e-2)
     ax1.set_xlabel('Temperature [K]', fontsize=15)
     ax1.set_ylabel('Molecular Hydrogen Fraction $f_{H_2}$', fontsize=15)
     ax1.legend(fontsize=12, loc='best', framealpha=0.5)
     #also add a mass axis on top
     ax2 = add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM_minihalo, lgM_to_Tvir_minihalo)
 
-    plt.title(f'Critical $f_{{H_2}}$ vs Temperature at z = {z} (SHMF Sampling)', fontsize=16)
+    # plt.title(f'Critical $f_{{H_2}}$ vs Temperature at z={z} (SHMF Sampling), nH(LW)={nH}', fontsize=16)
+    plt.title(f'Critical $f_{{H_2}}$ vs Temperature at z={z} (SHMF Sampling), no LW', fontsize=16)
+    
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f"fH2_vs_T_from_SHMF_sampling_z{z}.png"), dpi=300)
-
-
+    # filename = os.path.join(output_dir, f"fH2_vs_T_from_SHMF_sampling_z{z}_nHLW{nH}.png")
+    filename = os.path.join(output_dir, f"fH2_vs_T_from_SHMF_sampling_z{z}_noconverge_noLW.png")
+    
+    plt.savefig(filename, dpi=300)
+    print("plot saved to ", filename)
                 
     
 

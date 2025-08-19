@@ -9,11 +9,9 @@ from pygrackle import \
     chemistry_data, \
     setup_fluid_container    
     
-from physical_constants import kB, eV, Zsun, Mpc, Myr, h_Hubble
+from physical_constants import kB, eV, Zsun, Mpc, Myr, h_Hubble, hydrogen_mass_fraction
 from Grackle_evolve import *
 from Config import simulation_set
-from TNGDataHandler import load_processed_data
-from HaloProperties import get_gas_lognH_analytic, get_gas_lognH_numerical
 
 def run_constdensity_model(params: dict, **kwargs):
     '''
@@ -140,7 +138,7 @@ def run_constdensity_model(params: dict, **kwargs):
     else:
         state = "neutral"
 
-    density = nH * mass_hydrogen_cgs
+    density = nH * mass_hydrogen_cgs/hydrogen_mass_fraction
     
     if gas_metallicity == 0 or np.log10(gas_metallicity)<-8:
         gas_metallicity = 1.0e-8  #cloudy_metals_2008_3D.h5 valid range>1e-6; not important for other files
@@ -213,7 +211,7 @@ def run_constdensity_model(params: dict, **kwargs):
     return data
 
 
-def plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2):
+def plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2, converge_when_setup=True):
     evolve_cooling = False #equilibrium cooling rate
     UVB_flag = False
     Compton_Xray_flag = False
@@ -247,7 +245,7 @@ def plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2):
 
         data = run_constdensity_model(params_for_constdensity,
                 UVB_flag=UVB_flag, Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag,
-                converge_when_setup=True)
+                converge_when_setup = converge_when_setup)
         data_alldensity.append(data)
 
 
@@ -280,6 +278,8 @@ def plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2):
         filename_ext += '_ComptonX'
     if f_H2 > 0:
         filename_ext += f'_fH2_{f_H2:.1e}'
+    if converge_when_setup == False:
+        filename_ext += '_NoConverge'
     
     filename = f'Cooling_rate_z{redshift}_Z{metallicity_Zsun:.1e}Zsun{filename_ext}.png'
     plt.savefig(os.path.join(output_dir, filename), dpi=300)
@@ -310,9 +310,9 @@ if __name__ == "__main__":
     # metallicity_Zsun = 0.3*10**(-0.17*redshift)  # Dekel & Birnboim (2006)
     redshift = 15
     metallicity_Zsun = 1.0e-6
-    f_H2 = 0.0
-    output_dir = '/home/zwu/21cm_project/unified_model/debug'
+    f_H2 = 1.0e-6
+    output_dir = '/home/zwu/21cm_project/unified_model/Grackle_results'
     # if not os.path.exists(output_dir):
     #     os.makedirs(output_dir)
-    plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2)
+    plot_cooling_curve(output_dir, redshift, metallicity_Zsun, f_H2, converge_when_setup=True)
     

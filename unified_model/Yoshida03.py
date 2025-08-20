@@ -1616,6 +1616,127 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
     print("plot saved to ", filename)
                 
     
+#dynamical heating in Yoshida03, Wise19    
+def get_critical_mass_accretion_rate(z, Mhalo, fH2):
+    """
+    Mhalo: [Msun/h]
+    fH2: H2 mass fraction
+    """
+    lgM = np.log10(Mhalo)
+    Tvir = lgM_to_Tvir_minihalo(lgM,z)
+    lognH = get_gas_lognH_analytic(z)
+    nH = 10**lognH
+    params_for_constdensity = {
+        "evolve_cooling": False,
+        "redshift": z,
+        "lognH": lognH,
+        "specific_heating_rate": 0.0,
+        "volumetric_heating_rate": 0.0,
+        "temperature": Tvir,
+        "gas_metallicity": 0.0,
+        "f_H2": fH2
+    }
+    cooling_data = run_constdensity_model(
+        params_for_constdensity, UVB_flag=False, 
+        Compton_Xray_flag=False, dynamic_final_flag=False, converge_when_setup=False)
+    # cooling_time = cooling_data['cooling_time'].in_units('Myr')[0].v
+    # print(cooling_data['cooling_rate'])
+    cooling_rate = cooling_data['cooling_rate'][0].v # [erg*cm^3/s]
+    volumetric_cooling = nH **2 * cooling_rate #[erg/cm^3/s]
+    crit_volumetric_heating = abs(volumetric_cooling)
+
+    #also consider the species equilibrium case, so that atomic cooling is included
+    cooling_data_species_eq = run_constdensity_model(
+        params_for_constdensity, UVB_flag=False, 
+        Compton_Xray_flag=False, dynamic_final_flag=True, converge_when_setup=True)
+    cooling_rate_species_eq = cooling_data_species_eq['cooling_rate'][0].v  # [erg*cm^3/s]
+    volumetric_cooling_species_eq = nH **2 * cooling_rate_species_eq #[erg/cm^3/s]
+    crit_volumetric_heating_species_eq = abs(volumetric_cooling_species_eq)
+
+    crit_volumetric_heating = max(crit_volumetric_heating, crit_volumetric_heating_species_eq)  # [erg/cm^3/s]
+
+    gamma_adiabatic = 5.0/3.0
+    dT_dt_crit = (1.0e-7* crit_volumetric_heating) /nH/kB * (gamma_adiabatic - 1.0) #[K/s]
+    
+    delta_lgM = 1e-3 * lgM
+    dT_dlgM = (lgM_to_Tvir_minihalo(lgM + delta_lgM, z) - lgM_to_Tvir_minihalo(lgM - delta_lgM, z))/ (2.0 * delta_lgM)
+    dT_dM = dT_dlgM / (np.log(10) * Mhalo)  # [K/(Msun/h)]    
+    dM_dT = 1.0 / dT_dM  # [Msun/h/K]
+    dM_dt_crit = dM_dT * dT_dt_crit  # [Msun/h/s]
+    dM_dt_crit_yr = dM_dt_crit * (365.25 * 24 * 3600)  # [Msun/h/yr]
+    Hz = cosmo.Hz(z)/3.086e19  #convert km/s/Mpc to s^(-1)
+    dt_dz = -1/(1+z)/Hz
+    dM_dz_crit = dM_dt_crit * dt_dz  # [Msun/h]
+
+
+    return {
+        # "cooling_time": cooling_time,  # [Myr]
+        # "cooling_rate": cooling_rate,  # [erg*cm^3/s]
+        # "volumetric_cooling": volumetric_cooling,  # [erg/cm^3/s]
+        "dM_dt_crit": abs(dM_dt_crit),  # [Msun/h/s]
+        "dM_dt_crit_yr": abs(dM_dt_crit_yr),  # [Msun/h/yr]
+        "dM_dz_crit": abs(dM_dz_crit)  # [Msun/h]
+    }
+
+def plot_critical_mass_accretion_rate():
+    output_dir = "/home/zwu/21cm_project/unified_model/Analytic_results/Yoshida03"
+    #1. Figure 5 of Yoshida03 (almost the same)
+    
+    z = 18
+    Mhalo_list = np.logspace(5, 7, 50)  # [Msun/h]
+    Tvir_list = np.array([lgM_to_Tvir_minihalo(np.log10(Mhalo), z) for Mhalo in Mhalo_list])
+    fH2_list = np.array([get_fH2_Yoshida03(Tvir) for Tvir in Tvir_list])
+    dM_dz_crit_list = np.array([get_critical_mass_accretion_rate(z, Mhalo, fH2)['dM_dz_crit']
+                                 for Mhalo, fH2 in zip(Mhalo_list, fH2_list)])
+    
+    fig, ax = plt.subplots(figsize=(9, 7))
+    ax.plot(Mhalo_list, dM_dz_crit_list, label=f'z = {z}', color='grey')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_ylim(1e5, 5e6)
+    ax.set_xlabel('Halo Mass [Msun/h]', fontsize=15)
+    ax.set_ylabel('Critical accretion dM/dz [Msun/h]', fontsize=15)
+    ax.legend()
+    plt.tight_layout()
+    filename = os.path.join(output_dir, f"critical_accretion_Yoshida03_z{z}.png")
+    plt.savefig(filename, dpi=300)
+    print("saved critical accretion plot to ", filename)
+    
+
+    #2. Extended Data Figure 1 of Wise19
+    z = 25
+    y_H2_list = np.array([1e-4, 1e-5, 1e-6]) #H2 abundance
+    f_H2_list = 2 * y_H2_list  #H2 mass fraction
+    Mhalo_Msun_list = np.logspace(np.log10(4e5), 8, 50)  # [Msun]
+    Mhalo_list = Mhalo_Msun_list * h_Hubble  # [Msun/h]
+    all_results = []
+    for i, f_H2 in enumerate(f_H2_list):
+        dM_dz_crit_list = []
+        for Mhalo in Mhalo_list:
+            result = get_critical_mass_accretion_rate(z, Mhalo, f_H2)
+            dM_dz_crit_list.append(result['dM_dz_crit'])
+        all_results.append(dM_dz_crit_list)    
+    #convert from [dMsun/h/dz] to [dMsun/dz]
+    all_results = np.array(all_results)  
+    all_results /= h_Hubble 
+
+    colors = ['blue','orange', 'green']
+    fig, ax = plt.subplots(figsize=(9, 7))
+    for i, y_H2 in enumerate(y_H2_list):
+        ax.plot(Mhalo_Msun_list, all_results[i], label=f'n(H2)/nH = {y_H2}', color=colors[i])
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_ylim(1e5, 5e8)
+    ax.set_xlabel('Halo Mass [Msun]', fontsize=15)
+    ax.set_ylabel('Critical accretion dM/dz [Msun]', fontsize=15)
+    ax.legend()
+    plt.title(f'Critical Accretion Rate at z = {z}', fontsize=16)
+    plt.tight_layout()
+    filename = os.path.join(output_dir, f"critical_accretion_Wise19_z{z}.png")
+    plt.savefig(filename, dpi=300)
+    print("saved critical accretion Wise19 plot to ", filename)
+
+
 
 if __name__ == "__main__":
     # compare_Hubble_timescale_and_nH()
@@ -1629,5 +1750,8 @@ if __name__ == "__main__":
     # test_H2_form_diss_timescale()
     # plot_Yoshida03_fH2_vs_Tvir()
     # plot_fH2_vs_T(z = 15)
-    # plot_fH2_vs_T_with_DFvariance(z = 15)
-    plot_fH2_vs_T_from_SHMF_sampling(z = 15)
+    # plot_fH2_vs_T_from_SHMF_sampling(z = 15)
+
+
+    # get_critical_mass_accretion_rate(z=18, Mhalo=1e6, fH2=1e-5)
+    plot_critical_mass_accretion_rate()

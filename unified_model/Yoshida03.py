@@ -1530,12 +1530,19 @@ def _iter_points_for_paper(paper, lgM_to_Tvir_minihalo, fH2_floor=5.0e-6):
             Tvir = lgM_to_Tvir_minihalo(np.log10(M * h_Hubble), z)
 
             # Mass-weighted fH2 over [r_min, r_max] in the store's native radius unit
+            #set floor according to paper
+            if pname == "Latif2014A":
+                fH2_floor = None
+            else:
+                fH2_floor = 5.0e-6
+
             res = latif.mass_weighted_fH2(
                 halo, float(j),
                 r_min=r_min, r_max=r_max,
                 n_samples=1000, fH2_floor=fH2_floor,
                 store=store
             )
+
             yield {
                 "paper":  pname,
                 "marker": marker,
@@ -1817,71 +1824,9 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
     fH2_Yoshida03 = get_fH2_Yoshida03(Tvir_fulllist)
 
 
-    LW_scenarios = [(20, 'T4', True), (1700, 'T5', True), (100, 'T4', True), (15000, 'T5', True)] #(J21, spectral_type, self_shielding)
-    LW_labels = ['LW(J21 =20, T4, ss)', 'LW(J21 = 1700, T5, ss)',
-                    'LW(J21 = 100, T4, ss)', 'LW(J21 = 15000, T5, ss)']
-    # LW_scenarios = [(20, 'T4', True), (1700, 'T5', True), (0.01, 'T4', True), (0.1, 'T5', True)] #(J21, spectral_type, self_shielding)
-    # LW_labels = ['LW(J21 =20, T4, ss)', 'LW(J21 = 1700, T5, ss)',
-    #                 'LW(J21 = 0.01, T4, ss)', 'LW(J21 = 0.1, T5, ss)']
-
-    LW_colors = ['green', 'blue', 'green', 'blue']
-    LW_linestyles = [':', ':', '-.', '-.']
-    fH2_Yoshida03_LW_allresults = np.zeros((len(LW_scenarios), len(Tvir_fulllist)))
-    ss_model = "WG11"
-    lognH = get_gas_lognH_analytic(z)
-    # nH = 10**lognH  
-    nH = 1e2
-  
-    # for i, (J21, spectral_type, self_shielding_flag) in enumerate(LW_scenarios):
-    #     for j, Tvir in enumerate(Tvir_fulllist):
-    #         # fH2_Yoshida03_LW_allresults[i, j] = get_H2_mass_frac_eq_Agarwal(Tvir, nH, z, J21, 
-    #         #                                     spectral_type, self_shielding_flag)
-    #         fH2_Yoshida03_LW_allresults[i, j] = get_H2_mass_frac_eq_fromprofile(
-    #                                             Tvir, z, J21, spectral_type)
-
-    #LW results should not exceed fH2_Yoshida03(maximum)
-    # for i in range(len(LW_scenarios)):
-    #     fH2_Yoshida03_LW_allresults[i, :] = np.minimum(fH2_Yoshida03_LW_allresults[i, :], fH2_Yoshida03[:])
-    
-
-    #add Latif data points
-    #halo 6 J21 = 10 and 1000
-    #J21 = 10: z_collapse = 10.6m M_collapse = 6.7
-    """
-    halo_name = "halo6"
-    j21_val_list = [10,1000]
-    halo6_Tvir_fH2avg = {}
-    for j21_val in j21_val_list:
-        print(f"Calculating mass-weighted fH2 for {halo_name} with J21 = {j21_val} ...")
-        res = mass_weighted_fH2(halo_name, j21_val, r_min_pc=1e-3, r_max_pc=1e3, n_samples=1000, fH2_floor=5e-6)
-        print("Mass-weighted fH2 = ", res['fH2_avg'])
-        M_collapse = Latif2019_data[halo_name][j21_val]['M_collapse_Msun']
-        z_collapse = Latif2019_data[halo_name][j21_val]['z_collapse']
-        Tvir = lgM_to_Tvir_minihalo(np.log10(M_collapse*h_Hubble), z_collapse)
-        print("Tvir = ", Tvir)
-        halo6_Tvir_fH2avg[j21_val] = {'Tvir': Tvir, 'fH2_avg': res['fH2_avg']}
-
-    halo_name = "halo1"
-    j21_val_list = [5,10,50]
-    halo1_Tvir_fH2avg = {}
-    for j21_val in j21_val_list:
-        print(f"Calculating mass-weighted fH2 for {halo_name} with J21 = {j21_val} ...")
-        res = mass_weighted_fH2(halo_name, j21_val, r_min_pc=1e-3, r_max_pc=1e3, n_samples=1000, fH2_floor=5e-6)
-        print("Mass-weighted fH2 = ", res['fH2_avg'])
-        M_collapse = Latif2019_data[halo_name][j21_val]['M_collapse_Msun']
-        z_collapse = Latif2019_data[halo_name][j21_val]['z_collapse']
-        Tvir = lgM_to_Tvir_minihalo(np.log10(M_collapse*h_Hubble), z_collapse)
-        print("Tvir = ", Tvir)
-        halo1_Tvir_fH2avg[j21_val] = {'Tvir': Tvir, 'fH2_avg': res['fH2_avg']}
-    """
-
     fig, ax1 = plt.subplots(figsize=(9, 7))
     ax1.plot(Tvir_fulllist, fH2_Yoshida03, label=r'$f_{H_2} \propto T^{1.52}$ (Yoshida03)', color='dimgrey', linestyle='--')
-    # mask = (Tvir_fulllist > 200)
-    # for i in range(len(LW_scenarios)):
-    #     ax1.plot(Tvir_fulllist[mask], fH2_Yoshida03_LW_allresults[i, mask], 
-    #              color=LW_colors[i], linestyle=LW_linestyles[i], label =LW_labels[i])
-
+ 
     ax1.plot(T_list, fH2_critical, color = 'k', label='No heating')
     ax1.plot(T_list, fH2_critical_mean, color = 'r', label='Mean DF heating')  
     ax1.fill_between(T_list, fH2_critical_p16, fH2_critical_p84, 
@@ -1901,7 +1846,7 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
             ),
         dict(name="Latif2014A",
             store=latif.Latif2014A_data,
-            halos=["haloA","haloB","haloC"],
+            halos=["haloA","haloB","haloC","haloD","haloE"],
             marker="s",
             r_min=1e3,  r_max=2e6),            # AU
         dict(name="Latif2021",
@@ -1920,30 +1865,7 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
         fH2_ylim=(1e-9, 1e-2),
     )
 
-    """
-    # print Latif halo6 points (j21 =10, 1000)
-    z_collapse_halo6_j21_10 = Latif2019_data['halo6'][float(10)]['z_collapse']
-    ax1.scatter(halo6_Tvir_fH2avg[10]['Tvir'], halo6_Tvir_fH2avg[10]['fH2_avg'], 
-                color='purple', marker='^', s=80, label='Latif+ 2019 Halo6, J21=10 (z = %.1f)'%z_collapse_halo6_j21_10)
-    
-    
-    z_collapse_halo6_j21_1000 = Latif2019_data['halo6'][float(1000)]['z_collapse']
-    ax1.scatter(halo6_Tvir_fH2avg[1000]['Tvir'], halo6_Tvir_fH2avg[1000]['fH2_avg'], 
-                color='magenta', marker='^', s=80, label='Latif+ 2019 Halo6, J21=1000 (z = %.1f)'%z_collapse_halo6_j21_1000)
-
-
-    #halo1
-    z_collapse_halo1_j21_5 = Latif2019_data['halo1'][float(5)]['z_collapse']
-    ax1.scatter(halo1_Tvir_fH2avg[5]['Tvir'], halo1_Tvir_fH2avg[5]['fH2_avg'], 
-                color='blue', marker='s', s=80, label='Latif+ 2019 J21=5 (z = %.1f)'%z_collapse_halo1_j21_5) 
-    z_collapse_halo1_j21_10 = Latif2019_data['halo1'][float(10)]['z_collapse']
-    ax1.scatter(halo1_Tvir_fH2avg[10]['Tvir'], halo1_Tvir_fH2avg[10]['fH2_avg'], 
-                color='cyan', marker='s', s=80, label='J21=10 (z = %.1f)'%z_collapse_halo1_j21_10) 
-    z_collapse_halo1_j21_50 = Latif2019_data['halo1'][float(50)]['z_collapse']
-    ax1.scatter(halo1_Tvir_fH2avg[50]['Tvir'], halo1_Tvir_fH2avg[50]['fH2_avg'], 
-                color='green', marker='s', s=80, label='J21=50 (z = %.1f)'%z_collapse_halo1_j21_50)
-    """
-                
+        
     ax1.set_xscale('log')
     ax1.set_yscale('log')
     ax1.set_ylim(top = 1e-2)

@@ -1435,7 +1435,7 @@ def plot_fH2_vs_T_with_DFvariance(z):
     plt.savefig(os.path.join(output_dir, f"fH2_vs_T_with_DFvariance_z{z}_WG11.png"), dpi=300)
 
 
-def _iter_points_for_paper(paper, lgM_to_Tvir_minihalo, fH2_floor=5.0e-6):
+def _iter_points_for_paper(paper, lgM_to_Tvir_minihalo):
     """
     Iterate over data points for a given paper configuration.
 
@@ -1445,7 +1445,8 @@ def _iter_points_for_paper(paper, lgM_to_Tvir_minihalo, fH2_floor=5.0e-6):
     Expected fields in `paper`:
       - 'store' (dict): dataset store (e.g., Latif2019_data).
       - 'halos' (list[str]): halo names to include.
-      - 'r_min', 'r_max' (float): integration limits in the store's native radius unit.
+      - 'r_range_in_R200_unit' (list[float], optional): [r_min, r_max] in units of R200.
+      - 'r_range_in_native_unit' (list[float], optional): [r_min, r_max] in the store's native radius unit.
       - 'marker' (str, optional): Matplotlib marker for this paper (default: 'o').
       - 'name' (str, optional): display name for the paper (default: 'paper').
 
@@ -1458,10 +1459,12 @@ def _iter_points_for_paper(paper, lgM_to_Tvir_minihalo, fH2_floor=5.0e-6):
     """
     store   = paper["store"]
     halos   = paper["halos"]
-    r_min   = paper["r_min"]
-    r_max   = paper["r_max"]
+    r_range_r200 = paper.get("r_range_in_R200_unit", None)
+    r_range_native = paper.get("r_range_in_native_unit", None)
+    Mgas_frac_range = paper.get("Mgas_frac_range", None)
     marker  = paper.get("marker", "o")
     pname   = paper.get("name", "paper")
+    print("pname =", pname)
 
     j21_by_halo       = paper.get("j21_by_halo", None)
     target_z          = paper.get("target_z", None)
@@ -1469,7 +1472,19 @@ def _iter_points_for_paper(paper, lgM_to_Tvir_minihalo, fH2_floor=5.0e-6):
     pick_nearest_to_z = bool(paper.get("pick_nearest_to_z", False))
 
     for halo in halos:
+
+
+
         print(f"collecting halo {halo} data in paper {pname}...")
+        if pname == "Wise2019":
+            j_all = sorted([k for k in store[halo].keys() if isinstance(k, (float, int))])
+        else:
+            j_density = set(store[halo].get("density", {}).keys())
+            j_fh2     = set(store[halo].get("fH2", {}).keys())
+            j_scalar  = {k for k in store[halo].keys() if isinstance(k, (float, int))}
+            j_all     = sorted(j_density & j_fh2 & j_scalar, key=float)
+
+        
         # Candidate J21s: intersection of available density, fH2, and scalar blocks
         j_density = set(store[halo].get("density", {}).keys())
         j_fh2     = set(store[halo].get("fH2",     {}).keys())
@@ -1532,16 +1547,56 @@ def _iter_points_for_paper(paper, lgM_to_Tvir_minihalo, fH2_floor=5.0e-6):
             # Mass-weighted fH2 over [r_min, r_max] in the store's native radius unit
             #set floor according to paper
             if pname == "Latif2014A":
-                fH2_floor = None
+                fH2_floor = 1.0e-8
             else:
-                fH2_floor = 5.0e-6
+                fH2_floor = 1.0e-7
 
-            res = latif.mass_weighted_fH2(
-                halo, float(j),
-                r_min=r_min, r_max=r_max,
-                n_samples=1000, fH2_floor=fH2_floor,
-                store=store
-            )
+            print("pname =", pname)
+            if pname == "Wise2019": #use Mgas integral
+                print("  Using Mgas-weighted fH2...")
+                j_key = float(j)
+                if Mgas_frac_range is not None:
+                    Mgas_min = Mgas_frac_range[0] * M
+                    Mgas_max = Mgas_frac_range[1] * M
+                else:
+                    raise ValueError("Missing Mgas_frac_range in paper config.")
+                res = latif.mass_weighted_fH2_from_fH2_vs_Mgas(
+                    halo=halo, j21=float(j),
+                    M_min=Mgas_min, M_max=Mgas_max,
+                    fH2_floor=fH2_floor, store=store
+                )
+                fH2_extrap = store[halo][j_key].get("fH2_extrap_factor", 0.0)
+                rho_extrap = 0.0  # not used for Wise2019
+                print(f"  (fH2_extrap, rho_extrap) = ({fH2_extrap}, {rho_extrap})")
+
+            else:
+                print("  Using density-weighted fH2...")
+
+                j_key = float(j)
+                r200 = store[halo][j_key].get("R200", None)
+                if r_range_r200 is not None:
+                    if r200 is None:
+                        continue
+                    r_min = r_range_r200[0] * r200
+                    r_max = r_range_r200[1] * r200
+                elif r_range_native is not None:
+                    r_min, r_max = r_range_native
+                else:
+                    raise ValueError("Missing r_range_in_R200_unit or r_range_in_native_unit in paper config.")
+
+        
+                res = latif.mass_weighted_fH2(
+                    halo, float(j),
+                    r_min=r_min, r_max=r_max,
+                    n_samples=1000, fH2_floor=fH2_floor,
+                    store=store
+                )
+
+                fH2_extrap = store[halo][j_key].get("fH2_extrap_factor", 0.0)
+                rho_extrap = store[halo][j_key].get("density_extrap_factor", 0.0)
+                print(f"  (fH2_extrap, rho_extrap) = ({fH2_extrap}, {rho_extrap})")
+
+            formation_mode = store[halo][j_key].get("formation_mode", "PopIII")
 
             yield {
                 "paper":  pname,
@@ -1552,6 +1607,9 @@ def _iter_points_for_paper(paper, lgM_to_Tvir_minihalo, fH2_floor=5.0e-6):
                 "z":      float(z),
                 "Tvir":   float(Tvir),
                 "fH2":    float(res["fH2_avg"]),
+                "fH2_extrap": float(fH2_extrap),
+                "rho_extrap": float(rho_extrap),
+                "formation_mode": formation_mode,
             }
             print(f"  J21={j:.3g}, z={z:.2f}, M={M:.2e} Msun, Tvir={Tvir:.1f} K, fH2={res['fH2_avg']:.3e}")
 
@@ -1565,6 +1623,15 @@ def plot_Tvir_vs_fH2_by_paper(papers,
     rows = []
     for paper in papers:
         rows.extend(list(_iter_points_for_paper(paper, lgM_to_Tvir_minihalo)))
+
+    skip_extrapolated = False
+    if skip_extrapolated:
+        rows = [
+            r for r in rows
+            if r["rho_extrap"] <= 1.0
+            # if r["fH2_extrap"] <= 1.0 and r["rho_extrap"] <= 1.0
+        ]
+
 
     if not rows:
         raise ValueError("No points to plot. Check that stores contain density/fH2 profiles and collapse scalars.")
@@ -1584,17 +1651,41 @@ def plot_Tvir_vs_fH2_by_paper(papers,
     paper_order = [p["name"] for p in papers]
 
     for p_name in paper_order:
+
+        p_name_ext = p_name
+        if p_name == "Latif2019":
+            p_name_ext += " (Trad = 2e4 K)"
+        elif p_name == "Latif2021":
+            p_name_ext += " (Trad = 1e5 K)"
+        elif p_name == "Latif2014A":
+            p_name_ext += " (Trad = 1e4 K)"
+        elif p_name == "Latif2015_2e4K":
+            p_name_ext = "Latif2015 (Trad = 2e4 K)"
+
         sub = [r for r in rows if r["paper"] == p_name]
         if not sub: continue
-        T  = np.array([r["Tvir"] for r in sub])
-        f  = np.array([r["fH2"]  for r in sub])
-        c  = np.array([r["logJ"] for r in sub])
+        DCBH_points = [r for r in sub if r.get("formation_mode") == "DCBH"]
+        PopIII_points = [r for r in sub if r.get("formation_mode") == "PopIII"]
 
-        ax.scatter(T, f,
-                   c=c, cmap=cmap_obj, norm=norm,
-                   marker=paper_to_marker[p_name],
-                   s=80, edgecolor="black", linewidths=0.6, alpha=0.9,
-                   label=p_name)
+        def extract_arrays(rows):
+            return (
+                np.array([r["Tvir"] for r in rows]),
+                np.array([r["fH2"] for r in rows]),
+                np.array([r["logJ"] for r in rows])
+            )
+        # PopIII points (black edge)
+        T_pop, f_pop, c_pop = extract_arrays(PopIII_points)
+        ax.scatter(T_pop, f_pop,
+                c=c_pop, cmap=cmap_obj, norm=norm,
+                marker=paper_to_marker[p_name],
+                s=80, edgecolor="black", linewidths=0.6, alpha=0.9, label=p_name_ext)
+
+        # DCBH candidates (red edge highlight)
+        T_dcbh, f_dcbh, c_dcbh = extract_arrays(DCBH_points)
+        ax.scatter(T_dcbh, f_dcbh,
+                c=c_dcbh, cmap=cmap_obj, norm=norm,
+                marker=paper_to_marker[p_name],
+                s=80, edgecolor="red", linewidths=1.2, alpha=0.9)
 
         # annotate redshifts for points
         if annotate == "all":
@@ -1630,6 +1721,24 @@ def plot_Tvir_vs_fH2_by_paper(papers,
     cbar.set_label(r"$\log_{10} J_{21}$", rotation=90)
 
     # ax.grid(True, which="both", ls="--", lw=0.5, alpha=0.5)
+
+    # Add annotation: PopIII collapse (upward arrow)
+    ax.annotate("Collapse to form PopIII stars",
+                xy=(1e3, 1e-4),          # arrow pointing position
+                xytext=(1e3, 1e-5),     # text position (arrow start)
+                arrowprops=dict(arrowstyle="->", color="black", lw=1.5),
+                fontsize=11,
+                ha="center")
+
+    # Add annotation: Grow to DCBH (right arrow)
+    ax.annotate("Grow to DCBH candidate",
+                xy=(4e3, 1e-7),          # arrow pointing position
+                xytext=(1e3, 1e-7),      # text position (arrow start)
+                arrowprops=dict(arrowstyle="->", color="black", lw=1.5),
+                fontsize=11,
+                va="center")
+
+
     return fig, ax
 
 
@@ -1837,23 +1946,42 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
                         alpha=0.1, color = 'orange', label='0.15/99.85 %')
     
     papers = [
-        dict(name="Latif2019",
-            store=latif.Latif2019_data,
-            halos=["halo1","halo6"],
-            marker="o",
-            r_min=1e-3, r_max=1e3,             # pc
-            # j21_by_halo={"halo6":[10,1000], "halo1":[5,10,50]}
-            ),
         dict(name="Latif2014A",
             store=latif.Latif2014A_data,
             halos=["haloA","haloB","haloC","haloD","haloE"],
             marker="s",
-            r_min=1e3,  r_max=2e6),            # AU
+            r_range_in_R200_unit = [1.0e-5, 1.0], # in units of R200
+            # r_range_in_native_unit = [1.0e3, 2.0e6]       # au
+            # j21_by_halo={"halo6":[10,1000], "halo1":[5,10,50]}
+            ),
+
+        dict(name="Latif2015_2e4K",
+            store=latif.Latif2015_2e4K_data,
+            halos=["haloA","haloB","haloC"],
+            marker="D",
+            r_range_in_R200_unit = [1.0e-5, 1.0], # in units of R200
+            # r_range_in_native_unit = [1.0e3, 2.0e6]       # au
+            ),
+        dict(name="Latif2019",
+            store=latif.Latif2019_data,
+            halos=["halo1","halo6"],
+            marker="o",
+            r_range_in_R200_unit = [1.0e-5, 1.0] # in units of R200
+            # r_range_in_native_unit = [1.0e-3, 1.0e3]       # pc
+            ),
         dict(name="Latif2021",
             store=latif.Latif2021_data,
             halos=["halo1","halo2","halo3","halo4","halo5","halo6"],
             marker="^",
-            r_min=3e-2, r_max=2e2),            # pc
+            r_range_in_R200_unit = [1.0e-5, 1.0], # in units of R200
+            # r_range_in_native_unit = [3e-2, 2e2]      # pc
+            ),
+        dict(name="Wise2019",
+            store=latif.Wise2019_data,   
+            halos=["MMH", "LWH"],      
+            marker="*",                 
+            Mgas_frac_range=[1.0e-5*(Omega_b/Omega_m), (Omega_b/Omega_m)],  
+        ),          
     ]
 
 

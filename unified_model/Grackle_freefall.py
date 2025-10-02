@@ -31,12 +31,12 @@ from pygrackle.utilities.model_tests import \
     get_model_set, \
     model_test_format_version
 
-from HaloProperties import get_gas_lognH_analytic, get_mass_density_analytic
+from HaloProperties import get_mass_density_analytic
 from Analytic_Model import get_heating_per_lgM
 from physical_constants import Msun, h_Hubble
 
 def run_grackle_freefall(redshift,initial_lognH,final_lognH,initial_temperature, 
-                         cooling_temperature, volumetric_heating_rate, LW_J21):
+                         cooling_temperature, volumetric_heating_rate, lg_LW_J21):
 
     # Just run the script as is.
     metallicity = 0.
@@ -60,7 +60,7 @@ def run_grackle_freefall(redshift,initial_lognH,final_lognH,initial_temperature,
         grackle_data_dir, "cloudy_metals_2008_3D.h5")
     print("Using grackle data file: ", my_chemistry.grackle_data_file)
     my_chemistry.use_volumetric_heating_rate = 1
-    my_chemistry.LWbackground_intensity = 10**LW_J21
+    my_chemistry.LWbackground_intensity = 10**lg_LW_J21
 
     # redshift = 0.
 
@@ -101,6 +101,8 @@ def run_grackle_freefall(redshift,initial_lognH,final_lognH,initial_temperature,
     data0 = evolve_constant_density(
         fc, final_temperature=cooling_temperature,
         safety_factor=0.1)
+    #debug: different H2 fractions
+    fc["H2I_density"][:] = fc["density"][:]*1.0e-6
     # print(data0['time'].in_units('Myr'))  
     # print(data0["H2I_density"] / data0["density"])
 
@@ -118,10 +120,10 @@ if __name__ == "__main__":
     # run the free-fall example
 
     redshift = 12.0
-    initial_lognH = get_gas_lognH_analytic(redshift)
-    
+    initial_lognH = 1.0
+
     final_lognH = 12
-    initial_temperature = 50000
+    initial_temperature = 5000
     cooling_temperature = 100
     
     volumetric_heating_rate = 0.0
@@ -141,9 +143,9 @@ if __name__ == "__main__":
         volumetric_heating_rate = volumetric_heating_rate[0]
 
     use_LW_flag = 1
-    LW_J21 = 0
+    lg_LW_J21 = 2
     data0, data = run_grackle_freefall(redshift, initial_lognH, final_lognH, initial_temperature, 
-                                        cooling_temperature, volumetric_heating_rate, LW_J21)
+                                        cooling_temperature, volumetric_heating_rate, lg_LW_J21)
                        
     print(data.keys())    
     """
@@ -156,10 +158,10 @@ if __name__ == "__main__":
     print(data0['time'].in_units('Myr'))
     print(data['time'].in_units('Myr'))
 
-    output_dir = '/home/zwu/21cm_project/unified_model/Grackle_freefall_results'
-    output_name = os.path.join(output_dir, "Grackle_freefall.png")
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    # output_dir = '/home/zwu/21cm_project/unified_model/Grackle_freefall_results'
+    # output_name = os.path.join(output_dir, "Grackle_freefall.png")
+    # if not os.path.exists(output_dir):
+    #     os.makedirs(output_dir)
 
 
     time = data["time"].in_units("Myr")
@@ -168,12 +170,16 @@ if __name__ == "__main__":
     temperature = data["temperature"]
     f_H2 = data["H2I_density"] / density
 
+    # print("mu for data0: ", data0["mean_molecular_weight"])
+    # print("mu for data: ", data["mean_molecular_weight"])
+
     output_dir = '/home/zwu/21cm_project/unified_model/Grackle_freefall_results'
     output_name = f"Grackle_ff_lognH_{initial_lognH:.2e}_Tcool_{cooling_temperature}_z{redshift}"
     if use_DFheating_flag:
-        output_name += "_DFheating_lgM_{lgMhalo}.png"
+        output_name += "_DFheating_lgM_{lgMhalo}"
     if use_LW_flag:
-        output_name += f"_LW_{LW_J21}.png"
+        output_name += f"_LW_{lg_LW_J21}"
+    output_name += ".png"
     output_name = os.path.join(output_dir, output_name)
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)

@@ -21,7 +21,7 @@ from HaloProperties import Vel_Virial_analytic_oldversion
 #output dn/dM in the unit of [(Mpc/h)^(-3) (Msun/h)^(-1)]
 #input M in the unit of Msun/h
 def HMF_Colossus(M, z, model, mdef = None):
-    if model == 'press74' or model == 'sheth99':
+    if model == 'press74' or model == 'sheth99' or model == 'watson13':
         mfunc = mass_function.massFunction(M, z, model = model, q_out = 'M2dndM', mdef = 'fof')
     elif model == 'reed07':
         ps_path = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/analysis/input_spectrum_PLANCK15.txt'
@@ -923,7 +923,7 @@ def test_SHMF_sampling():
     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/TNG50-1/'
     output_dir = os.path.join(base_dir, 'analysis')
 
-    redshift = 15
+    redshift = 12
     SHMF_model = "BestFit_z"
     lgx_min = -4
     lgx_max =  0
@@ -985,7 +985,7 @@ def test_SHMF_sampling():
     ax1.plot(lg_x_bin_centers, mean_cumulative + std_cumulative, 'b--', linewidth=1.5, 
             alpha=0.8)
     ax1.plot(lg_x_bin_centers, mean_cumulative - std_cumulative, 'b--', linewidth=1.5, 
-            alpha=0.8, label='±1σ with Poisson')
+            alpha=0.8, label=r'±1$\sigma$ with Poisson')
     
     ax1.plot(lg_x_bin_centers, theoretical_cumulative, 'r-', linewidth=3,
             label='Theoretical SHMF model', marker='s', markersize=4)
@@ -995,16 +995,19 @@ def test_SHMF_sampling():
             fmt='rs-', linewidth=3, markersize=4, capsize=3, capthick=1,
             label=r'Theoretical ± $\sqrt{N}$', alpha=0.2)
 
-    ax1.set_xlabel('lg(m/M)', fontsize=14)
+    ax1.set_xlabel(r'$\log_{10}$(m/M)', fontsize=14)
     ax1.set_ylabel('N(> m/M)',fontsize=14)
-    ax1.set_title(f'Cumulative SHMF: {n_samples} iterations, mean N={N_mean:.2f}', fontsize=16)
+    # ax1.set_title(f'Cumulative SHMF: {n_samples} iterations, mean N={N_mean:.2f}', fontsize=16)
+    ax1.set_title(f'SHMF sampling: {n_samples} iterations', fontsize=16)
+    ax1.tick_params(direction='in', which='both', labelsize=12)
     ax1.set_yscale('log')
     ax1.set_ylim(bottom=1e-3)
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'SHMF_Poisson_sampling_z_{redshift}.png'), dpi=300)
-
+    filename = os.path.join(output_dir, f'SHMF_Poisson_sampling_z_{redshift}.png')
+    plt.savefig(filename, dpi=300)
+    print(f"Saved figure to {filename}")
 
 
 #----------------------------------- Mass Limits -----------------------------------

@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+from scipy.stats import truncnorm
 import os
 import matplotlib.lines as mlines
 from TNGDataHandler import load_processed_data
@@ -73,6 +74,38 @@ def fit_maxwell_boltzmann(data, bins, range_fit=None, initial_guess=None):
     y_fit = maxwell_boltzmann_pdf(x_fit, popt[0])
     
     return popt, pcov, x_fit, y_fit
+
+
+
+def truncated_gaussian_pdf(x, mu, sigma):
+    """
+    PDF of a Gaussian truncated at x>=0
+    """
+    a, b = (0 - mu) / sigma, np.inf
+    return truncnorm.pdf(x, a, b, loc=mu, scale=sigma)
+
+def fit_truncated_gaussian(data, bins=50, range_fit=None, initial_guess=(1.0, 1.0)):
+    """
+    Fit a truncated Gaussian N(mu, sigma) on [0,inf) to data.
+    Returns (popt, pcov, x_fit, y_fit)
+    """
+    if range_fit is None:
+        range_fit = (np.min(data), np.max(data))
+
+    # histogram
+    hist, bin_edges = np.histogram(data, bins=bins, range=range_fit, density=True)
+    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+    popt, pcov = curve_fit(
+        truncated_gaussian_pdf, bin_centers, hist, p0=initial_guess,
+        bounds=([0, 1e-6], [np.inf, np.inf])  # mu>=0, sigma>0
+    )
+
+    x_fit = np.linspace(range_fit[0], range_fit[1], 200)
+    y_fit = truncated_gaussian_pdf(x_fit, *popt)
+    return popt, pcov, x_fit, y_fit
+
+
     
 def plot_host_halo_properties(data, snapNum, output_dir):
     os.makedirs(output_dir, exist_ok=True)
@@ -176,7 +209,9 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         plt.colorbar(label='Counts')
         plt.xlabel(r'log$_{10}$(M$_{\mathrm{host}}$ [M$_{\odot}$/h])', fontsize=14)
         plt.ylabel(r'log$_{10}$(m$_{\mathrm{sub}}$ [M$_{\odot}$/h])', fontsize=14)
-        plt.savefig(os.path.join(output_dir, f'Mtot_msub_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        filename = os.path.join(output_dir, f'Mtot_msub_snap_{snapNum}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved figure: {filename}")
         plt.close()
         
     # M200 vs subhalo mass
@@ -186,7 +221,9 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         plt.colorbar(label='Counts')
         plt.xlabel(r'log$_{10}$(M$_{200}$ [M$_{\odot}$/h])', fontsize=14)
         plt.ylabel(r'log$_{10}$(m$_{\mathrm{sub}}$ [M$_{\odot}$/h])', fontsize=14)
-        plt.savefig(os.path.join(output_dir, f'M200_msub_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        filename = os.path.join(output_dir, f'M200_msub_snap_{snapNum}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved figure: {filename}")
         plt.close()
     
     # R200 vs subhalo halfmass radius
@@ -201,7 +238,9 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         plt.colorbar(label='Counts')
         plt.xlabel(r'log$_{10}$(R$_{200}$ [kpc])', fontsize=14)
         plt.ylabel(r'log$_{10}$(r$_{\mathrm{sub,halfmass}}$ [kpc])', fontsize=14)
-        plt.savefig(os.path.join(output_dir, f'R200_rsubhalfmass_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        filename = os.path.join(output_dir, f'R200_rsubhalfmass_snap_{snapNum}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved figure: {filename}")
         plt.close()
     
     # R200 vs subhalo Vmax radius
@@ -211,7 +250,9 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         plt.colorbar(label='Counts')
         plt.xlabel(r'log$_{10}$(R$_{200}$ [kpc])', fontsize=14)
         plt.ylabel(r'log$_{10}$(r$_{\mathrm{sub,VmaxRad}}$ [kpc])', fontsize=14)
-        plt.savefig(os.path.join(output_dir, f'R200_subhaloVmaxRad_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        filename = os.path.join(output_dir, f'R200_subhaloVmaxRad_snap_{snapNum}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved figure: {filename}")
         plt.close()
     
     # Free-fall time vs crossing time
@@ -221,7 +262,9 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         plt.colorbar(label='Counts')
         plt.xlabel(r'log$_{10}$(t$_{\mathrm{ff,host}}$ [Myr])', fontsize=14)
         plt.ylabel(r'log$_{10}$(t$_{\mathrm{cross}}$ [Myr])', fontsize=14)
-        plt.savefig(os.path.join(output_dir, f'tff_tcross_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        filename = os.path.join(output_dir, f'tff_tcross_snap_{snapNum}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved figure: {filename}")
         plt.close()
         
     # M200 vs Mach number
@@ -231,7 +274,9 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         plt.colorbar(label='Counts')
         plt.xlabel(r'log$_{10}$(M$_{200}$ [M$_{\odot}$/h])', fontsize=14)
         plt.ylabel(r'$\mathcal{M}$', fontsize=14)
-        plt.savefig(os.path.join(output_dir, f'M200_Mach_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        filename = os.path.join(output_dir, f'M200_Mach_snap_{snapNum}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved figure: {filename}")
         plt.close()
     
     # M200 vs A number
@@ -254,7 +299,9 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         props = dict(boxstyle='round', facecolor='white', alpha=0.5)
         ax.text(0.05, 0.15, textstr, transform=ax.transAxes, fontsize=14,
                 verticalalignment='top', bbox=props)
-        plt.savefig(os.path.join(output_dir, f'M200_Anumber_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        filename = os.path.join(output_dir, f'M200_Anumber_snap_{snapNum}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved figure: {filename}")
         plt.close()
 
     if 'Mach_fit' in fig_options:
@@ -304,9 +351,139 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         plt.xlabel('$\mathcal{M}$', fontsize=14)
         plt.ylabel('Probability Density', fontsize=14)
         plt.legend()
-        plt.savefig(os.path.join(output_dir, f'M200_Mach_bins_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        filename = os.path.join(output_dir, f'M200_Mach_bins_snap_{snapNum}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved figure: {filename}")
         plt.close()
         
+    if 'Mach_fixedhostmass' in fig_options:
+
+        fit_mode = "both"  # "maxwell-boltzmann" | "truncated-gaussian" | "both"
+
+        mach_number_max = 5.0
+        mach_selected_fraction = np.mean(mach_number < mach_number_max)
+
+        logM200_min, logM200_max, step = 7.5, 14.0, 0.5
+        logM200_bins = np.arange(logM200_min, logM200_max + step, step)
+        M200_bins = 10 ** logM200_bins
+        min_count = 50
+
+        # Define output files
+        out_trunc = os.path.join(output_dir, 'best_fit_Mach_truncatedgaussian_fixedhostmass.txt')
+        out_maxwell = os.path.join(output_dir, 'best_fit_Mach_sigma_fixedhostmass.txt')
+
+        # Write headers
+        for fname, mode in [(out_trunc, "truncated-gaussian"), (out_maxwell, "maxwell-boltzmann")]:
+            with open(fname, 'w') as f:
+                f.write(f"threshold Mach number: {mach_number_max}, "
+                        f"fraction of Mach number < {mach_number_max}: {mach_selected_fraction:.3f}\n")
+                if mode == "truncated-gaussian":
+                    f.write("logM200_min, logM200_max, N_sub, Best Fit Mu, Best Fit Sigma\n")
+                else:
+                    f.write("logM200_min, logM200_max, N_sub, Best Fit Sigma\n")
+
+        # === Set up figure ===
+        if fit_mode == "both":
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6), sharey=True, facecolor='w')
+            axes = {"maxwell-boltzmann": ax1, "truncated-gaussian": ax2}
+        else:
+            fig, ax = plt.subplots(figsize=(8, 6), facecolor='w')
+            axes = {fit_mode: ax}
+
+        colors_all = plt.cm.plasma(np.linspace(0, 1, len(M200_bins) - 1))
+
+        # === Loop over bins ===
+        tot_bins = 0
+        for i in range(len(M200_bins) - 1):
+            mask = (host_M200 > M200_bins[i]) & (host_M200 < M200_bins[i + 1]) & (mach_number < mach_number_max)
+            n_in_bin = int(np.sum(mask))
+            if n_in_bin >= min_count:
+                tot_bins += 1
+
+        plot_bin_step = 2
+        # if tot_bins >= 10:
+        #     plot_bin_step = 2 #show less lines in the plot for clarity
+
+
+        for i in range(len(M200_bins) - 1):
+            draw_line = (i % plot_bin_step == 0)
+            mask = ((host_M200 > M200_bins[i]) & (host_M200 < M200_bins[i + 1]) &
+                    (mach_number < mach_number_max))
+            n_in_bin = int(np.sum(mask))
+            if n_in_bin < min_count:
+                continue
+
+            log_lo, log_hi = logM200_bins[i], logM200_bins[i + 1]
+            label = f'{log_lo:.1f}–{log_hi:.1f}'
+            color = colors_all[i]
+
+            for mode in axes.keys():
+                ax = axes[mode]
+                if draw_line:
+                    line = ax.hist(mach_number[mask], bins=50, histtype='step', linewidth=2,
+                            density=True, color=color, label=label)[2][0]
+                if mode == "truncated-gaussian":
+                    try:
+                        popt, pcov, x_fit, y_fit = fit_truncated_gaussian(
+                            data=mach_number[mask],
+                            bins=50,
+                            range_fit=(0, mach_number_max),
+                            initial_guess=(1.0, 1.0)
+                        )
+                        if draw_line:
+                            ax.plot(x_fit, y_fit, '--', color=color)
+                        mu_fit, sigma_fit = popt
+                    except Exception:
+                        mu_fit, sigma_fit = np.nan, np.nan
+                    with open(out_trunc, 'a') as f:
+                        f.write(f"{log_lo:.1f}, {log_hi:.1f}, {n_in_bin}, {mu_fit:.4f}, {sigma_fit:.4f}\n")
+                elif mode == "maxwell-boltzmann":
+                    try:
+                        popt, pcov, x_fit, y_fit = fit_maxwell_boltzmann(
+                            data=mach_number[mask],
+                            bins=50,
+                            range_fit=(0, mach_number_max),
+                            initial_guess=1.0
+                        )
+                        if draw_line:
+                            ax.plot(x_fit, y_fit, '--', color=color)
+                        sigma_fit = popt[0]
+                    except Exception:
+                        sigma_fit = np.nan
+                    with open(out_maxwell, 'a') as f:
+                        f.write(f"{log_lo:.1f}, {log_hi:.1f}, {n_in_bin}, {sigma_fit:.4f}\n")
+
+        # === Final formatting ===
+        for mode, ax in axes.items():
+            ax.set_xlabel(r'$\mathcal{M}$', fontsize=14)
+            ax.set_ylabel('Probability Density', fontsize=14)
+            title = "Maxwell–Boltzmann Fit" if mode == "maxwell-boltzmann" else "Truncated Gaussian Fit"
+            ax.set_title(title, fontsize=14)
+
+        # Common legend on the right panel
+        handles, labels = ax2.get_legend_handles_labels() if fit_mode == "both" else ax.get_legend_handles_labels()
+        if handles:
+            axes[list(axes.keys())[-1]].legend(
+                handles, labels,
+                title=r'$\log_{10}(M_{200}\,[M_\odot/h])$',
+                frameon=True, facecolor='white', edgecolor='black', framealpha=0.95,
+                loc='best'
+            )
+
+        # === Save ===
+        if fit_mode == "both":
+            filename = os.path.join(output_dir, f'M200_Mach_both_fixedhostmass_snap_{snapNum}.png')
+        elif fit_mode == "truncated-gaussian":
+            filename = os.path.join(output_dir, f'M200_Mach_truncatedgaussian_fixedhostmass_snap_{snapNum}.png')
+        elif fit_mode == "maxwell-boltzmann":
+            filename = os.path.join(output_dir, f'M200_Mach_maxwellboltzmann_fixedhostmass_snap_{snapNum}.png')
+
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved figure: {filename}")
+        plt.close()
+
+
+
     if 'dpos_subhaloVmaxRad' in fig_options:
         #plot distance between subhalo and host halo center vs subhalo Vmax radius
         valid_indices = (vmaxrad > 0)
@@ -335,8 +512,202 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         plt.hist(dpos_rhalf_ratio, bins=50, histtype='step', linewidth=2)
         plt.xlabel(r'log$_{10}$(distance/r$_{\mathrm{sub,VmaxRad}}$)', fontsize=14)
         plt.ylabel('Counts', fontsize=14)
-        plt.savefig(os.path.join(output_dir, f'dpos_subhaloVmaxRad_ratio_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+        filename = os.path.join(output_dir, f'dpos_subhaloVmaxRad_ratio_snap_{snapNum}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved figure: {filename}")
+        plt.close()
 
+
+def _host_equal_weights(host_indices):
+    # Each subhalo gets a weight = 1 / (number of subhalos of its host halo)
+    uh, cnt = np.unique(host_indices, return_counts=True)
+    mp = dict(zip(uh, cnt))
+    return np.array([1.0 / mp[i] for i in host_indices], dtype=float)
+
+def _colnorm(H):
+    # Normalize each column of the 2D histogram so that the sum in each X-bin is 1
+    s = H.sum(axis=0, keepdims=True)
+    s[s==0] = 1.0
+    return H / s
+
+
+def plot_conditional_logA(
+    data, snapNum, output_dir,
+    xmode="both",                # "msub" | "psi" | "both"
+    nbins_x=50, nbins_y=50,
+    x_range=None,
+    x_range_msub=None, x_range_psi=None,
+    y_range=None,
+    weight_by_host=True,
+    draw_quantiles=True,
+    draw_A1=True
+):
+    """
+    Plot conditional PDF of log10(A) given X.
+
+    Parameters
+    ----------
+    data : object
+        Processed data with subhalo_data, halo_data, and header.
+    snapNum : int
+        Snapshot number.
+    output_dir : str
+        Directory to save the figure.
+    xmode : str
+        'msub' : X = log10(m_sub)
+        'psi'   : X = log10(psi = m_sub / M_host)
+        'both' : Plot both columns side by side.
+    nbins_x, nbins_y : int
+        Number of bins in X and Y direction.
+    x_range : tuple or None
+        X-axis range when plotting a single mode.
+    x_range_msub, x_range_mu : tuple or None
+        X-axis range for "both" mode (can be set individually).
+    y_range : tuple or None
+        Y-axis range (log10 A).
+    weight_by_host : bool
+        If True, each host halo contributes equal total weight.
+    draw_quantiles : bool
+        If True, overlay 16/50/84% weighted quantiles.
+    draw_A1 : bool
+        If True, draw horizontal line at A = 1 (logA = 0).
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    # ---- Extract data ----
+    host_idx = data.subhalo_data['host_index'].value
+    A = data.subhalo_data['A_number'].value
+    Msub = data.subhalo_data['SubMass'].value
+    M_host = data.halo_data['GroupMass'].value[host_idx]
+    z = data.header['Redshift']
+
+    # Apply validity mask
+    valid = np.isfinite(A) & (A > 0) & np.isfinite(Msub) & (Msub > 0) \
+            & np.isfinite(M_host) & (M_host > 0) & (Msub/M_host < 1)
+    A = A[valid]
+    Msub = Msub[valid]
+    M_host = M_host[valid]
+    host_idx_v = host_idx[valid]
+    logA = np.log10(A)
+
+    # ---- Assign weights ----
+    weights = _host_equal_weights(host_idx_v) if weight_by_host else np.ones_like(logA)
+
+    if y_range is None:
+        y_range = tuple(np.percentile(logA, [0.1, 99.9]))
+
+    # ---- Helper: single-panel plot ----
+    def _plot_single(ax, X, xlabel, x_range, colorbar_label):
+        if x_range is None:
+            x_range = tuple(np.percentile(X, [0.5, 99.5]))
+
+        # Bin edges
+        x_edges = np.linspace(x_range[0], x_range[1], nbins_x + 1)
+        y_edges = np.linspace(y_range[0], y_range[1], nbins_y + 1)
+
+        # 2D histogram (note: histogram2d expects [y, x] order)
+        H, _, _ = np.histogram2d(logA, X, bins=[y_edges, x_edges], weights=weights)
+        Hc = _colnorm(H)
+
+        # Heatmap
+        Xmesh, Ymesh = np.meshgrid(x_edges, y_edges)
+        im = ax.pcolormesh(Xmesh, Ymesh, Hc, shading='auto')
+        plt.colorbar(im, ax=ax, label=colorbar_label)
+
+        # Horizontal line at A=1
+        if draw_A1 and (y_range[0] < 0 < y_range[1]):
+            ax.axhline(0, lw=2, ls=':', color='black', alpha=1.0)
+
+        # Weighted quantiles (16/50/84%)
+        if draw_quantiles:
+            x_bin_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+            q16_vals = np.full(nbins_x, np.nan)
+            q50_vals = np.full(nbins_x, np.nan)
+            q84_vals = np.full(nbins_x, np.nan)
+
+            for j in range(nbins_x):
+                in_bin = (X >= x_edges[j]) & (X < x_edges[j+1])
+                if not np.any(in_bin):
+                    continue
+
+                logA_bin = logA[in_bin]
+                weights_bin = weights[in_bin]
+
+                # Sort values by logA
+                sort_idx = np.argsort(logA_bin)
+                logA_sorted = logA_bin[sort_idx]
+                weights_sorted = weights_bin[sort_idx]
+
+                # Weighted CDF
+                weighted_cdf = np.cumsum(weights_sorted) / np.sum(weights_sorted)
+
+                # Interpolate quantiles
+                q16_vals[j] = np.interp(0.16, weighted_cdf, logA_sorted)
+                q50_vals[j] = np.interp(0.50, weighted_cdf, logA_sorted)
+                q84_vals[j] = np.interp(0.84, weighted_cdf, logA_sorted)
+
+            ax.plot(x_bin_centers, q50_vals, lw=2, color='grey', label='median')
+            ax.plot(x_bin_centers, q16_vals, lw=2, ls='--', color='red', label='16/84%')
+            ax.plot(x_bin_centers, q84_vals, lw=2, ls='--', color='red')
+            ax.legend(frameon=True, facecolor='white', framealpha=1)
+
+        ax.set_xlabel(xlabel, fontsize=14)
+        ax.set_xlim(x_range)
+        ax.set_ylim(y_range)
+        ax.tick_params(axis='both', direction='in')
+
+    # ---- Plot according to xmode ----
+    if xmode == "both":
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=False, facecolor='w')
+
+        _plot_single(
+            axes[0], np.log10(Msub),
+            xlabel=r'$\log_{10}(m_{\rm sub}) [M_{\odot}/h]$',
+            x_range=x_range_msub,
+            colorbar_label=r'$p(\log_{10}\mathcal{A}\mid m_{\rm sub})$'
+        )
+        _plot_single(
+            axes[1], np.log10(Msub / M_host),
+            xlabel=r'$\log_{10}(\psi = m_{\rm sub}/M_{\rm host})$',
+            x_range=x_range_psi,
+            colorbar_label=r'$p(\log_{10}\mathcal{A}\mid \psi)$'
+        )
+
+        axes[0].set_ylabel(r'$\log_{10}\mathcal{A}$',fontsize=14)
+        axes[0].text(0.02, 0.02, f'z = {z:.2f}', transform=axes[0].transAxes,
+                     va='bottom', ha='left', fontsize=12,
+                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.6))
+
+        suffix = "_wWeight" if weight_by_host else "_noWeight"
+        fname = f'cond_logA_both_snap_{snapNum}{suffix}.png'
+
+    else:
+        fig, ax = plt.subplots(figsize=(7, 6), facecolor='w')
+        if xmode == "msub":
+            X = np.log10(Msub)
+            xlabel = r'$\log_{10}(m_{\rm sub}) [M_{\odot}/h]$'
+            colorbar_label = r'$p(\log_{10}\mathcal{A}\mid m_{\rm sub})$'
+        elif xmode == "psi":
+            X = np.log10(Msub / M_host)
+            xlabel = r'$\log_{10}(\psi = m_{\rm sub}/M_{\rm host})$'
+            colorbar_label = r'$p(\log_{10}\mathcal{A}\mid \psi)$'
+        else:
+            raise ValueError("xmode must be 'msub', 'psi' or 'both'")
+
+        _plot_single(ax, X, xlabel, x_range, colorbar_label=colorbar_label)
+        ax.set_ylabel(r'$\log_{10}\mathcal{A}$', fontsize=14)
+        ax.text(0.02, 0.02, f'z = {z:.2f}', transform=ax.transAxes,
+                va='bottom', ha='left', fontsize=12,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.6))
+
+        suffix = "_wWeight" if weight_by_host else "_noWeight"
+        fname = f'cond_logA_{xmode}_snap_{snapNum}{suffix}.png'
+
+    out = os.path.join(output_dir, fname)
+    plt.tight_layout()
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    print(f"[Saved] {out}")
+    plt.close() 
 
 
 def compare_mach_numbers(simulation_set, snapNums):
@@ -412,12 +783,175 @@ def compare_mach_numbers(simulation_set, snapNums):
 
 
 
+def plot_sigma_vs_hostmass_over_snaps(
+    snapNum_list,
+    base_dir,
+    simulation_set,
+    *,
+    filename_txt='best_fit_Mach_sigma_fixedhostmass.txt',
+    output_png='bestfit_sigma_vs_hostmass_over_snaps.png',
+    min_count_for_plot=0,        
+    cmap_name='plasma'            
+):
+    """
+    Aggregate best-fit Maxwell sigma from multiple snapshots and overplot
+    sigma vs host mass bin (log10 M200). Handles missing bins at high-z.
+
+    Expects per-snapshot text files with rows:
+        logM200_min, logM200_max, N_sub, sigma
+
+    Parameters
+    ----------
+    snapNum_list : list[int]
+    base_dir : str
+    simulation_set : str
+    filename_txt : str
+        File name saved by 'Mach_fixedhostmass' in each snapshot's analysis dir.
+    output_png : str
+        Output image file name (saved under base_dir/simulation_set).
+    min_count_for_plot : int
+        If >0, bins with N_sub < this threshold are skipped (extra safety).
+    cmap_name : str
+        Matplotlib colormap for coloring different redshifts.
+    """
+
+    # Helper: get redshift from processed file header
+    def _read_redshift(sim_set, snap):
+        try:
+            processed_file = os.path.join(
+                base_dir, sim_set, f'snap_{snap}', f'processed_halos_snap_{snap}.h5'
+            )
+            # lightweight read: if you already have load_processed_data, you can reuse it directly
+            data = load_processed_data(processed_file)
+            return float(data.header['Redshift'])
+        except Exception:
+            return np.nan
+
+    # collect data series
+    series = []  # list of dict: {'snap':..., 'z':..., 'logM_center': np.array, 'sigma': np.array}
+
+    for snap in snapNum_list:
+        txt_path = os.path.join(
+            base_dir, simulation_set, f'snap_{snap}', 'analysis', filename_txt
+        )
+        if not os.path.exists(txt_path):
+            print(f"[warn] file not found, skip: {txt_path}")
+            continue
+
+        # read redshift
+        z = _read_redshift(simulation_set, snap)
+
+        logM_centers, sigmas = [], []
+        with open(txt_path, 'r') as f:
+            lines = f.readlines()
+
+        # skip header lines
+        for line in lines[2:]:
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) < 4:
+                continue
+            try:
+                log_lo = float(parts[0])
+                log_hi = float(parts[1])
+                n_sub  = int(float(parts[2]))   
+                sigma  = float(parts[3])
+            except ValueError:
+                continue
+
+            if not np.isfinite(sigma):
+                continue
+            if min_count_for_plot > 0 and n_sub < min_count_for_plot:
+                continue
+
+            logM_centers.append(0.5 * (log_lo + log_hi))
+            sigmas.append(sigma)
+
+        if len(logM_centers) == 0:
+            print(f"[info] no valid bins after filtering for snap {snap} (z={z:.2f}).")
+            continue
+
+        # sort (by x-axis)
+        order = np.argsort(logM_centers)
+        series.append({
+            'snap': snap,
+            'z': z,
+            'logM_center': np.array(logM_centers)[order],
+            'sigma': np.array(sigmas)[order],
+        })
+
+    if not series:
+        print("[error] No data to plot.")
+        return
+
+    # sort series by redshift (nan last)
+    series.sort(key=lambda d: (np.isnan(d['z']), d['z']), reverse=True)
+
+    #prepare color map
+    zs = np.array([d['z'] for d in series if np.isfinite(d['z'])])
+    if len(zs) == 0:
+        zs = np.array([0.0])
+    zmin, zmax = np.min(zs), np.max(zs)
+    if zmin == zmax:
+        zmin = zmax - 1e-6  # avoid div0
+    cmap = plt.get_cmap(cmap_name)
+
+    fig = plt.figure(figsize=(8.6, 6.4), facecolor='w')
+    ax = plt.gca()
+
+    handles, labels = [], []
+    for d in series:
+        z = d['z']
+        # color & label
+        if np.isfinite(z):
+            t = (z - zmin) / (zmax - zmin)
+            color = cmap(t)
+            label = f"z={z:.2f} (snap {d['snap']})"
+        else:
+            color = 'gray'
+            label = f"snap {d['snap']}"
+
+        h = ax.plot(
+            d['logM_center'], d['sigma'],
+            marker='o', ms=3.5, lw=1.7, color=color
+        )[0]
+        handles.append(h)
+        labels.append(label)
+
+    ax.set_xlabel(r'$\log_{10}(M_{200}\,[M_\odot/h])$', fontsize=13)
+    ax.set_ylabel(r'Best-fit $\sigma$ (Maxwell)', fontsize=13)
+    ax.tick_params(axis='both', direction='in')
+
+    leg = ax.legend(handles, labels, title='Snapshots',
+                    frameon=True, facecolor='white', edgecolor='black', framealpha=0.95,
+                    loc='best')
+    try:
+        leg._legend_box.align = "left"
+    except Exception:
+        pass
+
+    # optional: colorbar for redshift
+    if np.isfinite(zmin) and np.isfinite(zmax) and (zmax > zmin):
+        import matplotlib as mpl
+        norm = mpl.colors.Normalize(vmin=zmin, vmax=zmax)
+        sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+        cbar = plt.colorbar(sm, ax=ax, pad=0.01)
+        cbar.set_label('Redshift z')
+
+    # save figure
+    outdir = os.path.join(base_dir, simulation_set)
+    os.makedirs(outdir, exist_ok=True)
+    outpath = os.path.join(outdir, output_png)
+    plt.savefig(outpath, dpi=300, bbox_inches='tight')
+    print(f"Saved figure: {outpath}")
+    plt.close()
+
+
+
 if __name__ == '__main__':
     simulation_set = 'TNG50-1'
-    
-    snapNum_list = [0, 1, 2, 3, 4, 6, 8, 11, 13,
-                    17,21,25,33,40,50,59,67,72,78,84,91,99]
 
+    # snapNum_list = [0, 1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 40, 50, 59, 67, 72, 78, 84, 91, 99]
+    snapNum_list = [2, 13, 99]
     
     for snapNum in snapNum_list:
         print(f"Processing snapshot {snapNum} ...")
@@ -429,11 +963,19 @@ if __name__ == '__main__':
         output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
         # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass', 
         # 'R200_subhaloVmaxRad', 'tff_tcross', 'M200_Mach', 'M200_Anumber', 'Mach_fit']
-        fig_options_2Dhistogram = ['M200_Anumber']
+        fig_options_2Dhistogram = ['Mach_fixedhostmass']
         plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
         # plot_host_halo_properties(data, snapNum, output_dir)
-    
+        # plot_conditional_logA(data, snapNum, output_dir, xmode="both", weight_by_host=False)
+
     # snapNum_list = [1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 50, 99]
     # # Compare Mach numbers across snapshots
     # compare_mach_numbers(simulation_set, snapNum_list)
 
+    # plot_sigma_vs_hostmass_over_snaps(
+    # snapNum_list=snapNum_list,
+    # base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+    # simulation_set=simulation_set,
+    # min_count_for_plot=0,         
+    # output_png='bestfit_sigma_vs_hostmass_over_snaps.png'
+    # )

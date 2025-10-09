@@ -355,6 +355,7 @@ def plot_Mratio_dN_dlogMratio():
 
     # Loop over mass bins
     for i in range(num_M_bins):
+        print(f"lg mass range: [{logM_bins[i]:.2f}, {logM_bins[i+1]:.2f}]")
         mask = (host_logM >= logM_bins[i]) & (host_logM < logM_bins[i+1])
         sub_host_Mratio_list_old.append(mass_ratios[mask])
         unique_host_indices = np.unique(host_indices[mask])
@@ -504,6 +505,7 @@ def plot_Mratio_dN_dlogMratio():
         plt.plot(bins[:-1][resolved_mask], one_sigma_lower[resolved_mask], linestyle='--', color=colors[i], alpha=0.7, linewidth=1)
 
         plt.axvline(np.log10(critical_ratio_list[i]), color=colors[i], linestyle='--', alpha=0.8)
+    
     plt.plot(bins[:-1], cumulative_bestfit, linestyle='-', color='black', label='BestFit')
     ax.set_xlabel(r'$\lg(\psi)$, $\psi = m/M$', fontsize=14)
     ax.set_ylabel(r'$N(>\psi)$', fontsize=14)

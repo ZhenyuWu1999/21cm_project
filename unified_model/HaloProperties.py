@@ -9,6 +9,15 @@ def Vel_Virial_analytic_oldversion(M_vir_in_Msun, z):  #van den Bosch Lecture 11
     V_vir = 163*1e3 * (M_vir_in_Msun/1e12*h_Hubble)**(1/3) * (Delta_vir/200)**(1/6) * Omega_m**(1/6) *(1+z)**(1/2)
     return V_vir #m/s
 
+def get_Rvir_analytic(M_vir_in_Msun, z):
+    #M_vir in solar mass, return virial radius 
+    #use Crit200 definition
+    #return R_vir in Mpc
+    rho_halo = 200 * Omega_m* rho_crit_z0_kgm3 * (1+z)**3
+    R_vir = (3*M_vir_in_Msun*Msun/(4*np.pi*rho_halo))**(1/3)
+    R_vir_Mpc = R_vir/Mpc
+    return R_vir_Mpc
+
 def Vel_Virial_analytic(M_vir_in_Msun, z):
     #M_vir in solar mass, return virial velocity in m/s
     #use Crit200 definition
@@ -109,8 +118,11 @@ def get_gas_lognH_numerical(M_vir_in_Msun, R_vir_Mpc):
 
 if __name__ == "__main__":
     # Test the functions
-    z = 2
+    z = 8
     lognH = get_gas_lognH_analytic(z)
     nH = 10**lognH
     mass_density = get_mass_density_analytic(z)
     print(f"z = {z}, lognH = {lognH}, nH = {nH} cm^-3, mass_density = {mass_density} kg/m^3")
+    Mhalo = 1e9
+    Tvir = Temperature_Virial_analytic(Mhalo, z, mean_molecular_weight=0.6)
+    print(f"Virial Temperature for Mhalo = {Mhalo} Msun at z = {z} is {Tvir} K")

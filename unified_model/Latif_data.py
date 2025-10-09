@@ -8,11 +8,14 @@
 # }
 
 import numpy as np
+from scipy.integrate import cumulative_trapezoid
 from collections import defaultdict
 from physical_constants import Omega_b, Omega_m
 import matplotlib.pyplot as plt
 import os
 import copy
+
+
 from HaloProperties import get_Rvir_analytic
 
 PC_TO_CM = 3.085677581e18
@@ -312,6 +315,7 @@ for j21, m_collapse, z_collapse in Latif2014A_haloA:
     set_scalar_in(Latif2014A_data, "haloA", j21, "M_collapse_Msun", m_collapse)
     set_scalar_in(Latif2014A_data, "haloA", j21, "z_collapse", z_collapse)
 add_R200_for_all_LW(Latif2014A_data, "haloA", unit="au")
+set_meta_in(Latif2014A_data, "haloA", 600.0, "formation_mode", "boundary")
 set_meta_in(Latif2014A_data, "haloA", 700.0, "formation_mode", "DCBH")
 
 Latif2014A_haloB = np.array([[600.0, 2.3e7, 12.98],
@@ -323,6 +327,7 @@ for j21, m_collapse, z_collapse in Latif2014A_haloB:
     set_scalar_in(Latif2014A_data, "haloB", j21, "M_collapse_Msun", m_collapse)
     set_scalar_in(Latif2014A_data, "haloB", j21, "z_collapse", z_collapse)
 add_R200_for_all_LW(Latif2014A_data, "haloB", unit="au")
+set_meta_in(Latif2014A_data, "haloB", 1500.0, "formation_mode", "boundary")
 set_meta_in(Latif2014A_data, "haloB", 2000.0, "formation_mode", "DCBH")
 
 Latif2014A_haloC = np.array([[600.0, 3.22e7, 11.20],
@@ -332,6 +337,7 @@ for j21, m_collapse, z_collapse in Latif2014A_haloC:
     set_scalar_in(Latif2014A_data, "haloC", j21, "M_collapse_Msun", m_collapse)
     set_scalar_in(Latif2014A_data, "haloC", j21, "z_collapse", z_collapse)
 add_R200_for_all_LW(Latif2014A_data, "haloC", unit="au")
+set_meta_in(Latif2014A_data, "haloC", 700.0, "formation_mode", "boundary")
 set_meta_in(Latif2014A_data, "haloC", 900.0, "formation_mode", "DCBH")
 
 Latif2014A_haloD = np.array([[300.0, 4.06e7, 13.29],
@@ -342,6 +348,7 @@ for j21, m_collapse, z_collapse in Latif2014A_haloD:
     set_scalar_in(Latif2014A_data, "haloD", j21, "M_collapse_Msun", m_collapse)
     set_scalar_in(Latif2014A_data, "haloD", j21, "z_collapse", z_collapse)
 add_R200_for_all_LW(Latif2014A_data, "haloD", unit="au")
+set_meta_in(Latif2014A_data, "haloD", 400.0, "formation_mode", "boundary")
 set_meta_in(Latif2014A_data, "haloD", 500.0, "formation_mode", "DCBH")
 set_meta_in(Latif2014A_data, "haloD", 600.0, "formation_mode", "DCBH")
 
@@ -353,6 +360,7 @@ for j21, m_collapse, z_collapse in Latif2014A_haloE:
     set_scalar_in(Latif2014A_data, "haloE", j21, "M_collapse_Msun", m_collapse)
     set_scalar_in(Latif2014A_data, "haloE", j21, "z_collapse", z_collapse)
 add_R200_for_all_LW(Latif2014A_data, "haloE", unit="au")
+set_meta_in(Latif2014A_data, "haloE", 500.0, "formation_mode", "boundary")
 set_meta_in(Latif2014A_data, "haloE", 600.0, "formation_mode", "DCBH")
 
 
@@ -612,17 +620,31 @@ add_profile_to(Latif2021_data, "halo6", 500.0, "fH2", x, fH2, r_unit="pc", y_uni
 Latif2015_2e4K_haloA = np.array([20000.0, 5.6e7, 10.59])
 set_scalar_in(Latif2015_2e4K_data, "haloA", 20000.0, "M_collapse_Msun", 5.6e7)
 set_scalar_in(Latif2015_2e4K_data, "haloA", 20000.0, "z_collapse", 10.59)
+#temporarily use the same M_collapse and z_collapse for other J21 values
+set_scalar_in(Latif2015_2e4K_data, "haloA", 10000.0, "M_collapse_Msun", 5.6e7)
+set_scalar_in(Latif2015_2e4K_data, "haloA", 10000.0, "z_collapse", 10.59)
+
 add_R200_for_all_LW(Latif2015_2e4K_data, "haloA", unit="au")
+set_meta_in(Latif2015_2e4K_data, "haloA", 20000.0, "formation_mode", "boundary")
 
 Latif2015_2e4K_haloB = np.array([40000.0, 4.06e7, 13.23])
 set_scalar_in(Latif2015_2e4K_data, "haloB", 40000.0, "M_collapse_Msun", 4.06e7)
 set_scalar_in(Latif2015_2e4K_data, "haloB", 40000.0, "z_collapse", 13.23)
+#temporarily use the same M_collapse and z_collapse for other J21 values
+set_scalar_in(Latif2015_2e4K_data, "haloB", 30000.0, "M_collapse_Msun", 4.06e7)
+set_scalar_in(Latif2015_2e4K_data, "haloB", 30000.0, "z_collapse", 13.23)
+
 add_R200_for_all_LW(Latif2015_2e4K_data, "haloB", unit="au")
+set_meta_in(Latif2015_2e4K_data, "haloB", 40000.0, "formation_mode", "boundary")
 
 Latif2015_2e4K_haloC = np.array([50000.0, 3.25e7, 11.13])
 set_scalar_in(Latif2015_2e4K_data, "haloC", 50000.0, "M_collapse_Msun", 3.25e7)
 set_scalar_in(Latif2015_2e4K_data, "haloC", 50000.0, "z_collapse", 11.13)
+#temporarily use the same M_collapse and z_collapse for other J21 values
+set_scalar_in(Latif2015_2e4K_data, "haloC", 40000.0, "M_collapse_Msun", 3.25e7)
+set_scalar_in(Latif2015_2e4K_data, "haloC", 40000.0, "z_collapse", 11.13)
 add_R200_for_all_LW(Latif2015_2e4K_data, "haloC", unit="au")
+set_meta_in(Latif2015_2e4K_data, "haloC", 50000.0, "formation_mode", "boundary")
 
 #profiles for haloA
 r20000 = [1096.32742, 1986.43031, 3763.2164, 7982.60955, 16783.51778, 33861.32634, 75150.10554, 174269.30205, 346975.80591, 714153.54851, 1252391.92565, 1755529.26728]
@@ -633,6 +655,15 @@ r20000 = [1217.94089, 2468.61564, 6401.12668, 19281.2546, 36870.09681, 63901.981
 fH2_20000 = 1.0e-8 * np.array([86379.2523, 89427.63759, 73735.11415, 55218.46476, 26982.32005, 3924.11488, 923.80311, 133.11012, 5.47083, 0.9598, 0.81451, 0.40845])
 add_profile_to(Latif2015_2e4K_data, "haloA", 20000.0, "fH2", r20000, fH2_20000, r_unit="au", y_unit=None)
 
+
+r10000 = [1213.61851, 2640.0549, 5549.60304, 12455.40983, 26362.30279, 41901.65009, 94739.81659, 224556.20129, 509868.3727, 845321.51369, 1399999.46282, 1825836.35844]
+rho10000 =  1.0e-24* np.array([11765878.5255, 6858566.71447, 5727069.40509, 2709929.76295, 2600435.33929, 994711.25451, 425816.12992, 189623.21456, 64054.65041, 19403.09606, 4759.75328, 2149.78529])
+add_profile_to(Latif2015_2e4K_data, "haloA", 10000.0, "density", r10000, rho10000, r_unit="au", y_unit="g/cm^3")
+
+r10000 = [1258.32773, 2699.68452, 7243.2512, 15328.33413, 32639.90261, 59807.13231, 109832.52824, 219034.88575, 338903.16031, 446660.02433, 589067.39654, 773197.71004, 944110.68925, 1361246.43465, 1760076.81594]
+fH2_10000 = 1.0e-8* np.array([152425.14605, 162055.46699, 170362.91137, 103744.2989, 54832.47995, 19313.73757, 8276.32197, 2234.00796, 2069.56513, 369.74408, 62.46802, 10.26317, 1.43648, 0.36596, 0.29569])   
+add_profile_to(Latif2015_2e4K_data, "haloA", 10000.0, "fH2", r10000, fH2_10000, r_unit="au", y_unit=None)
+
 #profiles for haloB
 r40000 = [1189.06003, 2156.14997, 4775.54579, 12436.64359, 41942.68053, 112298.99636, 222029.02245, 360304.14546, 691144.90689, 1083124.59622, 1846330.79569]
 rho40000 = 1.0e-24 * np.array([27066411.31653, 14001621.17421, 9463186.62632, 3869906.74758, 2937328.13012, 1732155.6758, 521188.24268, 149314.57912, 32507.32981, 8019.543, 2408.67407])
@@ -641,6 +672,14 @@ add_profile_to(Latif2015_2e4K_data, "haloB", 40000.0, "density", r40000, rho4000
 r40000 = [1143.94443, 2583.0467, 7277.0816, 12834.02805, 22257.63187, 30991.98444, 34818.88991, 39977.06175, 45099.31245, 61015.98204, 71127.09318, 82308.45949, 158903.68327, 425742.98628, 776070.82409, 1281011.44507, 1773518.25068]
 fH2_40000 = 1.0e-8 * np.array([256571.80105, 182682.35586, 108372.12947, 34811.78364, 2370.10828, 140.96195, 13.65107, 51.05621, 225.52931, 59.83152, 5.44069, 0.70407, 0.34277, 0.5554, 0.63704, 0.20553, 0.11167])
 add_profile_to(Latif2015_2e4K_data, "haloB", 40000.0, "fH2", r40000, fH2_40000, r_unit="au", y_unit=None)
+
+r30000 = [1134.30928, 2066.93907, 4309.2271, 7970.98338, 13242.8419, 22307.57546, 49312.91152, 89127.7332, 152144.85858, 311815.77468, 576325.23814, 1016855.92706, 1783054.6393]
+rho30000 = 1.0e-24 * np.array([19553782.90317, 14165547.74028, 14523854.19595, 8433302.43596, 4885176.72149, 3130931.10737, 2370228.048, 2491650.64484, 1141827.27612, 185125.98825, 36610.51495, 9201.06938, 1678.21752])
+add_profile_to(Latif2015_2e4K_data, "haloB", 30000.0, "density", r30000, rho30000, r_unit="au", y_unit="g/cm^3")
+
+r30000 = [1075.12924, 1898.79826, 3744.3758, 6602.46544, 11691.67387, 17301.62946, 32389.21788, 50569.58261, 85565.00267, 118745.80216, 180831.69814, 238016.00714, 284024.87766, 307518.27551, 349568.36504, 412353.20535, 636760.03726, 772553.47588, 1142940.50563, 1710306.87729]
+fH2_30000 = 1.0e-8 * np.array([185825.86626, 175317.80034, 119007.65866, 74337.73164, 62334.9379, 24227.06545, 15148.16695, 7456.53471, 3863.8479, 3863.8479, 2128.42222, 546.36066, 147.28038, 22.33485, 4.54016, 1.19489, 0.96823, 0.83895, 0.28981, 0.1314])
+add_profile_to(Latif2015_2e4K_data, "haloB", 30000.0, "fH2", r30000, fH2_30000, r_unit="au", y_unit=None)   
 
 #profiles for haloC
 r50000 = [1145.30589, 2321.46004, 5290.32625, 11271.26509, 38142.10854, 83430.17401, 168348.9076, 291278.3967, 499790.80477, 800899.06511, 1300499.37432, 1740993.32333]
@@ -651,6 +690,13 @@ r50000 = [1128.97129, 2383.79666, 4812.31396, 8526.47359, 16230.43249, 31554.982
 fH2_50000 = 1.0e-8 * np.array([116108.80363, 90923.09204, 47078.67092, 11150.3836, 2585.03456, 1003.28664, 439.06535, 81.15701, 4.64874, 0.6654, 0.3474, 0.4195, 0.33577, 0.13404, 0.05419])
 add_profile_to(Latif2015_2e4K_data, "haloC", 50000.0, "fH2", r50000, fH2_50000, r_unit="au", y_unit=None)
 
+r40000 = [1146.81878, 2886.99953, 6977.16857, 15438.52024, 25789.67912, 46332.20403, 82254.37131, 127914.15306, 227148.20833, 459635.56449, 790023.98881, 1718351.33602]
+rho40000 = 1.0e-24 * np.array([17819303.18276, 17819303.18276, 8934937.79568, 5429105.11534, 1909911.08886, 1961884.54918, 3118946.34072, 1449775.54878, 239487.88001, 71160.3588, 11988.69142, 1779.80524])
+add_profile_to(Latif2015_2e4K_data, "haloC", 40000.0, "density", r40000, rho40000, r_unit="au", y_unit="g/cm^3")
+
+r40000 = [1065.69958, 2120.09411, 4489.14787, 8720.31135, 14656.7885, 24491.48378, 31914.11063, 45264.57501, 74355.92836, 98078.63363, 107676.46181, 108679.25611, 134434.84846, 156362.90008, 188612.96024, 207812.05666, 273351.70235, 484561.23777, 783022.53879, 1092058.40636, 1637266.35961]
+fH2_40000 = [104543.25395, 88035.22703, 67204.15091, 50138.30354, 25472.08301, 9244.02048, 2494.28781, 1273.39116, 1720.20815, 950.02573, 164.9473, 29.73599, 3.13614, 22.26078, 11.48176, 1.76617, 0.64946, 0.73163, 0.31871, 0.1749, 0.09061]
+add_profile_to(Latif2015_2e4K_data, "haloC", 40000.0, "fH2", r40000, fH2_40000, r_unit="au", y_unit=None)
 
 # ------------------------------------------------------------
 #                      Wise2019 data
@@ -660,11 +706,14 @@ Wise2019_MMH = np.array([3.0, 2.6e7, 16.4])
 set_scalar_in(Wise2019_data, "MMH", 3.0, "M_collapse_Msun", 2.6e7)
 set_scalar_in(Wise2019_data, "MMH", 3.0, "z_collapse", 16.4)
 add_R200_for_all_LW(Wise2019_data, "MMH", unit="pc")
+set_meta_in(Wise2019_data, "MMH", 3.0, "formation_mode", "DCBH")
+
 
 Wise2019_LWH = np.array([3.0, 5.8e7, 15.3])
 set_scalar_in(Wise2019_data, "LWH", 3.0, "M_collapse_Msun", 5.8e7)
 set_scalar_in(Wise2019_data, "LWH", 3.0, "z_collapse", 15.3)
 add_R200_for_all_LW(Wise2019_data, "LWH", unit="pc")
+set_meta_in(Wise2019_data, "LWH", 3.0, "formation_mode", "DCBH")
 
 #fH2 vs enclosed gas mass profile
 Mgas_MMH = [1.26344, 2.45052, 5.92587, 13.43197, 34.93614, 97.88215, 261.59906, 640.57113, 1637.77655, 3240.01423, 6857.12743, 11721.68073, 19480.73354, 37248.61632, 67896.49283, 128996.97817, 179381.81173, 267225.76554, 382551.5867, 509805.58445, 702217.54399, 1007539.15625, 1583544.65322, 3119422.17158]
@@ -796,78 +845,160 @@ def _build_r_grid(r_min, r_max, n_samples):
 
 def mass_weighted_fH2(halo: str,
                       j21: float,
-                      r_min: float,
-                      r_max: float,
+                      integral_mode: str,  # "radius" or "Mgas"
+                      r_range: tuple[float, float] | None,
+                      Mgas_range: tuple[float, float] | None,
+                      profile_base: str,  # "radius" or "Mgas"
                       n_samples: int,
                       fH2_floor: float | None,
-                      store: dict | None = None) -> dict:
+                      store: dict | None) -> dict:
     """
-    Compute mass-weighted <f_H2> and total gas mass over [r_min, r_max].
-    r_min/r_max must use the same unit as the store (pc for 2019, AU for 2014A).
-    Only the mass integral converts radius to cm (from the density profile's radius unit).
-
-    fH2 extrapolation policy:
-        - left_extrap  (toward smaller radii): default 'endpoint'  (do NOT floor)
-        - right_extrap (toward larger radii) : default 'floor'     (use floor if provided)
-        - The floor is never applied inside the data range.
-    density extrapolation policy:
-        - left_extrap  (toward smaller radii): 'endpoint'
-        - right_extrap (toward larger radii) : 'powerlaw' with index -2 (isothermal)
+    Compute mass-weighted <f_H2> in a gas halo, within a radius or enclosed mass range.
+    Extrapolation policies:
+      - fH2: 'endpoint' on left, 'floor' on right (only outside data range)
+      - density: 'endpoint' on left, 'powerlaw' with index -2 on right
     """
     if store is None:
         raise ValueError("No data store provided.")
 
-    # raw profiles in native units
-    r_rho, rho = _get_raw_xy(halo, j21, "density", store=store)
-    r_fh2, fh2 = _get_raw_xy(halo, j21, "fH2",      store=store)
+    if integral_mode == "radius":
+        if r_range is None:
+            raise ValueError("r_range must be provided for integral_mode='radius'.")
+        r_min, r_max = r_range
+        if profile_base != "radius":
+            raise ValueError("Only profile_base='radius' is supported for radius integral.")
 
-    # evaluation grid (native units)
-    r_grid = _build_r_grid(r_min, r_max, n_samples)
+        # Load radius-based profiles
+        r_rho, rho = _get_raw_xy(halo, j21, "density", store=store)
+        r_fh2, fh2 = _get_raw_xy(halo, j21, "fH2", store=store)
 
-    # interpolate
-    rho_eval = _interp_log_with_extrap_options(r_rho, rho, r_grid,
-                                               left_extrap="endpoint",
-                                               right_extrap="powerlaw", powerlaw_index=-2)  
-    fH2_eval = _interp_log_with_extrap_options(r_fh2, fh2, r_grid,
-                                                left_extrap="endpoint",
-                                                right_extrap="floor", floor=fH2_floor)
+        r_grid = _build_r_grid(r_min, r_max, n_samples)
 
-    r_data_max_rho = np.max(r_rho)
-    r_data_max_fh2 = np.max(r_fh2)
+        # Interpolate with extrapolation handling
+        rho_eval = _interp_log_with_extrap_options(r_rho, rho, r_grid,
+                                                   left_extrap="endpoint",
+                                                   right_extrap="powerlaw", powerlaw_index=-2)
+        fH2_eval = _interp_log_with_extrap_options(r_fh2, fh2, r_grid,
+                                                   left_extrap="endpoint",
+                                                   right_extrap="floor", floor=fH2_floor)
 
-    fH2_extrap_factor = r_max / r_data_max_fh2
-    density_extrap_factor = r_max / r_data_max_rho
-    set_scalar_in(store, halo, j21, "fH2_extrap_factor", fH2_extrap_factor)
-    set_scalar_in(store, halo, j21, "density_extrap_factor", density_extrap_factor)
+        # Compute extrapolation factors
+        fH2_extrap_factor = r_max / np.max(r_fh2)
+        density_extrap_factor = r_max / np.max(r_rho)
+        set_scalar_in(store, halo, j21, "fH2_extrap_r_factor", fH2_extrap_factor)
+        set_scalar_in(store, halo, j21, "density_extrap_r_factor", density_extrap_factor)
 
-    # convert r→cm only for mass integral
-    r_unit = _radius_unit_of_density(store, halo, j21)
-    try:
-        to_cm = RUNIT_TO_CM[r_unit]
-    except KeyError:
-        raise ValueError(f"Unsupported radius unit for density: {r_unit!r}. "
-                         f"Supported: {list(RUNIT_TO_CM.keys())}")
-    r_cm = r_grid * to_cm
+        # Convert to physical units
+        r_unit = _radius_unit_of_density(store, halo, j21)
+        try:
+            to_cm = RUNIT_TO_CM[r_unit]
+        except KeyError:
+            raise ValueError(f"Unsupported radius unit: {r_unit}")
+        r_cm = r_grid * to_cm
 
-    dMdr = 4.0 * np.pi * (r_cm**2) * rho_eval
-    # M_g  = np.trapezoid(dMdr, r_cm)
-    # fH2_avg = np.trapezoid(fH2_eval * dMdr, r_cm) / M_g
+        # Mass integration
+        dMdr = 4.0 * np.pi * r_cm**2 * rho_eval
+        log_r_cm = np.log10(r_cm)
+        jacobian = r_cm * np.log(10)
 
-    log_r_cm = np.log10(r_cm)
-    jacobian = r_cm * np.log(10)  # dr/dlog10(r)
+        M_g = np.trapezoid(dMdr * jacobian, log_r_cm)
+        fH2_avg = np.trapezoid(fH2_eval * dMdr * jacobian, log_r_cm) / M_g
 
-    M_g = np.trapezoid(dMdr * jacobian, log_r_cm)
-    fH2_avg = np.trapezoid(fH2_eval * dMdr * jacobian, log_r_cm) / M_g
+    elif integral_mode == "Mgas":
+        if Mgas_range is None:
+            raise ValueError("Mgas_range must be provided for integral_mode='Mgas'.")
+        M_min, M_max = Mgas_range
 
+        if profile_base == "Mgas":
+            Mgas_raw, fH2_raw = _get_raw_xy(halo, j21, "fH2_vs_Mgas", store=store)
+
+            M_eval = np.logspace(np.log10(M_min), np.log10(M_max), n_samples)
+            fH2_eval = _interp_log_with_extrap_options(Mgas_raw, fH2_raw, M_eval,
+                                                        left_extrap="endpoint",
+                                                        right_extrap="floor", floor=fH2_floor)
+
+            extrap_factor = M_max / np.max(Mgas_raw)
+            set_scalar_in(store, halo, j21, "fH2_extrap_Mgas_factor", extrap_factor)
+
+            logM = np.log10(M_eval)
+            jacobian = M_eval * np.log(10)
+
+            numerator = np.trapezoid(fH2_eval * jacobian, logM)
+            denominator = np.trapezoid(jacobian, logM)
+            fH2_avg = numerator / denominator
+
+        elif profile_base == "radius":
+
+            r_rho, rho = _get_raw_xy(halo, j21, "density", store=store)
+            r_fh2, fh2 = _get_raw_xy(halo, j21, "fH2", store=store)
+
+            
+            r_min = np.min(r_rho)
+            r_max = np.max(r_rho) * 1000.0
+
+            # print(f"Note: r_range for Mgas integral is set to [{r_min}, {r_max}]")
+            r_grid = _build_r_grid(r_min, r_max, 5000)
+
+            rho_eval = _interp_log_with_extrap_options(r_rho, rho, r_grid,
+                                                       left_extrap="endpoint",
+                                                       right_extrap="powerlaw", powerlaw_index=-2)
+            fH2_eval = _interp_log_with_extrap_options(r_fh2, fh2, r_grid,
+                                                       left_extrap="endpoint",
+                                                       right_extrap="floor", floor=fH2_floor)
+
+            r_unit = _radius_unit_of_density(store, halo, j21)
+            try:
+                to_cm = RUNIT_TO_CM[r_unit]
+            except KeyError:
+                raise ValueError(f"Unsupported radius unit: {r_unit}")
+            r_cm = r_grid * to_cm
+
+            dMdr = 4.0 * np.pi * r_cm**2 * rho_eval
+            M_enc = cumulative_trapezoid(dMdr, r_cm, initial=0.0) / MSUN_G
+
+            # Only trust the interpolation range, not the extrapolated max
+            r_data_max_rho = np.max(r_rho)
+            r_data_max_fh2 = np.max(r_fh2)
+
+            logM_enc = np.log10(M_enc + 1e-30)
+            def r_of_M(M):
+                #from M[Msun] to r[cm]
+                return np.interp(np.log10(M), logM_enc, r_cm)
+
+            M_eval = np.logspace(np.log10(M_min), np.log10(M_max), n_samples)
+            r_eval_cm = r_of_M(M_eval)
+            r_eval = r_eval_cm / to_cm  # back to original unit
+
+
+            # Interpolate fH2(r) → fH2(M)
+            fH2_M = np.interp(np.log10(r_eval), np.log10(r_grid), fH2_eval)
+       
+
+            logM = np.log10(M_eval)
+            jacobian = M_eval * np.log(10)
+
+            numerator = np.trapezoid(fH2_M * jacobian, logM)
+            denominator = np.trapezoid(jacobian, logM)
+            fH2_avg = numerator / denominator
+
+            # Extrapolation factors using actual r_eval
+            fH2_extrap_factor = np.max(r_eval) / r_data_max_fh2
+            density_extrap_factor = np.max(r_eval) / r_data_max_rho
+            set_scalar_in(store, halo, j21, "fH2_extrap_r_factor", fH2_extrap_factor)
+            set_scalar_in(store, halo, j21, "density_extrap_r_factor", density_extrap_factor)
+
+        else:
+            raise ValueError("Invalid profile_base for Mgas mode")
+
+    else:
+        raise ValueError("integral_mode must be 'radius' or 'Mgas'.")
 
     return {
-        "r": r_grid,
-        "r_unit": r_unit,
-        "density": rho_eval,
-        "fH2": fH2_eval,
-        "fH2_avg": fH2_avg,
-        "Mgas_Msun": M_g / MSUN_G,
+        "fH2_avg": fH2_avg
     }
+
+
+
 
 
 def mass_weighted_fH2_from_fH2_vs_Mgas(halo: str,

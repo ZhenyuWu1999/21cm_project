@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import colors, cm
 from scipy.optimize import curve_fit
 from scipy.stats import truncnorm
 import os
@@ -788,31 +789,27 @@ def plot_sigma_vs_hostmass_over_snaps(
     base_dir,
     simulation_set,
     *,
-    filename_txt='best_fit_Mach_sigma_fixedhostmass.txt',
-    output_png='bestfit_sigma_vs_hostmass_over_snaps.png',
+    fit_mode="maxwell-boltzmann",  # or "truncated-gaussian"
     min_count_for_plot=0,        
     cmap_name='plasma'            
 ):
+    
     """
-    Aggregate best-fit Maxwell sigma from multiple snapshots and overplot
-    sigma vs host mass bin (log10 M200). Handles missing bins at high-z.
-
-    Expects per-snapshot text files with rows:
-        logM200_min, logM200_max, N_sub, sigma
+    Unified version: plot best-fit parameters (MB or Truncated Gaussian)
+    vs host halo mass over multiple snapshots.
 
     Parameters
     ----------
     snapNum_list : list[int]
     base_dir : str
     simulation_set : str
-    filename_txt : str
-        File name saved by 'Mach_fixedhostmass' in each snapshot's analysis dir.
-    output_png : str
-        Output image file name (saved under base_dir/simulation_set).
+    fit_mode : str
+        "maxwell-boltzmann" → plot sigma only (single panel)
+        "truncated-gaussian" → plot mu and sigma (2-panel)
     min_count_for_plot : int
-        If >0, bins with N_sub < this threshold are skipped (extra safety).
+        Optional threshold: skip bins with too few subhalos
     cmap_name : str
-        Matplotlib colormap for coloring different redshifts.
+        Colormap name for redshift encoding
     """
 
     # Helper: get redshift from processed file header
@@ -823,122 +820,146 @@ def plot_sigma_vs_hostmass_over_snaps(
             )
             # lightweight read: if you already have load_processed_data, you can reuse it directly
             data = load_processed_data(processed_file)
+            print(f"Snapshot {snap}, Redshift: {data.header['Redshift']} loaded.")
+
             return float(data.header['Redshift'])
         except Exception:
             return np.nan
 
+    #  File & label config 
+    if fit_mode == "maxwell-boltzmann":
+        filename_txt = 'best_fit_Mach_maxwellboltzmann_fixedhostmass.txt'
+        output_png = 'bestfit_sigma_MB_vs_hostmass_over_snaps.png'
+        ylabels = [r'Best-fit $\sigma$ (Maxwell)']
+    elif fit_mode == "truncated-gaussian":
+        filename_txt = 'best_fit_Mach_truncatedgaussian_fixedhostmass.txt'
+        output_png = 'bestfit_mu_sigma_TG_vs_hostmass_over_snaps.png'
+        ylabels = [r'Best-fit $\mu$ (Truncated Gaussian)',
+                   r'Best-fit $\sigma$ (Truncated Gaussian)']
+    else:
+        raise ValueError(f"Unknown fit_mode: {fit_mode}")
+
+
     # collect data series
-    series = []  # list of dict: {'snap':..., 'z':..., 'logM_center': np.array, 'sigma': np.array}
+    series_list = []  # Each element: {'snap', 'z', 'logM_center', 'mu', 'sigma'}
 
     for snap in snapNum_list:
-        txt_path = os.path.join(
-            base_dir, simulation_set, f'snap_{snap}', 'analysis', filename_txt
-        )
+        txt_path = os.path.join(base_dir, simulation_set, f'snap_{snap}', 'analysis', filename_txt)
         if not os.path.exists(txt_path):
-            print(f"[warn] file not found, skip: {txt_path}")
+            print(f"[warn] File not found, skipping: {txt_path}")
             continue
 
-        # read redshift
         z = _read_redshift(simulation_set, snap)
 
-        logM_centers, sigmas = [], []
+        logM_centers = []
+        mu_vals = []
+        sigma_vals = []
+
         with open(txt_path, 'r') as f:
             lines = f.readlines()
 
-        # skip header lines
-        for line in lines[2:]:
+        for line in lines[2:]:  # skip headers
             parts = [p.strip() for p in line.split(',')]
-            if len(parts) < 4:
-                continue
             try:
                 log_lo = float(parts[0])
                 log_hi = float(parts[1])
-                n_sub  = int(float(parts[2]))   
-                sigma  = float(parts[3])
-            except ValueError:
+                n_sub = int(float(parts[2]))
+                if fit_mode == "maxwell-boltzmann":
+                    sigma = float(parts[3])
+                    mu = None
+                elif fit_mode == "truncated-gaussian":
+                    mu = float(parts[3])
+                    sigma = float(parts[4])
+            except Exception:
                 continue
 
-            if not np.isfinite(sigma):
+            if not np.isfinite(sigma) or (fit_mode == "truncated-gaussian" and not np.isfinite(mu)):
                 continue
             if min_count_for_plot > 0 and n_sub < min_count_for_plot:
                 continue
 
             logM_centers.append(0.5 * (log_lo + log_hi))
-            sigmas.append(sigma)
+            mu_vals.append(mu)
+            sigma_vals.append(sigma)
 
         if len(logM_centers) == 0:
-            print(f"[info] no valid bins after filtering for snap {snap} (z={z:.2f}).")
+            print(f"[info] No valid bins for snap {snap} (z={z:.2f})")
             continue
 
-        # sort (by x-axis)
         order = np.argsort(logM_centers)
-        series.append({
+        series_list.append({
             'snap': snap,
             'z': z,
             'logM_center': np.array(logM_centers)[order],
-            'sigma': np.array(sigmas)[order],
+            'mu': np.array(mu_vals)[order] if fit_mode == "truncated-gaussian" else None,
+            'sigma': np.array(sigma_vals)[order],
         })
 
-    if not series:
-        print("[error] No data to plot.")
+    if not series_list:
+        print("[error] No valid data found.")
         return
 
-    # sort series by redshift (nan last)
-    series.sort(key=lambda d: (np.isnan(d['z']), d['z']), reverse=True)
-
-    #prepare color map
-    zs = np.array([d['z'] for d in series if np.isfinite(d['z'])])
-    if len(zs) == 0:
-        zs = np.array([0.0])
+    # prepare color map
+    series_list.sort(key=lambda d: d['z'], reverse=True)
+    zs = np.array([d['z'] for d in series_list])
     zmin, zmax = np.min(zs), np.max(zs)
-    if zmin == zmax:
-        zmin = zmax - 1e-6  # avoid div0
+
     cmap = plt.get_cmap(cmap_name)
 
-    fig = plt.figure(figsize=(8.6, 6.4), facecolor='w')
-    ax = plt.gca()
+    if fit_mode == "truncated-gaussian":
+        fig, axes = plt.subplots(1, 2, figsize=(13, 5.5), facecolor='w', sharex=True)
+    else:
+        fig, ax = plt.subplots(figsize=(8.6, 6.4), facecolor='w')
+        axes = [ax]
 
     handles, labels = [], []
-    for d in series:
-        z = d['z']
-        # color & label
-        if np.isfinite(z):
-            t = (z - zmin) / (zmax - zmin)
-            color = cmap(t)
-            label = f"z={z:.2f} (snap {d['snap']})"
-        else:
-            color = 'gray'
-            label = f"snap {d['snap']}"
 
-        h = ax.plot(
+    for d in series_list:
+        z = d['z']
+        t = (z - zmin) / (zmax - zmin) 
+        color = cmap(t)
+        label = f"z={z:.2f} (snap {d['snap']})"
+
+        # σ panel (always present)
+        h = axes[-1].plot(
             d['logM_center'], d['sigma'],
             marker='o', ms=3.5, lw=1.7, color=color
         )[0]
         handles.append(h)
         labels.append(label)
 
-    ax.set_xlabel(r'$\log_{10}(M_{200}\,[M_\odot/h])$', fontsize=13)
-    ax.set_ylabel(r'Best-fit $\sigma$ (Maxwell)', fontsize=13)
-    ax.tick_params(axis='both', direction='in')
+        # μ panel (TG only)
+        if fit_mode == "truncated-gaussian":
+            axes[0].plot(
+                d['logM_center'], d['mu'],
+                marker='o', ms=3.5, lw=1.7, color=color
+            )
 
-    leg = ax.legend(handles, labels, title='Snapshots',
-                    frameon=True, facecolor='white', edgecolor='black', framealpha=0.95,
-                    loc='best')
+    # ------------------ Axis labels ------------------
+    for i, ax in enumerate(axes):
+        ax.set_xlabel(r'$\log_{10}(M_{200}\,[M_\odot/h])$', fontsize=13)
+        ax.set_ylabel(ylabels[i], fontsize=13)
+        ax.tick_params(axis='both', direction='in')
+
+    # ------------------ Legend ------------------
+    leg = axes[-1].legend(
+        handles, labels, title='Snapshots',
+        frameon=True, facecolor='white', edgecolor='black', framealpha=0.95,
+        loc='best'
+    )
     try:
         leg._legend_box.align = "left"
     except Exception:
         pass
 
-    # optional: colorbar for redshift
-    if np.isfinite(zmin) and np.isfinite(zmax) and (zmax > zmin):
-        import matplotlib as mpl
-        norm = mpl.colors.Normalize(vmin=zmin, vmax=zmax)
-        sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
-        cbar = plt.colorbar(sm, ax=ax, pad=0.01)
-        cbar.set_label('Redshift z')
+    # ------------------ Optional colorbar ------------------
+    norm = colors.Normalize(vmin=zmin, vmax=zmax)
+    sm = cm.ScalarMappable(norm=norm, cmap=cmap)
+    cbar = fig.colorbar(sm, ax=axes, pad=0.01, shrink=0.95)
+    cbar.set_label('Redshift z')
 
-    # save figure
-    outdir = os.path.join(base_dir, simulation_set)
+    # ------------------ Save figure ------------------
+    outdir = os.path.join(base_dir, simulation_set, 'analysis')
     os.makedirs(outdir, exist_ok=True)
     outpath = os.path.join(outdir, output_png)
     plt.savefig(outpath, dpi=300, bbox_inches='tight')
@@ -951,31 +972,31 @@ if __name__ == '__main__':
     simulation_set = 'TNG50-1'
 
     # snapNum_list = [0, 1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 40, 50, 59, 67, 72, 78, 84, 91, 99]
-    snapNum_list = [2, 13, 99]
+    # snapNum_list = [2, 13, 99]
     
-    for snapNum in snapNum_list:
-        print(f"Processing snapshot {snapNum} ...")
-        base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
-        processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
-                                    f'processed_halos_snap_{snapNum}.h5')
-        data = load_processed_data(processed_file)
-        # Create plots
-        output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
-        # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass', 
-        # 'R200_subhaloVmaxRad', 'tff_tcross', 'M200_Mach', 'M200_Anumber', 'Mach_fit']
-        fig_options_2Dhistogram = ['Mach_fixedhostmass']
-        plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
-        # plot_host_halo_properties(data, snapNum, output_dir)
-        # plot_conditional_logA(data, snapNum, output_dir, xmode="both", weight_by_host=False)
+    # for snapNum in snapNum_list:
+    #     print(f"Processing snapshot {snapNum} ...")
+    #     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
+    #     processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
+    #                                 f'processed_halos_snap_{snapNum}.h5')
+    #     data = load_processed_data(processed_file)
+    #     # Create plots
+    #     output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
+    #     # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass', 
+    #     # 'R200_subhaloVmaxRad', 'tff_tcross', 'M200_Mach', 'M200_Anumber', 'Mach_fit']
+    #     fig_options_2Dhistogram = ['Mach_fixedhostmass']
+    #     # plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
+    #     # plot_host_halo_properties(data, snapNum, output_dir)
+    #     # plot_conditional_logA(data, snapNum, output_dir, xmode="both", weight_by_host=False)
 
-    # snapNum_list = [1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 50, 99]
+    snapNum_list = [1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 50, 99]
     # # Compare Mach numbers across snapshots
     # compare_mach_numbers(simulation_set, snapNum_list)
 
-    # plot_sigma_vs_hostmass_over_snaps(
-    # snapNum_list=snapNum_list,
-    # base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
-    # simulation_set=simulation_set,
-    # min_count_for_plot=0,         
-    # output_png='bestfit_sigma_vs_hostmass_over_snaps.png'
-    # )
+    plot_sigma_vs_hostmass_over_snaps(
+    snapNum_list=snapNum_list,
+    base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+    simulation_set=simulation_set,
+    fit_mode="truncated-gaussian", # "maxwell-boltzmann" | "truncated-gaussian"
+    min_count_for_plot=0,         
+    )

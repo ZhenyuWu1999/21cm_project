@@ -3,9 +3,7 @@ from scipy.integrate import quad, dblquad
 import matplotlib.pyplot as plt
 import os
 from matplotlib.ticker import AutoMinorLocator
-
-
-from TNG_plots import maxwell_boltzmann_pdf
+from TNG_plots import maxwell_boltzmann_pdf, truncated_gaussian_pdf
 
 def h_test(sz, rcyl, mach):
     """The constant for the integrand of the dynamical friction integral.
@@ -651,134 +649,265 @@ def plot_I_Mach(output_dir):
     plt.tight_layout()
     filename = os.path.join(output_dir, "I_over_Mach_new.png")
     plt.savefig(filename, dpi=300)
-    
-def test_func(mach, xmin):
-    return 1.0
 
-def compute_average_I(func, sigma_mach, param=None):
-    """
-    Compute the average of a function weighted by the Maxwell distribution
-    func: function to average
-    sigma_mach: standard deviation of the Mach number distribution
-    param: parameter for the function (optional, can be None if the function doesn't need it)
-    """
-
-    mach_min = 0.01
-    mach_max = 10.0
-    #Maxwell distribution is already normalized
-    def integrand_numerator(mach):
-        if param is None:
-            return func(mach) * maxwell_boltzmann_pdf(mach, sigma_mach)
+def get_nonlinear_correction(A, mach):
+    #KK09 nonlinear correction factor
+    if mach <= 1:
+        nonlinear_corr = 1.0
+    else:
+        eta = A / (mach**2 - 1)
+        if eta > 100:
+            print(f"Nonlinear Corr Warning: eta = {eta} > 100, nonlinear correction may be inaccurate")
+        if eta >= 2:
+            nonlinear_corr = (eta/2)**(-0.45)
         else:
-            return func(mach, param) * maxwell_boltzmann_pdf(mach, sigma_mach)
-    
-    result, _ = quad(integrand_numerator, mach_min, mach_max, limit=100)
-    normalization, _ = quad(lambda mach: maxwell_boltzmann_pdf(mach, sigma_mach), mach_min, mach_max)
-    result = result / normalization  # Normalize the result
-    
-    # Return the average
-    return result
+            nonlinear_corr = 1.0
+    return nonlinear_corr
 
-def plot_averages(output_dir):
+def compute_average_I(func, dist_params, dist_type, rmin_param=None, A=None, nonlinear_correction=False):
     """
-    Calculate and plot the average values of I and I/mach as a function of sigma_mach
+    Compute the average of a function weighted by a velocity distribution (MB or TG),
+    optionally applying nonlinear correction.
+
+    Parameters
+    ----------
+    func : callable
+        Function of (mach, rmin_param) or just (mach)
+    dist_params : float or tuple
+        Parameters for MB (sigma) or TG (mu, sigma)
+    dist_type : str
+        "maxwell-boltzmann" or "truncated-gaussian"
+    rmin_param : float or None
+        Physical scale param to pass into I_df functions (e.g. Vt/rmin or Rp/rmin)
+    A : float or None
+        Mass ratio param for nonlinear correction
+    nonlinear_correction : bool
+        Whether to apply nonlinear correction using get_nonlinear_correction
+
+    Returns
+    -------
+    float
+        Average I_df (or I_df / mach) over the velocity distribution
     """
-    # Create output directory if it doesn't exist
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    
+
+    mach_min, mach_max = 0.01, 10.0
+
+    if dist_type == "maxwell-boltzmann":
+        sigma = dist_params
+        def pdf(mach): return maxwell_boltzmann_pdf(mach, sigma)
+    elif dist_type == "truncated-gaussian":
+        mu, sigma = dist_params
+        def pdf(mach): return truncated_gaussian_pdf(mach, mu, sigma)
+    else:
+        raise ValueError(f"Unknown dist_type: {dist_type}")
+
+    def integrand(mach):
+        try:
+            I_val = func(mach) if rmin_param is None else func(mach, rmin_param)
+            if nonlinear_correction and A is not None:
+                I_val *= get_nonlinear_correction(A, mach)
+        except Exception:
+            I_val = 0.0
+        return I_val * pdf(mach)
+
+    numerator, _ = quad(integrand, mach_min, mach_max, limit=100)
+    normalization, _ = quad(pdf, mach_min, mach_max, limit=100)
+
+    return numerator / normalization
+
+
+
+def plot_averages_MB(output_dir):
+    """
+    Calculate and plot the average values of I/mach as a function of sigma_Mach,
+    including nonlinear correction for Ostriker99 (with different A values).
+    """
+
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+
+    # --- Setup ---
     sigma_mach_array = np.logspace(-1, np.log10(3), 50)  # From 0.1 to 3
+    A_array = [0.0, 1.0, 2.0, 10.0]
+    linestyles = ['-', '--', '-.', ':']
 
-    #average I and I/Mach in Ostriker99
+    # Ostriker99 setup
     Vt_rmin_ratios = np.array([20, 40, 100, 200])
     Ostriker99_colors = ['orange', 'darkorange', 'red', 'brown']
-    avg_I_values = np.zeros((len(Vt_rmin_ratios), len(sigma_mach_array)))
-    avg_I_over_mach_values = np.zeros((len(Vt_rmin_ratios), len(sigma_mach_array)))
-    
+    avg_I_over_mach_values = np.zeros((len(Vt_rmin_ratios), len(sigma_mach_array), len(A_array)))
+
     for i, Vt_rmin in enumerate(Vt_rmin_ratios):
-        for j, sigma_mach in enumerate(sigma_mach_array):
-            avg_I_values[i, j] = compute_average_I(Idf_Ostriker99_nosingularity_Vtrmin, sigma_mach, Vt_rmin)
-            # Calculate average I/mach
-            def I_over_mach(mach, Vt_rmin):
-                return Idf_Ostriker99_nosingularity_Vtrmin(mach, Vt_rmin) / mach
-            avg_I_over_mach_values[i, j] = compute_average_I(I_over_mach, sigma_mach, Vt_rmin)
-    
-    #also compare with Kim07 model
+        for k, A_number in enumerate(A_array):
+            for j, sigma_mach in enumerate(sigma_mach_array):
+                def I_over_mach(mach, Vt_rmin):
+                    return Idf_Ostriker99_nosingularity_Vtrmin(mach, Vt_rmin) / mach
+
+                avg_I_over_mach_values[i, j, k] = compute_average_I(
+                    I_over_mach,
+                    sigma_mach,
+                    dist_type="maxwell-boltzmann",
+                    rmin_param=Vt_rmin,
+                    A=A_number,
+                    nonlinear_correction=True
+                )
+
+    # Kim07 setup
     Rp_rmin_ratios = np.array([10, 20, 50, 100])
-    Kim07_colors = ['cyan', 'deepskyblue', 'dodgerblue','royalblue']
-    avg_I_phi_values = np.zeros((len(Rp_rmin_ratios), len(sigma_mach_array)))
+    Kim07_colors = ['cyan', 'deepskyblue', 'dodgerblue', 'royalblue']
     avg_I_phi_over_mach_values = np.zeros((len(Rp_rmin_ratios), len(sigma_mach_array)))
     for i, Rp_rmin in enumerate(Rp_rmin_ratios):
         for j, sigma_mach in enumerate(sigma_mach_array):
-            avg_I_phi_values[i, j] = compute_average_I(Idf_phi_Kim2007, sigma_mach, Rp_rmin)
-            # Calculate average I/mach
             def I_phi_over_mach(mach, Rp_rmin):
                 return Idf_phi_Kim2007(mach, Rp_rmin) / mach
-            avg_I_phi_over_mach_values[i, j] = compute_average_I(I_phi_over_mach, sigma_mach, Rp_rmin)
+            avg_I_phi_over_mach_values[i, j] = compute_average_I(
+                I_phi_over_mach,
+                sigma_mach,
+                dist_type="maxwell-boltzmann",
+                rmin_param=Rp_rmin,
+                nonlinear_correction=False
+            )
 
-    #I_R
-    avg_I_R_values = np.zeros(len(sigma_mach_array))
+    # Kim07 IR
     avg_I_R_over_mach_values = np.zeros(len(sigma_mach_array))
     for j, sigma_mach in enumerate(sigma_mach_array):
-        avg_I_R_values[j] = compute_average_I(Idf_R_Kim2007, sigma_mach, None)
-        # Calculate average I/mach
         def I_R_over_mach(mach):
             return Idf_R_Kim2007(mach) / mach
-        avg_I_R_over_mach_values[j] = compute_average_I(I_R_over_mach, sigma_mach, None)
+        avg_I_R_over_mach_values[j] = compute_average_I(
+            I_R_over_mach,
+            sigma_mach,
+            dist_type="maxwell-boltzmann",
+            nonlinear_correction=False
+        )
 
-    # Visualize the Maxwell-Boltzmann distribution for different sigma values
-    fig = plt.figure(figsize=(10, 6), facecolor='w')
-    mach_array = np.linspace(0, 10, 100)
-    for sigma in [0.5, 1.0, 2.0, 3.0]:
-        dist = [maxwell_boltzmann_pdf(m, sigma) for m in mach_array]
-        plt.plot(mach_array, dist, label=f"σ = {sigma}")
-    plt.xlabel("Mach Number", fontsize=14)
-    plt.ylabel("Probability Density", fontsize=14)
-    plt.title("Maxwell-Boltzmann Distribution for Different σ Values", fontsize=14)
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "maxwell_distributions.png"), dpi=300)
-    
-    # Plot average I as a function of sigma_mach
-    fig = plt.figure(facecolor='w')
+    # --- Plot I/mach ---
+    fig = plt.figure(figsize=(7.5, 5.5), facecolor='w')
     ax = plt.gca()
+
+    # Ostriker99 with nonlinear correction (only A=0 labeled)
     for i, ratio in enumerate(Vt_rmin_ratios):
-        plt.plot(sigma_mach_array, avg_I_values[i], color=Ostriker99_colors[i], 
-                 label=r"Ostriker99, V t/r$_{\min}$ = "+f"{ratio}")
+        for k, A in enumerate(A_array):
+            label = (
+                rf"Ostriker99, V t/r$_{{\min}}$ = {ratio}" if A == 0 else None
+            )
+            ax.plot(
+                sigma_mach_array,
+                avg_I_over_mach_values[i, :, k],
+                color=Ostriker99_colors[i],
+                linestyle=linestyles[k],
+                label=label
+            )
+
+    # Kim07 I_phi
     for i, ratio in enumerate(Rp_rmin_ratios):
-        plt.plot(sigma_mach_array, avg_I_phi_values[i], color=Kim07_colors[i], linestyle='--', 
-                 label=r"Kim07 I$_{\varphi}$, Rp/r$_{\min}$ = "+f"{ratio}")
-    plt.plot(sigma_mach_array, avg_I_R_values, color='k', linestyle=':', label=r"Kim07 I$_{\mathrm{R}}$")
-    plt.xlabel(r"$\sigma_{\mathcal{M}}$", fontsize=14)
-    plt.ylabel(r"$\langle I_{DF} \rangle$", fontsize=14)
+        ax.plot(
+            sigma_mach_array,
+            avg_I_phi_over_mach_values[i],
+            color=Kim07_colors[i],
+            linestyle='--',
+            label=rf"Kim07 I$_\varphi$, Rp/r$_{{\min}}$ = {ratio}"
+        )
+
+    # Kim07 I_R
+    ax.plot(
+        sigma_mach_array,
+        avg_I_R_over_mach_values,
+        color='k',
+        linestyle=':',
+        label=r"Kim07 I$_{\mathrm{R}}$"
+    )
+
+    # --- Formatting ---
+    ax.set_xlabel(r"$\sigma_{\mathcal{M}}$", fontsize=14)
+    ax.set_ylabel(r"$\langle I_{DF}/\mathcal{M} \rangle$", fontsize=14)
     ax.minorticks_on()
     ax.tick_params(axis='both', which='both', direction='in')
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend()
+    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.legend(fontsize=10, frameon=True, loc='best')
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "avg_I_vs_sigma_new.png"), dpi=300)
-    
-    # Plot average I/mach as a function of sigma_mach
-    fig = plt.figure()
-    ax = plt.gca()
-    for i, ratio in enumerate(Vt_rmin_ratios):
-        plt.plot(sigma_mach_array, avg_I_over_mach_values[i], color=Ostriker99_colors[i], 
-                 label=r"Ostriker99, V t/r$_{\min}$ = "+f"{ratio}")
-    for i, ratio in enumerate(Rp_rmin_ratios):
-        plt.plot(sigma_mach_array, avg_I_phi_over_mach_values[i], color=Kim07_colors[i], linestyle='--', 
-                 label=r"Kim07 I$_{\varphi}$, Rp/r$_{\min}$ = "+f"{ratio}")
-    plt.plot(sigma_mach_array, avg_I_R_over_mach_values, color='k', linestyle=':', label=r"Kim07 I$_{\mathrm{R}}$")
-    plt.xlabel(r"$\sigma_{\mathcal{M}}$", fontsize=14)
-    plt.ylabel(r"$\langle I_{DF}/\mathcal{M} \rangle$", fontsize=14)
-    ax.minorticks_on()
-    ax.tick_params(axis='both', which='both', direction='in')
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend()
+
+    filename = os.path.join(output_dir, "avg_I_over_mach_vs_sigma_MB_nonlinear.png")
+    plt.savefig(filename, dpi=300)
+    print(f"Saved: {filename}")
+    plt.close()
+
+
+def plot_averages_TG(output_dir):
+
+    # Ensure output dir exists
+    os.makedirs(output_dir, exist_ok=True)
+
+    # μ to loop over → subplot dimension
+    mu_array = [0.8, 1.0, 1.3]
+    mu_labels = [r"$\mu = {:.1f}$".format(mu) for mu in mu_array]
+
+    # σ range (x-axis)
+    sigma_array = np.linspace(0.2, 0.5, 40)
+
+    # Vt/rmin ratios (color)
+    Vt_rmin_ratios = np.array([20, 40, 100, 200])
+    Ostriker99_colors = ['orange', 'darkorange', 'red', 'brown']
+
+    # A values (linestyle)
+    A_array = [0.0, 1.0, 2.0]
+    linestyles = ['solid', 'dashed', 'dotted']
+
+    # Init result array: shape = [n_mu, n_A, n_rmin, n_sigma]
+    avg_I_over_mach_values = np.zeros((
+        len(mu_array), len(A_array), len(Vt_rmin_ratios), len(sigma_array)
+    ))
+
+    for im, mu in enumerate(mu_array):
+        for ia, A in enumerate(A_array):
+            for ir, Vt_rmin in enumerate(Vt_rmin_ratios):
+                for isigma, sigma in enumerate(sigma_array):
+
+                    def I_over_mach(mach, rmin_param):
+                        return Idf_Ostriker99_nosingularity_Vtrmin(mach, rmin_param) / mach
+
+                    avg_I_over_mach_values[im, ia, ir, isigma] = compute_average_I(
+                        I_over_mach,
+                        dist_params=(mu, sigma),
+                        dist_type="truncated-gaussian",
+                        rmin_param=Vt_rmin,
+                        A=A,
+                        nonlinear_correction=True
+                    )
+
+    # --------- Plotting ---------
+    fig, axes = plt.subplots(1, len(mu_array), figsize=(15, 5), sharey=True, facecolor='w')
+
+    for im, mu in enumerate(mu_array):
+        ax = axes[im]
+        for ia, A in enumerate(A_array):
+            for ir, Vt_rmin in enumerate(Vt_rmin_ratios):
+                label = None
+                if ia == 0:  # Only label A=0 (linear case)
+                    label = fr"$Vt/r_{{\min}}$ = {Vt_rmin}"
+
+                ax.plot(
+                    sigma_array,
+                    avg_I_over_mach_values[im, ia, ir],
+                    color=Ostriker99_colors[ir],
+                    linestyle=linestyles[ia],
+                    label=label
+                )
+
+        ax.set_xlabel(r"$\sigma$ (Truncated Gaussian)", fontsize=12)
+        ax.set_title(mu_labels[im], fontsize=13)
+        ax.grid(True, linestyle='--', alpha=0.5)
+        ax.tick_params(axis='both', direction='in')
+
+    axes[0].set_ylabel(r"$\langle I_{\rm DF} / \mathcal{M} \rangle$", fontsize=13)
+    axes[-1].legend(title="Linear case", loc='upper right')
+
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "avg_I_over_mach_vs_sigma_new.png"), dpi=300)
-    
-    
+    outpath = os.path.join(output_dir, "avg_I_over_mach_vs_sigma_truncG_with_A.png")
+    plt.savefig(outpath, dpi=300)
+    print(f"Saved figure: {outpath}")
+    plt.close()
+
+
+
 
 
 if __name__ == '__main__':
@@ -796,4 +925,5 @@ if __name__ == '__main__':
     #plot_supersonic_allmach()
     
     # plot_I_Mach(output_dir)
-    plot_averages(output_dir)
+    plot_averages_MB(output_dir)
+    # plot_averages_TG(output_dir)

@@ -728,7 +728,7 @@ def plot_averages_MB(output_dir):
 
     # --- Setup ---
     sigma_mach_array = np.logspace(-1, np.log10(3), 50)  # From 0.1 to 3
-    A_array = [0.0, 1.0, 2.0, 10.0]
+    A_array = [0.0, 1.0, 2.0]
     linestyles = ['-', '--', '-.', ':']
 
     # Ostriker99 setup
@@ -784,18 +784,33 @@ def plot_averages_MB(output_dir):
     ax = plt.gca()
 
     # Ostriker99 with nonlinear correction (only A=0 labeled)
+    # for i, ratio in enumerate(Vt_rmin_ratios):
+    #     for k, A in enumerate(A_array):
+    #         label = (
+    #             rf"Ostriker99, V t/r$_{{\min}}$ = {ratio}" if A == 0 else None
+    #         )
+    #         ax.plot(
+    #             sigma_mach_array,
+    #             avg_I_over_mach_values[i, :, k],
+    #             color=Ostriker99_colors[i],
+    #             linestyle=linestyles[k],
+    #             label=label
+    #         )
+
+    # Ostriker99: plot shaded region for A = 0 → A = 10
     for i, ratio in enumerate(Vt_rmin_ratios):
-        for k, A in enumerate(A_array):
-            label = (
-                rf"Ostriker99, V t/r$_{{\min}}$ = {ratio}" if A == 0 else None
-            )
-            ax.plot(
-                sigma_mach_array,
-                avg_I_over_mach_values[i, :, k],
-                color=Ostriker99_colors[i],
-                linestyle=linestyles[k],
-                label=label
-            )
+        upper_vals = avg_I_over_mach_values[i, :, 0]   # A = 0
+        lower_vals = avg_I_over_mach_values[i, :, -1]  # A = 10
+
+        ax.fill_between(
+            sigma_mach_array,
+            lower_vals,
+            upper_vals,
+            color=Ostriker99_colors[i],
+            alpha=0.25,
+            label=rf"Ostriker99+Kim09, V t/r$_{{\min}}$ = {ratio}"
+        )
+
 
     # Kim07 I_phi
     for i, ratio in enumerate(Rp_rmin_ratios):
@@ -878,19 +893,32 @@ def plot_averages_TG(output_dir):
 
     for im, mu in enumerate(mu_array):
         ax = axes[im]
-        for ia, A in enumerate(A_array):
-            for ir, Vt_rmin in enumerate(Vt_rmin_ratios):
-                label = None
-                if ia == 0:  # Only label A=0 (linear case)
-                    label = fr"$Vt/r_{{\min}}$ = {Vt_rmin}"
+        for ir, Vt_rmin in enumerate(Vt_rmin_ratios):
+            # if ia == 0:  # Only label A=0 (linear case)
+            #     label = fr"$Vt/r_{{\min}}$ = {Vt_rmin}"
 
-                ax.plot(
-                    sigma_array,
-                    avg_I_over_mach_values[im, ia, ir],
-                    color=Ostriker99_colors[ir],
-                    linestyle=linestyles[ia],
-                    label=label
-                )
+            low_vals = avg_I_over_mach_values[im, -1, ir]  # A = max
+            up_vals = avg_I_over_mach_values[im, 0, ir]  # A = 0
+
+            ax.fill_between(
+                sigma_array,
+                low_vals,
+                up_vals,
+                color=Ostriker99_colors[ir],
+                alpha=0.25,
+                label=rf"Ostriker99+Kim09, V t/r$_{{\min}}$ = {Vt_rmin}"
+            )
+
+            # ax.plot(
+            #     sigma_array,
+            #     avg_I_over_mach_values[im, ia, ir],
+            #     color=Ostriker99_colors[ir],
+            #     linestyle=linestyles[ia],
+            #     label=label
+            # )
+
+
+        
 
         ax.set_xlabel(r"$\sigma$ (Truncated Gaussian)", fontsize=12)
         ax.set_title(mu_labels[im], fontsize=13)
@@ -925,5 +953,5 @@ if __name__ == '__main__':
     #plot_supersonic_allmach()
     
     # plot_I_Mach(output_dir)
-    plot_averages_MB(output_dir)
-    # plot_averages_TG(output_dir)
+    # plot_averages_MB(output_dir)
+    plot_averages_TG(output_dir)

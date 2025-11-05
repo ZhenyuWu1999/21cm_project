@@ -171,20 +171,25 @@ def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_mod
     '''
     Heating_singlehost = []
     Heating_perlgM = []
+    Heating_perlgM_totHMF = []
     for index, lgM in enumerate(lgM_list):
         lgx_min = lgx_min_list[index]
         lgx_max = lgx_max_list[index]
         heating = integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF_model, mean_molecular_weight)
-        dN_dlgM = HMF_2Dbestfit(lgM, redshift)
+        dN_dlgM = HMF_2Dbestfit(lgM, redshift, include_selection_factor=True) 
+        dN_dlgM_totHMF = HMF_2Dbestfit(lgM, redshift, include_selection_factor=False)
         Heating_singlehost.append(heating)
         Heating_perlgM.append(heating*dN_dlgM)
+        Heating_perlgM_totHMF.append(heating*dN_dlgM_totHMF)
 
     Heating_singlehost = np.array(Heating_singlehost)
     Heating_perlgM = np.array(Heating_perlgM)
+    Heating_perlgM_totHMF = np.array(Heating_perlgM_totHMF)
 
     data_dict = {'lgM_list':lgM_list, 
                  'Heating_singlehost':Heating_singlehost, 
-                 'Heating_perlgM':Heating_perlgM}
+                 'Heating_perlgM':Heating_perlgM,
+                 'Heating_perlgM_totHMF':Heating_perlgM_totHMF}
     return data_dict
 
 
@@ -241,7 +246,7 @@ def get_EqCooling_for_single_host(Mvir, redshift, param_sets, mean_molecular_wei
         cooling_Eq = run_constdensity_model(
             params_for_constdensity, UVB_flag=UVB_flag, 
             Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag,
-            converge_when_setup=True,
+            converge_when_setup=False,
         )
 
         normalized_cooling = cooling_Eq["cooling_rate"].v
@@ -433,11 +438,11 @@ def plot_cosmic_DFheating(redshift, snapNum = None):
     # print("Jeans mass: ",M_Jeans)
     print(f"plotting cosmic DF heating at z = {redshift:.2f} ...")
 
-    lgM_limits = [4, 14]  # Limits for log10(M [Msun/h])
+    lgM_limits = [6, 14]  # Limits for log10(M [Msun/h])
     if (redshift < 6.0):
-        lgM_limits = [4, 16]
+        lgM_limits = [6, 15.5]
 
-    lgM_list = np.linspace(lgM_limits[0], lgM_limits[1],50)
+    lgM_list = np.linspace(lgM_limits[0], lgM_limits[1], 41)
     bin_centers = lgM_list
     bin_width = bin_centers[1] - bin_centers[0]  # Assuming uniform bin spacing
     bin_edges = np.zeros(len(bin_centers) + 1)
@@ -462,8 +467,8 @@ def plot_cosmic_DFheating(redshift, snapNum = None):
     data_min3_max1 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'BestFit_z')
     data_min2_max0 = get_heating_per_lgM(lgM_list, lgx_min_2_list, lgx_max_0_list, redshift, 'BestFit_z')
     data_min3_max0 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'BestFit_z')
-    data_min3_max1_Bosch16evolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'Bosch16evolved')
-    data_min3_max1_Bosch16unevolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'Bosch16unevolved')
+    data_min3_max0_Bosch16evolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16evolved')
+    data_min3_max0_Bosch16unevolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16unevolved')
 
     #heating per logM (old version)
     '''
@@ -498,7 +503,7 @@ def plot_cosmic_DFheating(redshift, snapNum = None):
         sub_mach = data.subhalo_data['mach_number'].value
         #set mach > 5 to be 5
         sub_mach_cut = np.clip(sub_mach, None, 5.0)
-        Vt_rmin = 40
+        Vt_rmin = 40  #debug: Vt/rmin = ?
         mach_DF_correction = np.array([Idf_Ostriker99_nosingularity_Vtrmin(mach, Vt_rmin) for mach in sub_mach_cut])
         sub_DFheating_with_mach = sub_DFheating_fid * mach_DF_correction
 
@@ -520,28 +525,24 @@ def plot_cosmic_DFheating(redshift, snapNum = None):
 
     plot_datasets = [
         # {
-        #     "data": data_minMJeans_max1,
-        #     "color": 'g',
-        #     "label": r'$[m_J/M,10^{-1}]$ BestFit',
+        #     "data": data_min2_max1,
+        #     "quantity_to_plot": 'Heating_perlgM',
+        #     "color": 'orange',
+        #     "label": r'$[10^{-2},10^{-1}]$ BestFit',
         #     "linestyle": '-',
-        #     "linewidth": 1
+        #     "linewidth": 2
+        # },
+        # {
+        #     "data": data_min3_max1,
+        #     "quantity_to_plot": 'Heating_perlgM',
+        #     "color": 'r',
+        #     "label": r'$[10^{-3},10^{-1}]$ BestFit',
+        #     "linestyle": ':',
+        #     "linewidth": 2
         # },
         {
-            "data": data_min2_max1,
-            "color": 'orange',
-            "label": r'$[10^{-2},10^{-1}]$ BestFit',
-            "linestyle": '-',
-            "linewidth": 2
-        },
-        {
-            "data": data_min3_max1,
-            "color": 'r',
-            "label": r'$[10^{-3},10^{-1}]$ BestFit',
-            "linestyle": ':',
-            "linewidth": 2
-        },
-        {
             "data": data_min2_max0,
+            "quantity_to_plot": 'Heating_perlgM_totHMF',
             "color": 'orange',
             "label": r'$[10^{-2},1]$ BestFit',
             "linestyle": '-',
@@ -550,38 +551,51 @@ def plot_cosmic_DFheating(redshift, snapNum = None):
 
         {
             "data": data_min3_max0,
+            "quantity_to_plot": 'Heating_perlgM',
             "color": 'r',
-            "label": r'$[10^{-3},1]$ BestFit',
+            "label": r'$[10^{-3},1]$ BestFit (reduced HMF)',
             "linestyle": ':',
             "linewidth": 4.5
         },
         {
-            "data": data_min3_max1_Bosch16evolved,
-            "color": 'grey',
-            "label": r'$[10^{-3},10^{-1}]$ Bosch16evolved',
-            "linestyle": '-',
-            "linewidth": 2
+            "data": data_min3_max0,
+            "quantity_to_plot": 'Heating_perlgM_totHMF',
+            "color": 'r',
+            "label": r'$[10^{-3},1]$ BestFit',
+            "linestyle": '--',
+            "linewidth": 4.5
         },
         {
-            "data": data_min3_max1_Bosch16unevolved,
+            "data": data_min3_max0_Bosch16evolved,
+            "quantity_to_plot": 'Heating_perlgM_totHMF',
             "color": 'grey',
-            "label": r'$[10^{-3},10^{-1}]$ Bosch16unevolved',
+            "label": r'$[10^{-3},1]$ Bosch16evolved',
+            "linestyle": '-',
+            "linewidth": 1.5
+        },
+        {
+            "data": data_min3_max0_Bosch16unevolved,
+            "quantity_to_plot": 'Heating_perlgM_totHMF',
+            "color": 'grey',
+            "label": r'$[10^{-3},1]$ Bosch16unevolved',
             "linestyle": '--',
-            "linewidth": 2
+            "linewidth": 1.5
         }
     ]
 
-    selected_heating_datasets_index = [0, 1, 2, 3, 4, 5]
-    heating_datasets = [plot_datasets[i] for i in selected_heating_datasets_index]
+    # selected_heating_datasets_index = [0, 1, 2, 3, 4, 5, 6]
+    # heating_datasets = [plot_datasets[i] for i in selected_heating_datasets_index]
+    heating_datasets = plot_datasets
 
     output_dir = '/home/zwu/21cm_project/unified_model/Analytic_results/cosmic_DFheating'
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    filename = os.path.join(output_dir,f"DF_heating_perlogM_z{redshift:.2f}.png")
+    filename = os.path.join(output_dir,f"DF_heating_perlogM_z{redshift:.2f}_totHMF.png")
     fig = plt.figure(facecolor='white')
     ax = fig.gca()
     for dataset in heating_datasets:
-        plt.plot(dataset["data"]["lgM_list"], 1e7*dataset["data"]["Heating_perlgM"]*scale_factor**3, 
+        quantity_to_plot = dataset["quantity_to_plot"]
+        plt.plot(dataset["data"]["lgM_list"], 1e7*dataset["data"][quantity_to_plot]*scale_factor**3, 
                 color=dataset["color"], 
                 label=dataset["label"],
                 linestyle=dataset["linestyle"], 
@@ -604,6 +618,9 @@ def plot_cosmic_DFheating(redshift, snapNum = None):
     plt.ylabel(r'DF heating per lgM [erg/s (cMpc/h)$^{-3}$ dex$^{-1}$]',fontsize=14)
     plt.xlabel(r'lgM [M$_{\odot}$/h]',fontsize=14)
     plt.savefig(filename,dpi=300)
+
+    print("Figure saved to: ", filename)
+    plt.close()
 
 #compare cooling and DF heating for massive halos at low-z
 def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
@@ -995,9 +1012,6 @@ def plot_global_heating_cooling_singlehost_minihalo(redshift):
     filename = os.path.join(output_dir,f"DF_heating_singlehost_z{redshift:.2f}_profilefgcorr.png")
 
 
-    print("finish.")
-
-    exit()
 
     fig, ax1 = plt.subplots(figsize=(8, 6), facecolor='white')
     #plot heating
@@ -1086,15 +1100,16 @@ def plot_global_heating_cooling_singlehost_minihalo(redshift):
 if __name__ == "__main__":
     
     #1. cosmic DF heating (integrate over HMF)
-    # z_list = [15, 12, 10, 8, 6, 3, 0]
-    # snapNum_list = [1, 2, 4, 8, 13, 25, 99]
-    # for z, snapNum in zip(z_list, snapNum_list):
-    #     plot_cosmic_DFheating(z, snapNum)
+    z_list = [15, 12, 10, 8, 6, 3, 0]
+    snapNum_list = [1, 2, 4, 8, 13, 25, 99]
+   
+    for z, snapNum in zip(z_list, snapNum_list):
+        plot_cosmic_DFheating(z, snapNum)
     # plot_peak_lgM_cosmic_DFheating()
 
     #2. cimpare heating and cooling for a single host halo
     # run_heating_cooling_singlehost()
     # plot_heating_cooling_ratio_singlehost()
 
-    plot_global_heating_cooling_singlehost_minihalo(redshift = 15)
+    # plot_global_heating_cooling_singlehost_minihalo(redshift = 15)
 

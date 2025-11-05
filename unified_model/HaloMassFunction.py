@@ -429,16 +429,22 @@ def HMF_ratio_2Dbestfit(lg_mass, redshift):
     # print("a, b, c, d, e, f: ", params)
     return fitFunc_hmf_ratio_2D((lg_mass, redshift), *hmf_ratio_params)
 
-def HMF_2Dbestfit(lgM, redshift):
+def HMF_2Dbestfit(lgM, redshift, include_selection_factor = False):
     '''
     Parameters:
     lgM: log10(Mass [Msun/h])
     redshift
+    include_selection_factor: whether to include the ratio between selected HMF and total HMF,
+    which is fitted from TNG simulation results. Since this is just a resolution issue, we set it to False by default.
     Returns:
     HMF [dN/dlgM [(Mpc/h)^(-3)]]  (in physical units, not comoving)
     '''
+    if include_selection_factor:
+        selection_factor = HMF_ratio_2Dbestfit(lgM, redshift)
+    else:
+        selection_factor = 1.0
 
-    return HMF_Colossus(10**lgM, redshift, 'sheth99')* np.log(10)*10**lgM * HMF_ratio_2Dbestfit(lgM, redshift)
+    return HMF_Colossus(10**lgM, redshift, 'sheth99')* np.log(10)*10**lgM * selection_factor
 
 
 #----------------------------------- Subhalo Mass Function -----------------------------------

@@ -162,7 +162,7 @@ def integrate_SHMF_heating_for_single_host_PoissonSampling(redshift, lgx_min, lg
     SHMF_heating_for_host_samples = np.array(SHMF_heating_for_host_samples)
     return SHMF_heating_for_host_samples
 
-def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_model, mean_molecular_weight=mu):
+def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_model, mean_molecular_weight=mu, PoissonSamplingFlag = False):
     '''
     return:
     data_dict = {'lgM_list':lgM_list, 
@@ -172,15 +172,40 @@ def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_mod
     Heating_singlehost = []
     Heating_perlgM = []
     Heating_perlgM_totHMF = []
+    if PoissonSamplingFlag:
+        # Percentiles corresponding to ±1, ±2, ±3 sigma ranges
+        percentiles = [16, 84, 2.5, 97.5, 0.15, 99.85]
+        hs_perc = {p: [] for p in percentiles}
+        hs_mean = []  # Store mean heating rate from Poisson samples
+        hs_median = []
+
+
     for index, lgM in enumerate(lgM_list):
         lgx_min = lgx_min_list[index]
         lgx_max = lgx_max_list[index]
         heating = integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF_model, mean_molecular_weight)
+        
         dN_dlgM = HMF_2Dbestfit(lgM, redshift, include_selection_factor=True) 
         dN_dlgM_totHMF = HMF_2Dbestfit(lgM, redshift, include_selection_factor=False)
         Heating_singlehost.append(heating)
         Heating_perlgM.append(heating*dN_dlgM)
         Heating_perlgM_totHMF.append(heating*dN_dlgM_totHMF)
+        
+        if PoissonSamplingFlag:  #use Poisson sampling of SHMF to see the variance of heating
+            n_samples = 500
+            heating_of_samples = integrate_SHMF_heating_for_single_host_PoissonSampling(redshift, 
+                                lgx_min, lgx_max, lgM, SHMF_model, n_samples, mean_molecular_weight=mean_molecular_weight, verbose=True)
+
+
+            heating_of_samples = np.asarray(heating_of_samples).reshape(-1)
+            hs_mean.append(np.mean(heating_of_samples))
+            hs_median.append(np.median(heating_of_samples))
+            # Compute and store required percentiles
+            pct_vals = np.percentile(heating_of_samples, percentiles)
+            for p, v in zip(percentiles, pct_vals):
+                hs_perc[p].append(v)
+
+
 
     Heating_singlehost = np.array(Heating_singlehost)
     Heating_perlgM = np.array(Heating_perlgM)
@@ -190,10 +215,38 @@ def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_mod
                  'Heating_singlehost':Heating_singlehost, 
                  'Heating_perlgM':Heating_perlgM,
                  'Heating_perlgM_totHMF':Heating_perlgM_totHMF}
+
+    if PoissonSamplingFlag:
+        # Add Poisson statistics results
+        data_dict['Heating_singlehost_mean'] = np.array(hs_mean)
+        data_dict['Heating_singlehost_median'] = np.array(hs_median)
+
+        # Add ±1, ±2, ±3 sigma percentile values
+        data_dict['Heating_singlehost_p16'] = np.array(hs_perc[16])
+        data_dict['Heating_singlehost_p84'] = np.array(hs_perc[84])
+        data_dict['Heating_singlehost_p2p5'] = np.array(hs_perc[2.5])
+        data_dict['Heating_singlehost_p97p5'] = np.array(hs_perc[97.5])
+        data_dict['Heating_singlehost_p0p15'] = np.array(hs_perc[0.15])
+        data_dict['Heating_singlehost_p99p85'] = np.array(hs_perc[99.85])
+        
+
     return data_dict
 
+def create_heating_data_dict_with_fgas(data_dict, f_gas):
+    ratio = f_gas / (Omega_b / Omega_m)
+    heating_data_dict_with_fgas = copy.deepcopy(data_dict)
+    for key in ['Heating_singlehost', 'Heating_perlgM', 'Heating_perlgM_totHMF']:
+        heating_data_dict_with_fgas[key] = data_dict[key] * ratio
+    #if PoissonSamplingFlag also scale those
+    if 'Heating_singlehost_mean' in data_dict:
+        additional_keys = ['Heating_singlehost_mean', 'Heating_singlehost_p16', 'Heating_singlehost_p84', 
+        'Heating_singlehost_p2p5', 'Heating_singlehost_p97p5', 'Heating_singlehost_p0p15', 'Heating_singlehost_p99p85']
+        for key in additional_keys:
+            heating_data_dict_with_fgas[key] = data_dict[key] * ratio
+    return heating_data_dict_with_fgas
 
-def get_EqCooling_for_single_host(Mvir, redshift, param_sets, mean_molecular_weight=mu):
+
+def get_EqCooling_for_single_host(Mvir, redshift, param_sets, mean_molecular_weight=mu, converge_when_setup=True):
     """
     Calculate cooling rates for multiple parameter sets
     Parameters:
@@ -246,7 +299,7 @@ def get_EqCooling_for_single_host(Mvir, redshift, param_sets, mean_molecular_wei
         cooling_Eq = run_constdensity_model(
             params_for_constdensity, UVB_flag=UVB_flag, 
             Compton_Xray_flag=Compton_Xray_flag, dynamic_final_flag=dynamic_final_flag,
-            converge_when_setup=False,
+            converge_when_setup=converge_when_setup,
         )
 
         normalized_cooling = cooling_Eq["cooling_rate"].v
@@ -265,7 +318,7 @@ def get_EqCooling_for_single_host(Mvir, redshift, param_sets, mean_molecular_wei
         #     print("Total cooling rate: ", tot_cooling_rate)
         
         # Create result dictionary with all input parameters and the cooling rate
-        result = -tot_cooling_rate  # Add the cooling rate
+        result = float(-tot_cooling_rate)  # Add the cooling rate
         
         results.append(result)
     
@@ -621,6 +674,7 @@ def plot_cosmic_DFheating(redshift, snapNum = None):
 
     print("Figure saved to: ", filename)
     plt.close()
+    
 
 #compare cooling and DF heating for massive halos at low-z
 def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
@@ -641,96 +695,94 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
     print("Calculating DF heating for host halo ...")
     # data_minMJeans_max1 = get_heating_per_lgM(lgM_list, lgx_min_MJeans_list, lgx_max_1_list, redshift, 'BestFit_z')
     data_min3_max1 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'BestFit_z')
-    data_min3_max0 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'BestFit_z')
-    data_min3_max0_Bosch16evolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16evolved')
-    data_min3_max0_Bosch16unevolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16unevolved')
+    data_min3_max0 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'BestFit_z', mean_molecular_weight=mu, PoissonSamplingFlag=True)
+    # data_min3_max0_Bosch16evolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16evolved')
+    # data_min3_max0_Bosch16unevolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16unevolved')
 
     # same as data_min3_max0, but with fg = 0.05
-    data_min3_max0_fg005 = copy.deepcopy(data_min3_max0)
-    data_min3_max0_fg005['Heating_perlgM'] *= (0.05/(Omega_b/Omega_m))
-    data_min3_max0_fg005['Heating_singlehost'] *= (0.05/(Omega_b/Omega_m))
+    data_min3_max0_fg005 = create_heating_data_dict_with_fgas(data_min3_max0, f_gas=0.05)
 
     plot_heating_datasets = [
-        {
-            "data": data_min3_max1,
-            "color": 'r',
-            "label": r'$[10^{-3},10^{-1}]$ BestFit, f$_g = \Omega_b/\Omega_m$',
-            "linestyle": ':',
-            "linewidth": 2
-        },
-        {
-            "data": data_min3_max0,
-            "color": 'r',
-            "label": r'$[10^{-3},1]$ BestFit, f$_g = \Omega_b/\Omega_m$',
-            "linestyle": ':',
-            "linewidth": 4
-        },
+        # {
+        #     "data": data_min3_max1,
+        #     "color": 'r',
+        #     "label": r'$[10^{-3},10^{-1}]$ BestFit, f$_g = \Omega_b/\Omega_m$',
+        #     "linestyle": ':',
+        #     "linewidth": 2
+        # },
+        # {
+        #     "data": data_min3_max0,
+        #     "color": 'r',
+        #     "label": r'$[10^{-3},1]$ BestFit, f$_g = \Omega_b/\Omega_m$',
+        #     "linestyle": ':',
+        #     "linewidth": 4
+        # },
         {
             "data": data_min3_max0_fg005,
-            "color": 'orange',
+            "color": 'red',
             "label": r'$[10^{-3},1]$ BestFit, f$_g$=0.05',
             "linestyle": ':',
             "linewidth": 4
         },
-        {
-            "data": data_min3_max0_Bosch16evolved,
-            "color": 'grey',
-            "label": r'$[10^{-3},1]$ Bosch16evolved, f$_g = \Omega_b/\Omega_m$',
-            "linestyle": '-',
-            "linewidth": 2
-        },
-        {
-            "data": data_min3_max0_Bosch16unevolved,
-            "color": 'grey',
-            "label": r'$[10^{-3},1]$ Bosch16unevolved, f$_g = \Omega_b/\Omega_m$',
-            "linestyle": '--',
-            "linewidth": 2
-        }
+        # {
+        #     "data": data_min3_max0_Bosch16evolved,
+        #     "color": 'grey',
+        #     "label": r'$[10^{-3},1]$ Bosch16evolved, f$_g = \Omega_b/\Omega_m$',
+        #     "linestyle": '-',
+        #     "linewidth": 2
+        # },
+        # {
+        #     "data": data_min3_max0_Bosch16unevolved,
+        #     "color": 'grey',
+        #     "label": r'$[10^{-3},1]$ Bosch16unevolved, f$_g = \Omega_b/\Omega_m$',
+        #     "linestyle": '--',
+        #     "linewidth": 2
+        # }
     ]
     
     #then calculate cooling rates
     print("calculating cooling rates for host halo ...")
     Z_Dekel = 0.3*10**(-0.17*redshift)
     cooling_param_sets = [
-        {"gas_metallicity": 1.0e-6, "f_H2": 0.0},
-        {"gas_metallicity": 1.0e-2, "f_H2": 0.0},
+        {"gas_metallicity": 1.0e-3, "f_H2": 0.0},
+        {"gas_metallicity": 1.0, "f_H2": 0.0},
         {"gas_metallicity": Z_Dekel, "f_H2": 0.0},
-        {"gas_metallicity": Z_Dekel, "f_H2": 0.0},
-
-        # {"gas_metallicity": 1.0e-6, "f_H2": 1.0e-5},
-        # {"gas_metallicity": 1.0e-6, "f_H2": 1.0e-4},
-        # {"gas_metallicity": 1.0e-6, "f_H2": 1.0e-3},
-        # {"gas_metallicity": 1.0e-2, "f_H2": 1.0e-4},
     ]
-    colors = ['blue','blue','blue','cyan','deepskyblue','cyan','lime','cyan']
-    markers = ['o','s','^','^','o','o','o','s']
-    markersizes = [20, 20, 20, 20, 10, 10, 10, 10]
-    fg_cooling = [0.05, 0.05, 0.05, (Omega_b/Omega_m), 0.05, 0.05, 0.05, 0.05]
+    colors = ['blue','blue','blue']
+    # markers = ['o','s','^','^','o','o','o','s']
+    # markersizes = [20, 20, 20, 20, 10, 10, 10, 10]
+    linestyles = ['-','-','-']
+    fg_cooling = [0.05, 0.05, 0.05]
     fg_correction = [fg/(Omega_b/Omega_m) for fg in fg_cooling]
     fg_correction_sq = [fg**2 for fg in fg_correction]
 
     cooling_results = []
+    profile_type = 'core' #'core' or 'NFW'
+    concentration_model = 'diemer19' #remember to change the concentration model in Dekel08.py
     
     for lgM in lgM_list:
         Mvir = 10**lgM
-        c = get_concentration(Mvir/h_Hubble, redshift, 'ludlow16')
-        profile_correction_for_cooling = c**3*(c**2+5*c+10)/30/(c+1)**5 * c**3/3/f_core(c)**2
-        profile_correction_Dekel08 = c**3/(90*f_core(c))
+        c = get_concentration(Mvir/h_Hubble, redshift, concentration_model)
+        profile_correction_for_cooling = get_profile_corr_for_cooling(profile_type, c)
+        # profile_correction_Dekel08 = c**3/(90*f_core(c)) only for testing Dekel08 approx
         # print("lgM: ",lgM, "c: ",c, "profile_correction_for_cooling: ",profile_correction_for_cooling)
         # print("profile_correction_Dekel08_approx: ",profile_correction_Dekel08)
-        
-        cooling_result = get_EqCooling_for_single_host(Mvir, redshift, cooling_param_sets)
 
-        #debug: the effect of cooling density integral
-        #use Dekel08 profile correction for now
+        cooling_result = get_EqCooling_for_single_host(Mvir, redshift, cooling_param_sets, converge_when_setup=True)
         cooling_result = np.array(cooling_result) * profile_correction_for_cooling 
         
         cooling_results.append(cooling_result)
     cooling_results = np.array(cooling_results) #shape: (len(lgM_list), len(cooling_param_sets))
 
+    print("cooling results shape: ", cooling_results.shape)
+
+
+
     #fg correction
     for i in range(len(cooling_param_sets)):
         cooling_results[:, i] *= fg_correction_sq[i]
+    print("cooling results shape: ", cooling_results.shape)
+    
 
 
     def get_cooling_label(metallicity, f_H2, fg):
@@ -740,17 +792,18 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
             fg_label = rf'f$_g={fg:.2f}$'
 
         if f_H2 == 0.0:
-            return f'Z={metallicity:.1e} Zsun' + ', ' + fg_label
+            return f'Z={metallicity:.2f}' + r' Z$_{\odot}$' + ', ' + fg_label
         else:
-            return f'Z={metallicity:.1e} Zsun, f_H2={f_H2:.1e}' + ', ' + fg_label
+            return f'Z={metallicity:.2f}' + r' Z$_{\odot}$' + f', f_H2={f_H2:.2f}' + ', ' + fg_label
 
     plot_cooling_datasets = [
         {
             "data": cooling_results[:, i],
             "color": colors[i],
             "label": get_cooling_label(cooling_param_sets[i]["gas_metallicity"], cooling_param_sets[i]["f_H2"], fg_cooling[i]),
-            "marker": markers[i],
-            "markersize": markersizes[i],
+            # "marker": markers[i],
+            # "markersize": markersizes[i],
+            "linestyle": linestyles[i],
         } for i in range(len(cooling_param_sets))
     ]
     
@@ -760,38 +813,85 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
         fg = 0.05
         fc = 0.05
         massive_lgM_list = np.linspace(11, 15, 50)
+        #modify the concentration model in Dekel08!
         heating_Dekel08_fid = np.array([get_heating_Dekel08(10**lgM/h_Hubble, redshift, fc) for lgM in massive_lgM_list])
-        cooling_Dekel08_fid = np.array([get_cooling_Dekel08(10**lgM/h_Hubble, redshift, fg) for lgM in massive_lgM_list])
+        cooling_Dekel08_fid = np.array([get_cooling_Dekel08(10**lgM/h_Hubble, redshift, fg, profile_type) for lgM in massive_lgM_list])
         print("cooling_Dekel08_fid:", cooling_Dekel08_fid)
 
 
-    selected_heating_datasets_index = [0, 1, 2, 3, 4]
-    heating_datasets = [plot_heating_datasets[i] for i in selected_heating_datasets_index]
+    # selected_heating_datasets_index = [0, 1, 2]
+    # heating_datasets = [plot_heating_datasets[i] for i in selected_heating_datasets_index]
+    heating_datasets = plot_heating_datasets
     output_dir = '/home/zwu/21cm_project/unified_model/Analytic_results/singlehost'
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    filename = os.path.join(output_dir,f"DF_heating_singlehost_z{redshift:.2f}_profilefgcorr.png")
+    filename = os.path.join(output_dir,f"DF_heating_singlehost_z{redshift:.2f}_{profile_type}_{concentration_model}.png")
 
     fig, ax1 = plt.subplots(figsize=(8, 6), facecolor='white')
-    for dataset in heating_datasets:
-        ax1.plot(dataset["data"]["lgM_list"], 1e7*dataset["data"]["Heating_singlehost"], 
-                color=dataset["color"], 
-                label=dataset["label"],
-                linestyle=dataset["linestyle"], 
-                linewidth=dataset["linewidth"])
+    # for dataset in heating_datasets:
+    #     ax1.plot(dataset["data"]["lgM_list"], 1e7*dataset["data"]["Heating_singlehost"], 
+    #             color=dataset["color"], 
+    #             label=dataset["label"],
+    #             linestyle=dataset["linestyle"], 
+    #             linewidth=dataset["linewidth"])
+    
+    def add_SHMF_heating_variation_to_plot(ax1, data_SHMFvariation, color, heating_label):
+        ax1.plot(data_SHMFvariation["lgM_list"],1e7*data_SHMFvariation["Heating_singlehost_mean"], color='red', linestyle='-', linewidth=1.5, label=heating_label+' Mean')
+        ax1.plot(data_SHMFvariation["lgM_list"],1e7*data_SHMFvariation["Heating_singlehost_median"], color='red', linestyle=':', linewidth=1.5, label='Median')
+        
+        ax1.fill_between(data_SHMFvariation["lgM_list"], 
+                        1e7*data_SHMFvariation["Heating_singlehost_p16"],
+                        1e7*data_SHMFvariation["Heating_singlehost_p84"],
+                        alpha=0.4, color = color, label='16/84 %')
+        ax1.fill_between(data_SHMFvariation["lgM_list"], 
+                        1e7*data_SHMFvariation["Heating_singlehost_p2p5"],
+                        1e7*data_SHMFvariation["Heating_singlehost_p97p5"],
+                        alpha=0.2, color = color, label='2.5/97.5 %')
+        ax1.fill_between(data_SHMFvariation["lgM_list"], 
+                        1e7*data_SHMFvariation["Heating_singlehost_p0p15"],
+                        1e7*data_SHMFvariation["Heating_singlehost_p99p85"],
+                        alpha=0.1, color = color, label='0.15/99.85 %')
+        
+        
+    # add_SHMF_heating_variation_to_plot(ax1, data_min3_max0, 'red')
+    heating_label = r'$[10^{-3},1]$ BestFit, f$_g$=0.05'
+    add_SHMF_heating_variation_to_plot(ax1, data_min3_max0_fg005, 'orange', heating_label)
+        
+    #fit the slope of heating rate 
+    data_SHMFvariation = data_min3_max0_fg005
+    x_fit = np.array(data_SHMFvariation["lgM_list"])
+    y_fit = np.log10(data_SHMFvariation["Heating_singlehost_mean"])
+    heating_slope, intercept = np.polyfit(x_fit, y_fit, 1)
+    print(f"Fitted heating slope: {heating_slope:.3f} at z={redshift}")
 
-    for dataset in plot_cooling_datasets:
-        ax1.scatter(lgM_list, dataset["data"], 
-                    edgecolors=dataset["color"],
-                    facecolors='none',
-                    label=dataset["label"],
-                    marker=dataset["marker"],
-                    s=dataset["markersize"],
-                    )
+
+    # for dataset in plot_cooling_datasets:
+    #     ax1.scatter(lgM_list, dataset["data"], 
+    #                 edgecolors=dataset["color"],
+    #                 facecolors='none',
+    #                 label=dataset["label"],
+    #                 marker=dataset["marker"],
+    #                 s=dataset["markersize"],
+    #                 )
+    selected_plot_cooling_datasets_index = [2]
+    for i in selected_plot_cooling_datasets_index:
+        dataset = plot_cooling_datasets[i]
+        ax1.plot(lgM_list, dataset["data"], 
+                color=dataset["color"],
+                label=dataset["label"],
+                linestyle=dataset["linestyle"],
+                )
+    #fill between the metallicity range 
+    minZ = cooling_param_sets[0]["gas_metallicity"]; maxZ = cooling_param_sets[1]["gas_metallicity"]
+    cooling_minZ = cooling_results[:,0]; cooling_maxZ = cooling_results[:,1]
+    # cooling_Zrange_label = f'Z={minZ:.1e}-{maxZ:.1f}'+r' Z$_{\odot}$, f$_g$=0.05'
+    cooling_Zrange_label = f'Z=0.001-1'+r' Z$_{\odot}$, f$_g$=0.05'
+    
+    ax1.fill_between(lgM_list, cooling_minZ, cooling_maxZ, color='blue', alpha=0.3, label=cooling_Zrange_label)
         
     if redshift <= 8.0:
-        ax1.plot(massive_lgM_list, heating_Dekel08_fid, color='crimson', linestyle='-', label=r'Heating Dekel08 (f$_c$ = 0.05)')    
-        ax1.plot(massive_lgM_list, cooling_Dekel08_fid, 'b-', label=rf'Cooling Dekel08 (Z = {Z_Dekel:.1e} Zsun, f$_g$ = 0.05)')
+        ax1.plot(massive_lgM_list, heating_Dekel08_fid, color='crimson', linestyle='--', label=r'Gravitational heating Dekel07 (f$_c$ = 0.05)')    
+        ax1.plot(massive_lgM_list, cooling_Dekel08_fid, linestyle='--', color = "darkblue", label=f'Cooling Dekel07 (Z = {Z_Dekel:.2f}'+ r' Z$_{\odot}$, f$_g$ = 0.05)')
     
     if redshift == 0.0:
         M_Kim2005 = Kim2005_result[0]*h_Hubble #Msun/h
@@ -800,7 +900,7 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
 
 
     handles, labels = ax1.get_legend_handles_labels()
-    heating_keywords = ['Heating', 'BestFit', 'Bosch', 'Kim']
+    heating_keywords = ['Heating', 'heating', 'BestFit', 'Bosch', 'Kim', 'Mean', 'Median', '%']
     heating_handles_labels = [(h, l) for h, l in zip(handles, labels) if any(k in l for k in heating_keywords)]
     cooling_handles_labels = [(h, l) for h, l in zip(handles, labels) if not any(k in l for k in heating_keywords)]
 
@@ -811,11 +911,29 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
     # Add back the first legend manually so it doesn't get overwritten
     ax1.add_artist(legend1)
 
+    #add annotation of heating slope
+    if max_lgM >=14.5:
+        starting_lgM_for_annotation = 13.0
+        starting_heating_for_annotation = 1.0e37
+        ending_lgM_for_annotation = 14.5
+    else:
+        starting_lgM_for_annotation = 11.5
+        starting_heating_for_annotation = 1.0e44
+        ending_lgM_for_annotation = 12.5
+
+    ending_heating_for_annotation = starting_heating_for_annotation * 10**(heating_slope * (ending_lgM_for_annotation - starting_lgM_for_annotation))
+    ax1.plot([starting_lgM_for_annotation, ending_lgM_for_annotation],
+            [starting_heating_for_annotation, ending_heating_for_annotation],
+            color='black', linestyle='-', linewidth=1)
+    text_for_annotation = "Heating ∝ M$^{" + f"{heating_slope:.2f}" + "}$"
+    ax1.text((starting_lgM_for_annotation + ending_lgM_for_annotation)/2,
+            (starting_heating_for_annotation + ending_heating_for_annotation)*0.1,
+            text_for_annotation, fontsize=12, ha='center')
 
     ax1.set_xlim([min(lgM_list),max(lgM_list)])
     ax1.set_yscale('log')
     ax1.set_ylabel(r'Cooling and Heating [erg/s]',fontsize=14)
-    ax1.set_xlabel(r'lgM [M$_{\odot}$/h]',fontsize=14)
+    ax1.set_xlabel(r'log$_{10}$ M [M$_{\odot}$/h]',fontsize=14)
     ax1.tick_params(axis='both', direction='in')
     ax1.grid(alpha = 0.3)
 
@@ -842,10 +960,12 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
 
     plt.tight_layout()
     plt.savefig(filename,dpi=300)
+    print(f"Plot saved to {filename}")  
+    plt.close()
 
 
 
-
+    """
     #also save the heating and cooling results to a text file
     lgM_list = np.array(lgM_list)
     txt_filename = os.path.join(output_dir,f"singlehost_z{redshift:.2f}.txt")
@@ -860,19 +980,20 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM):
                     f"{plot_cooling_datasets[1]['data'][i].item():.2e}, "
                     f"{plot_cooling_datasets[2]['data'][i].item():.2e}\n")
 
-                    
+    """               
 
 def run_heating_cooling_singlehost():
     # plot_global_heating_cooling_singlehost(0, 10, 15)
     # plot_global_heating_cooling_singlehost(1, 10, 15)
     # plot_global_heating_cooling_singlehost(2, 10, 15)
     # plot_global_heating_cooling_singlehost(3, 10, 14)
-    # plot_global_heating_cooling_singlehost(4, 10, 14)
+    plot_global_heating_cooling_singlehost(4, 10, 13)
     # plot_global_heating_cooling_singlehost(5, 9, 13)
     # plot_global_heating_cooling_singlehost(6, 9, 13)
     # plot_global_heating_cooling_singlehost(7, 9, 12)
-    plot_global_heating_cooling_singlehost(8, 9, 12)
+    # plot_global_heating_cooling_singlehost(8, 9, 12)
 
+"""
 def plot_heating_cooling_ratio_singlehost():
     z_list = [0, 1, 2, 3, 4, 5, 6, 7, 8]
     base_dir = '/home/zwu/21cm_project/unified_model/Analytic_results/singlehost'
@@ -921,7 +1042,7 @@ def plot_heating_cooling_ratio_singlehost():
     plt.tight_layout()
     plt.savefig(os.path.join(base_dir, 'heating_cooling_ratio.png'), dpi=300)
 
-
+"""
 
 #compare cooling and DF heating for minihalos at high-z
 def plot_global_heating_cooling_singlehost_minihalo(redshift):
@@ -982,15 +1103,17 @@ def plot_global_heating_cooling_singlehost_minihalo(redshift):
     fg_correction_sq = fg_correction**2
 
     cooling_results = []
-    
+    profile_type = 'core' #core or NFW
+    concentration_model = 'diemer19'
+
     for lgM in lgM_list:
         Mvir = 10**lgM
-        c = get_concentration(Mvir/h_Hubble, redshift, 'ludlow16')
-        profile_correction_for_cooling = c**3*(c**2+5*c+10)/30/(c+1)**5 * c**3/3/f_core(c)**2
+        c = get_concentration(Mvir/h_Hubble, redshift, concentration_model)
+        profile_correction_for_cooling = get_profile_corr_for_cooling(profile_type, c)
         profile_correction_Dekel08 = c**3/(90*f_core(c))
         print("lgM: ",lgM, "c: ",c, "profile_correction_for_cooling: ",profile_correction_for_cooling)
         
-        cooling_result = get_EqCooling_for_single_host(Mvir, redshift, cooling_param_sets, mean_molecular_weight=mu_minihalo)
+        cooling_result = get_EqCooling_for_single_host(Mvir, redshift, cooling_param_sets, mean_molecular_weight=mu_minihalo, converge_when_setup=False)
 
         #debug: the effect of cooling density integral
         #use Dekel08 profile correction for now
@@ -1100,15 +1223,15 @@ def plot_global_heating_cooling_singlehost_minihalo(redshift):
 if __name__ == "__main__":
     
     #1. cosmic DF heating (integrate over HMF)
-    z_list = [15, 12, 10, 8, 6, 3, 0]
-    snapNum_list = [1, 2, 4, 8, 13, 25, 99]
+    # z_list = [15, 12, 10, 8, 6, 3, 0]
+    # snapNum_list = [1, 2, 4, 8, 13, 25, 99]
    
-    for z, snapNum in zip(z_list, snapNum_list):
-        plot_cosmic_DFheating(z, snapNum)
+    # for z, snapNum in zip(z_list, snapNum_list):
+    #     plot_cosmic_DFheating(z, snapNum)
     # plot_peak_lgM_cosmic_DFheating()
 
     #2. cimpare heating and cooling for a single host halo
-    # run_heating_cooling_singlehost()
+    run_heating_cooling_singlehost()
     # plot_heating_cooling_ratio_singlehost()
 
     # plot_global_heating_cooling_singlehost_minihalo(redshift = 15)

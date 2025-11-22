@@ -29,6 +29,20 @@ def f_NFW(x):
 def f_core(x):
     return np.log(1+x) -x*(3*x+2)/2/(x+1)**2
 
+def get_profile_corr_for_cooling(profile_type, concentration):
+    c = concentration
+    if profile_type == 'NFW':
+        factor1 = 1.0/3.0*(1 - 1.0/(c+1)**3)
+        factor2 = c**3/(3 * f_NFW(c)**2)
+    elif profile_type == 'core':
+        factor1 = c**3*(c**2+5*c+10)/30/(c+1)**5
+        factor2 = c**3/(3*f_core(c)**2)
+    else:
+        raise ValueError(f"Unknown profile_type: {profile_type}")
+
+    return (factor1 * factor2)
+
+
 def get_concentration(M_in_Msun, z, model_name):
     '''
     parameters:

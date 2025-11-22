@@ -4,10 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from physical_constants import *
 import HaloProperties
-from Analytic_halo_profile import f_NFW, f_core, get_concentration
+from Analytic_halo_profile import f_NFW, f_core, get_concentration, get_profile_corr_for_cooling
 import os
 import matplotlib.ticker as ticker
-concentration_model = 'ludlow16'
+concentration_model = 'diemer19'
 
 def get_Dekel08_A(z):
 
@@ -132,11 +132,11 @@ def get_cooling_Dekel08_Eq25(M, z, fg):
     cooling_rate_erg = cooling_rate * 1e7 #convert to erg/s
     return cooling_rate_erg
 
-def get_cooling_Dekel08(M, z, fg, debug_output = False):
+def get_cooling_Dekel08(M, z, fg, profile_type, debug_output = False):
     #M in Msun, return cooling rate in erg/s
     c = get_concentration(M, z, concentration_model)
     A = get_Dekel08_A(z)
-    profile_correction_for_cooling = c**3*(c**2+5*c+10)/30/(c+1)**5 * c**3/3/f_core(c)**2
+    profile_correction_for_cooling = get_profile_corr_for_cooling(profile_type, c)
     T6 = get_T6_approx(M, z)
     Z = get_mean_metallicity_DB06(z)
     Lambda23 = 6.0*(Z/0.3)**0.7 * T6**(-1) + 0.2*T6**(1/2)  #Lambda in 1e-23 erg/s*cm^3

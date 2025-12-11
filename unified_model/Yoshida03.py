@@ -10,10 +10,11 @@ from matplotlib.colors import Normalize
 import cmcrameri.cm as cmc
 from scipy.interpolate import interp1d
 from colossus.cosmology import cosmology
+from scipy.optimize import brentq
 
 
 from physical_constants import h_Hubble, H0_s, Omega_m, Omega_b, Ombh2, Myr, cosmo, Msun, mu_minihalo, \
-    eV, kB, Mpc, mp, rho_b0, rho_m0
+    eV, kB, Mpc, mp, rho_b0, rho_m0, hydrogen_mass_fraction
 from HaloProperties import Temperature_Virial_analytic, get_gas_lognH_analytic, \
 inversefunc_Temperature_Virial_analytic, get_mass_density_analytic
 from Grackle_cooling import run_constdensity_model
@@ -194,6 +195,7 @@ def get_fH2_Yoshida03(T):
     #for Tvir = 2300*(0.5**(2/3)) K, fH2 = 8e-5 (see section 4 of Yoshida 2003) 
     
     return 1.254e-9*T**1.52
+
 def get_ss_factor_WG11(Tgas, NH2):
     x = NH2 / 5.0e14
     b5 = np.sqrt(2*kB*Tgas/2/mp)/(1e5 * 1e-2) 
@@ -838,6 +840,88 @@ def add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM, lgM_to_Tvir):
         ax2.tick_params(axis='x', which='minor', labelbottom=False, labeltop=False)
 
     return ax2
+
+
+def add_accretion_axis(ax1, T_list, z,
+                       fH2_for_critical_accretion=1e-5,
+                       acc_ticks_major=None,
+                       acc_ticks_minor=None,
+                       labelpad=18):
+    """
+    Add critical mass accretion rate axis above mass axis.
+
+    Major & minor ticks are directly defined in accretion-rate domain.
+    They are mapped back to Tvir for tick positions.
+    """
+    acc_axis = "unstable_cloud_Inayoshi20" # "unstable_cloud_Inayoshi20" or "crit_acc_Yoshida03"
+
+    # Defaults: decade + half-decade ticks
+    if acc_ticks_major is None:
+        acc_ticks_major = [10**i for i in range(-8, 2)]  # 1e-8 ... 1e1
+        # acc_ticks_major = [10**i for i in range(-5, 2)]  # 1e-5 ... 1e1
+
+    if acc_ticks_minor is None:
+        acc_ticks_minor = [5*10**i for i in range(-8, 2)]  # 5e-8 ... 5e1
+
+    ax3 = ax1.twiny()
+    ax3.set_xlim(ax1.get_xlim())
+    ax3.set_xscale('log')
+    ax3.spines["top"].set_position(("axes", 1.18))
+
+    T_min, T_max = min(T_list), max(T_list)
+    M_min = 10**Tvir_to_lgM_minihalo(T_min, z)
+    M_max = 10**Tvir_to_lgM_minihalo(T_max, z)
+
+    # ===== Major ticks =====
+    major_locs = []
+    for acc in acc_ticks_major:
+        if acc_axis == "crit_acc_Yoshida03":
+            def f(M):
+                return get_critical_mass_accretion_rate(z, M,
+                                                        fH2_for_critical_accretion)["dM_dt_crit_Msun_yr"] - acc
+            
+            f_min = f(M_min)
+            f_max = f(M_max)
+            try:
+                M_sol = brentq(f, M_min, M_max)
+                T_sol = lgM_to_Tvir_minihalo(np.log10(M_sol), z)
+                major_locs.append(T_sol)
+            except ValueError:
+                major_locs.append(np.nan)
+        elif acc_axis == "unstable_cloud_Inayoshi20":
+            def f(T):
+                return 4.0e-3 * (T/1e3)**1.5 - acc  #Msun/yr
+            f_min = f(T_min)
+            f_max = f(T_max)
+            try:
+                T_sol = brentq(f, T_min, T_max)
+                major_locs.append(T_sol)
+            except ValueError:
+                major_locs.append(np.nan)
+
+    valid_ticks = [(loc, acc) for loc, acc in zip(major_locs, acc_ticks_major) if not np.isnan(loc)]
+    ax3.set_xticks([loc for loc, _ in valid_ticks])
+    ax3.set_xticklabels([f"{acc:.0e}" for _, acc in valid_ticks], fontsize=11)
+
+
+
+    # Hide minor ticks AND their labels
+    ax3.minorticks_off()
+    ax3.tick_params(axis='x', which='minor', bottom=False, top=False, labelbottom=False, labeltop=False)
+
+    # ax3.xaxis.set_minor_locator(FixedLocator(minor_locs))
+    # ax3.tick_params(axis='x', which='minor', length=4)
+    if acc_axis == "crit_acc_Yoshida03":
+        ax3.set_xlabel(r"Critical mass accretion rate [M$_\odot$/yr] (z = " + str(z) + ", f$_{\mathrm{H}_2}$ = " + f"{fH2_for_critical_accretion:.1e}" + ")",
+                   fontsize=15, labelpad=labelpad)
+    elif acc_axis == "unstable_cloud_Inayoshi20":
+        ax3.set_xlabel(r"Mass accretion rate in gas cloud [M$_\odot$/yr]",
+                   fontsize=15, labelpad=labelpad)
+
+    return ax3
+
+
+
 
 def plot_fH2_vs_T(z):
 
@@ -1620,7 +1704,7 @@ def _iter_points_for_paper(paper, lgM_to_Tvir_minihalo):
 
 def plot_Tvir_vs_fH2_by_paper(papers,
                               lgM_to_Tvir_minihalo,
-                              annotate="all",  # "all" 或 "extremes"
+                              annotate="all",  # "all" or "extremes"
                               fH2_ylim=(1e-8, 1e-2),
                               ax=None, cmap="viridis"):
     # gather all points
@@ -1665,6 +1749,10 @@ def plot_Tvir_vs_fH2_by_paper(papers,
             p_name_ext += " (Trad = 1e4 K)"
         elif p_name == "Latif2015_2e4K":
             p_name_ext = "Latif2015 (Trad = 2e4 K)"
+        elif p_name == "Shang2010_1e4K":
+            p_name_ext = "Shang2010 (Trad = 1e4 K)"
+        elif p_name == "Shang2010_1e5K":
+            p_name_ext = "Shang2010 (Trad = 1e5 K)"
 
         sub = [r for r in rows if r["paper"] == p_name]
         if not sub: continue
@@ -1678,13 +1766,18 @@ def plot_Tvir_vs_fH2_by_paper(papers,
                 np.array([r["fH2"] for r in rows]),
                 np.array([r["logJ"] for r in rows])
             )
-        # PopIII points (black edge)
-        T_pop, f_pop, c_pop = extract_arrays(PopIII_points)
-        ax.scatter(T_pop, f_pop,
-                c=c_pop, cmap=cmap_obj, norm=norm,
-                marker=paper_to_marker[p_name],
-                s=80, edgecolor="black", linewidths=0.6, alpha=0.9, label=p_name_ext)
 
+        ax.scatter([], [], marker=paper_to_marker[p_name],
+                    c="gray", edgecolor="None",
+                    s=80, alpha=0.9, label=p_name_ext)
+
+        # PopIII points (black edge)
+        # T_pop, f_pop, c_pop = extract_arrays(PopIII_points)
+        # ax.scatter(T_pop, f_pop,
+        #         c=c_pop, cmap=cmap_obj, norm=norm,
+        #         marker=paper_to_marker[p_name],
+        #         s=80, edgecolor="black", linewidths=0.6, alpha=0.9)
+      
         # DCBH candidates (red edge highlight)
         T_dcbh, f_dcbh, c_dcbh = extract_arrays(DCBH_points)
         ax.scatter(T_dcbh, f_dcbh,
@@ -1700,20 +1793,31 @@ def plot_Tvir_vs_fH2_by_paper(papers,
                 s=80, edgecolor="magenta", linewidths=1.2, alpha=0.9)
 
         # annotate redshifts for points
+        annotate = "DCBH_and_boundary"  # "all", "PopIII_only", "DCBH_and_boundary", "extremes", or None
         if annotate == "all":
             for r in sub:
                 ax.annotate(f"z={r['z']:.1f}", (r["Tvir"], r["fH2"]),
                             textcoords="offset points", xytext=(4, 4),
                             ha="left", va="bottom", fontsize=8, alpha=0.8)
-        elif annotate == "extremes":
-            # only annotate min and max z
-            zs = np.array([r["z"] for r in sub])
-            idxs = [int(np.argmin(zs)), int(np.argmax(zs))]
-            for i in idxs:
-                r = sub[i]
+        elif annotate == "PopIII_only":
+            for r in PopIII_points:
                 ax.annotate(f"z={r['z']:.1f}", (r["Tvir"], r["fH2"]),
                             textcoords="offset points", xytext=(4, 4),
-                            ha="left", va="bottom", fontsize=8, alpha=0.9, fontweight="bold")
+                            ha="left", va="bottom", fontsize=8, alpha=0.8)
+        elif annotate == "DCBH_and_boundary":
+            for r in DCBH_points + boundary_points:
+                ax.annotate(f"z={r['z']:.1f}", (r["Tvir"], r["fH2"]),
+                            textcoords="offset points", xytext=(4, 4),
+                            ha="left", va="bottom", fontsize=8, alpha=0.8)
+        # elif annotate == "extremes":
+            # only annotate min and max z
+            # zs = np.array([r["z"] for r in sub])
+            # idxs = [int(np.argmin(zs)), int(np.argmax(zs))]
+            # for i in idxs:
+            #     r = sub[i]
+            #     ax.annotate(f"z={r['z']:.1f}", (r["Tvir"], r["fH2"]),
+            #                 textcoords="offset points", xytext=(4, 4),
+            #                 ha="left", va="bottom", fontsize=8, alpha=0.9, fontweight="bold")
 
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -1736,14 +1840,14 @@ def plot_Tvir_vs_fH2_by_paper(papers,
 
     # Add annotation: PopIII collapse (upward arrow)
     ax.annotate("Collapse to form PopIII stars",
-                xy=(1e3, 1e-4),          # arrow pointing position
-                xytext=(1e3, 1e-5),     # text position (arrow start)
+                xy=(3e3, 1e-5),          # arrow pointing position
+                xytext=(1e3, 1e-6),     # text position (arrow start)
                 arrowprops=dict(arrowstyle="->", color="black", lw=1.5),
                 fontsize=11,
                 ha="center")
 
     # Add annotation: Grow to DCBH (right arrow)
-    ax.annotate("Grow to DCBH candidate",
+    ax.annotate("\n\nGrow to DCBH candidate",
                 xy=(4e3, 1e-7),          # arrow pointing position
                 xytext=(1e3, 1e-7),      # text position (arrow start)
                 arrowprops=dict(arrowstyle="->", color="black", lw=1.5),
@@ -1752,6 +1856,107 @@ def plot_Tvir_vs_fH2_by_paper(papers,
 
 
     return fig, ax
+
+def plot_precollapse_tracks(
+        ax,
+        store,
+        lgM_to_Tvir_minihalo,
+        R_int_au=1e7,
+        n_samples=2000,
+        fH2_floor=1e-8,
+        track_configs=None,
+        legend_loc='lower right'
+    ):
+    """
+    Plot pre-collapse evolution tracks (Latif2015 halo A, etc.)
+    Produces: scatter+line with z labels for each J21 case.
+    """
+    if track_configs is None:
+        track_configs = [
+            dict(
+                name="Halo A track (J21 = 1000)",
+                j21=1000.0,
+                halos=["haloA_z15", "haloA_z11", "haloA_z1064", "haloA_z1062"],
+                color="blue",
+            ),
+            dict(
+                name="Halo A track (J21 = 40000)",
+                j21=40000.0,
+                halos=["haloA_atomic_z12", "haloA_atomic_z11",
+                       "haloA_atomic_z1059", "haloA_atomic_z1058"],
+                color="red",
+            ),
+        ]
+
+    legend_handles = []
+    all_points_by_track = {}
+
+    for cfg in track_configs:
+
+        points = []
+
+        for name in cfg["halos"]:
+            z_plot = store[name][cfg["j21"]]["z_plot"]
+
+            frac_data = latif.mass_weighted_fH2(
+                halo=name,
+                j21=cfg["j21"],
+                integral_mode="radius",
+                r_range=[1e-5 * R_int_au, R_int_au],
+                profile_base="radius",
+                n_samples=n_samples,
+                fH2_floor=fH2_floor,
+                Mgas_range=None,
+                store=store,
+            )
+
+            Mgas = frac_data["Mgas_Msun"]
+            Mtot = Mgas / (Omega_b/Omega_m)
+            Tvir = lgM_to_Tvir_minihalo(np.log10(Mtot * h_Hubble), z_plot)
+
+            points.append({"z": z_plot,
+                           "Tvir": Tvir,
+                           "fH2": frac_data["fH2_avg"]})
+
+        # Sort by redshift (descending --> evolution forward)
+        points.sort(key=lambda p: p["z"], reverse=True)
+        all_points_by_track[cfg["name"]] = points
+
+        # Plot line+scatter
+        T = [p["Tvir"] for p in points]
+        f = [p["fH2"] for p in points]
+
+        ax.scatter(T, f,
+                   marker="o", s=80,
+                   color=cfg["color"], edgecolor="black", zorder=10)
+        ax.plot(T, f,
+                color=cfg["color"], linestyle="-", alpha=0.7, zorder=9)
+
+        # Annotate z
+        for p in points:
+            ax.annotate(f"z={p['z']:.2f}",
+                        (p["Tvir"], p["fH2"]),
+                        textcoords="offset points",
+                        xytext=(6,4),
+                        fontsize=9, alpha=0.9,
+                        color=cfg["color"])
+
+        # Legend proxy marker
+        legend_handles.append(
+            plt.Line2D([0], [0],
+                       marker='o', color=cfg["color"], lw=2,
+                       label=cfg["name"])
+        )
+
+    # Add legend separately
+    leg_tracks = ax.legend(handles=legend_handles,
+                           fontsize=12,
+                           loc=legend_loc,
+                           framealpha=0.6)
+    ax.add_artist(leg_tracks)
+
+    return all_points_by_track
+
 
 
 def plot_fH2_vs_T_from_SHMF_sampling(z):
@@ -1945,7 +2150,7 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
     fH2_Yoshida03 = get_fH2_Yoshida03(Tvir_fulllist)
 
 
-    fig, ax1 = plt.subplots(figsize=(9, 7))
+    fig, ax1 = plt.subplots(figsize=(10, 9))
     ax1.plot(Tvir_fulllist, fH2_Yoshida03, label=r'$f_{H_2} \propto T^{1.52}$ (Yoshida03)', color='dimgrey', linestyle='--')
  
     ax1.plot(T_list, fH2_critical, color = 'k', label='No heating')
@@ -1957,8 +2162,8 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
     ax1.fill_between(T_list, fH2_critical_p0015, fH2_critical_p9985,
                         alpha=0.1, color = 'orange', label='0.15/99.85 %')
 
-    # Mgas_max = 1e4 #Msun
-    integration_mode_for_all = "radius"
+    Mgas_max = 1e5 #Msun
+    integration_mode_for_all = "Mgas"
 
     papers = [
         dict(
@@ -1967,8 +2172,8 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
             halos=["haloA", "haloB", "haloC", "haloD", "haloE"],
             marker="s",
             integration_mode=integration_mode_for_all,
-            # Mgas_Msun_range=[10.0, Mgas_max],
-            r_range_in_R200_unit=[1.0e-5, 1.0],
+            Mgas_Msun_range=[10.0, Mgas_max],
+            # r_range_in_R200_unit=[1.0e-5, 1.0],
         ),
 
         dict(
@@ -1977,8 +2182,8 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
             halos=["haloA", "haloB", "haloC"],
             marker="D",
             integration_mode=integration_mode_for_all,
-            # Mgas_Msun_range=[10.0, Mgas_max],
-            r_range_in_R200_unit=[1.0e-5, 1.0],
+            Mgas_Msun_range=[10.0, Mgas_max],
+            # r_range_in_R200_unit=[1.0e-5, 1.0],
         ),
 
         dict(
@@ -1987,8 +2192,8 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
             halos=["halo1", "halo6"],
             marker="o",
             integration_mode= integration_mode_for_all,
-            # Mgas_Msun_range=[10.0, Mgas_max],
-            r_range_in_R200_unit=[1.0e-5, 1.0],
+            Mgas_Msun_range=[10.0, Mgas_max],
+            # r_range_in_R200_unit=[1.0e-5, 1.0],
         ),
 
         dict(
@@ -1997,8 +2202,8 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
             halos=["halo1", "halo2", "halo3", "halo4", "halo5", "halo6"],
             marker="^",
             integration_mode= integration_mode_for_all,
-            # Mgas_Msun_range=[10.0, Mgas_max],
-            r_range_in_R200_unit=[1.0e-5, 1.0],
+            Mgas_Msun_range=[10.0, Mgas_max],
+            # r_range_in_R200_unit=[1.0e-5, 1.0],
         ),
 
         dict(
@@ -2007,9 +2212,30 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
             halos=["MMH", "LWH"],
             marker="*",
             integration_mode= "Mgas",
-            Mvir_range=[1e-5, 1.0],  # in units of Mvir
-            # Mgas_Msun_range=[10.0, Mgas_max],
+            # Mvir_range=[1e-5, 1.0],  # in units of Mvir
+            Mgas_Msun_range=[10.0, Mgas_max],
         ),
+
+        dict(
+            name="Shang2010_1e4K",
+            store=latif.Shang2010_1e4K_data,
+            # halos=["haloA", "haloC"],
+            halos=["haloA"],
+            marker="P",
+            integration_mode=integration_mode_for_all,
+            Mgas_Msun_range=[10.0, Mgas_max],
+        ),
+
+        dict(
+            name="Shang2010_1e5K",
+            store=latif.Shang2010_1e5K_data,
+            # halos=["haloA", "haloC"],
+            halos=["haloA"],
+            marker="X",
+            integration_mode=integration_mode_for_all,
+            Mgas_Msun_range=[10.0, Mgas_max],
+        ),
+
     ]
 
 
@@ -2019,21 +2245,34 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
         lgM_to_Tvir_minihalo=lgM_to_Tvir_minihalo,
         annotate="all",   # or "extremes" to only annotate min/max z per halo
         ax = ax1,
-        fH2_ylim=(1e-9, 1e-2),
+        fH2_ylim=(3e-9, 1e-2),
     )
+
+    # all_track_points = plot_precollapse_tracks(
+    # ax=ax1,
+    # store=latif.Latif2015_2e4K_data,
+    # lgM_to_Tvir_minihalo=lgM_to_Tvir_minihalo,
+    # R_int_au=1e8
+    # )
+
 
         
     ax1.set_xscale('log')
     ax1.set_yscale('log')
     ax1.set_ylim(top = 1e-2)
     ax1.set_xlabel('Tvir [K]', fontsize=15)
-    ax1.set_ylabel('Molecular Hydrogen Fraction $f_{H_2}$', fontsize=15)
+    ax1.set_ylabel(r'Molecular Hydrogen Fraction f$_{\mathrm{H}_2}$', fontsize=15)
     ax1.legend(fontsize=12, loc='lower left', framealpha=0.5)
     #also add a mass axis on top
-    ax2 = add_mass_axis_on_top(ax1, T_list, z, Tvir_to_lgM_minihalo, lgM_to_Tvir_minihalo)
+    T_list_for_axis = np.logspace(np.log10(80), np.log10(3e4), 100)
+    ax2 = add_mass_axis_on_top(ax1, T_list_for_axis, z, Tvir_to_lgM_minihalo, lgM_to_Tvir_minihalo)
+    fH2_for_critical_accretion = 1.0e-5
+    ax3 = add_accretion_axis(ax1, T_list_for_axis, z,
+                         fH2_for_critical_accretion=fH2_for_critical_accretion)
+
 
     # plt.title(f'Critical $f_{{H_2}}$ vs Temperature at z={z} (SHMF Poisson Sampling), nH: core profile', fontsize=16)
-    plt.title(f'Critical $f_{{H_2}}$ vs Temperature at z={z}', fontsize=16)
+    # plt.title(f'Critical $f_{{H_2}}$ vs Temperature at z={z}', fontsize=16)
     
     plt.tight_layout()
     # filename = os.path.join(output_dir, f"fH2_vs_T_from_SHMF_sampling_z{z}_nHLW{nH}.png")
@@ -2074,17 +2313,16 @@ def get_critical_mass_accretion_rate(z, Mhalo, fH2):
     crit_volumetric_heating = abs(volumetric_cooling)
 
     #also consider the species equilibrium case, so that atomic cooling is included
-    cooling_data_species_eq = run_constdensity_model(
-        params_for_constdensity, UVB_flag=False, 
-        Compton_Xray_flag=False, dynamic_final_flag=True, converge_when_setup=True)
-    cooling_rate_species_eq = cooling_data_species_eq['cooling_rate'][0].v  # [erg*cm^3/s]
-    volumetric_cooling_species_eq = nH **2 * cooling_rate_species_eq #[erg/cm^3/s]
-    crit_volumetric_heating_species_eq = abs(volumetric_cooling_species_eq)
-
-    crit_volumetric_heating = max(crit_volumetric_heating, crit_volumetric_heating_species_eq)  # [erg/cm^3/s]
+    # cooling_data_species_eq = run_constdensity_model(
+    #     params_for_constdensity, UVB_flag=False, 
+    #     Compton_Xray_flag=False, dynamic_final_flag=True, converge_when_setup=True)
+    # cooling_rate_species_eq = cooling_data_species_eq['cooling_rate'][0].v  # [erg*cm^3/s]
+    # volumetric_cooling_species_eq = nH **2 * cooling_rate_species_eq #[erg/cm^3/s]
+    # crit_volumetric_heating_species_eq = abs(volumetric_cooling_species_eq)
+    # crit_volumetric_heating = max(crit_volumetric_heating, crit_volumetric_heating_species_eq)  # [erg/cm^3/s]
 
     gamma_adiabatic = 5.0/3.0
-    dT_dt_crit = (1.0e-7* crit_volumetric_heating) /nH/kB * (gamma_adiabatic - 1.0) #[K/s]
+    dT_dt_crit = (1.0e-7* crit_volumetric_heating) /nH/kB * (gamma_adiabatic - 1.0) * (hydrogen_mass_fraction*mu_minihalo) #[K/s], also multiply 0.76 mu, see Lupi et al. 2021
     
     delta_lgM = 1e-3 * lgM
     dT_dlgM = (lgM_to_Tvir_minihalo(lgM + delta_lgM, z) - lgM_to_Tvir_minihalo(lgM - delta_lgM, z))/ (2.0 * delta_lgM)
@@ -2103,13 +2341,14 @@ def get_critical_mass_accretion_rate(z, Mhalo, fH2):
         # "volumetric_cooling": volumetric_cooling,  # [erg/cm^3/s]
         "dM_dt_crit": abs(dM_dt_crit),  # [Msun/h/s]
         "dM_dt_crit_yr": abs(dM_dt_crit_yr),  # [Msun/h/yr]
+        "dM_dt_crit_Msun_yr": abs(dM_dt_crit_yr)/h_Hubble,  # [Msun/yr]
         "dM_dz_crit": abs(dM_dz_crit)  # [Msun/h]
     }
 
 def plot_critical_mass_accretion_rate():
     output_dir = "/home/zwu/21cm_project/unified_model/Analytic_results/Yoshida03"
     #1. Figure 5 of Yoshida03 (almost the same)
-    
+    """
     z = 18
     Mhalo_list = np.logspace(5, 7, 50)  # [Msun/h]
     Tvir_list = np.array([lgM_to_Tvir_minihalo(np.log10(Mhalo), z) for Mhalo in Mhalo_list])
@@ -2129,10 +2368,10 @@ def plot_critical_mass_accretion_rate():
     filename = os.path.join(output_dir, f"critical_accretion_Yoshida03_z{z}.png")
     plt.savefig(filename, dpi=300)
     print("saved critical accretion plot to ", filename)
-    
+    """
 
     #2. Extended Data Figure 1 of Wise19
-    z = 25
+    z = 15
     y_H2_list = np.array([1e-4, 1e-5, 1e-6]) #H2 abundance
     f_H2_list = 2 * y_H2_list  #H2 mass fraction
     Mhalo_Msun_list = np.logspace(np.log10(4e5), 8, 50)  # [Msun]

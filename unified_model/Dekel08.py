@@ -7,7 +7,7 @@ import HaloProperties
 from Analytic_halo_profile import f_NFW, f_core, get_concentration, get_profile_corr_for_cooling
 import os
 import matplotlib.ticker as ticker
-concentration_model = 'diemer19'
+concentration_model = 'ludlow16'
 
 def get_Dekel08_A(z):
 

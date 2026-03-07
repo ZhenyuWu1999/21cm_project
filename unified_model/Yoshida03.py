@@ -1633,7 +1633,7 @@ def _iter_points_for_paper(paper, lgM_to_Tvir_minihalo):
 
             # Mass-weighted fH2 over [r_min, r_max] in the store's native radius unit
             #set floor according to paper
-            fH2_floor = 1.0e-8 if pname == "Latif2014A" else 1.0e-7
+            fH2_floor = 1.0e-8 if pname == "Latif2014A" else 1.0e-8
             profile_base = "Mgas" if pname == "Wise2019" else "radius"
             print(f"  Using Mgas-weighted fH2... (profile_base = {profile_base})")
 
@@ -1704,9 +1704,10 @@ def _iter_points_for_paper(paper, lgM_to_Tvir_minihalo):
 
 def plot_Tvir_vs_fH2_by_paper(papers,
                               lgM_to_Tvir_minihalo,
-                              annotate="all",  # "all" or "extremes"
+                              data_selection,
                               fH2_ylim=(1e-8, 1e-2),
                               ax=None, cmap="viridis"):
+    #data_selection: "all", "PopIII_only", "DCBH_and_boundary"
     # gather all points
     rows = []
     for paper in papers:
@@ -1746,7 +1747,7 @@ def plot_Tvir_vs_fH2_by_paper(papers,
         elif p_name == "Latif2021":
             p_name_ext += " (Trad = 1e5 K)"
         elif p_name == "Latif2014A":
-            p_name_ext += " (Trad = 1e4 K)"
+            p_name_ext = "Latif2014 (Trad = 1e4 K)"
         elif p_name == "Latif2015_2e4K":
             p_name_ext = "Latif2015 (Trad = 2e4 K)"
         elif p_name == "Shang2010_1e4K":
@@ -1772,28 +1773,30 @@ def plot_Tvir_vs_fH2_by_paper(papers,
                     s=80, alpha=0.9, label=p_name_ext)
 
         # PopIII points (black edge)
-        # T_pop, f_pop, c_pop = extract_arrays(PopIII_points)
-        # ax.scatter(T_pop, f_pop,
-        #         c=c_pop, cmap=cmap_obj, norm=norm,
-        #         marker=paper_to_marker[p_name],
-        #         s=80, edgecolor="black", linewidths=0.6, alpha=0.9)
-      
-        # DCBH candidates (red edge highlight)
-        T_dcbh, f_dcbh, c_dcbh = extract_arrays(DCBH_points)
-        ax.scatter(T_dcbh, f_dcbh,
-                c=c_dcbh, cmap=cmap_obj, norm=norm,
-                marker=paper_to_marker[p_name],
-                s=80, edgecolor="red", linewidths=1.2, alpha=0.9)
+        if data_selection == "all" or data_selection == "PopIII_only":
+            T_pop, f_pop, c_pop = extract_arrays(PopIII_points)
+            ax.scatter(T_pop, f_pop,
+                    c=c_pop, cmap=cmap_obj, norm=norm,
+                    marker=paper_to_marker[p_name],
+                    s=80, edgecolor="black", linewidths=0.6, alpha=0.9)
         
-        # Boundary points (pink edge highlight)
-        T_bound, f_bound, c_bound = extract_arrays(boundary_points)
-        ax.scatter(T_bound, f_bound,
-                c=c_bound, cmap=cmap_obj, norm=norm,
-                marker=paper_to_marker[p_name],
-                s=80, edgecolor="magenta", linewidths=1.2, alpha=0.9)
+        # DCBH candidates (red edge highlight)
+        if data_selection == "all" or data_selection == "DCBH_and_boundary":
+            T_dcbh, f_dcbh, c_dcbh = extract_arrays(DCBH_points)
+            ax.scatter(T_dcbh, f_dcbh,
+                    c=c_dcbh, cmap=cmap_obj, norm=norm,
+                    marker=paper_to_marker[p_name],
+                    s=80, edgecolor="red", linewidths=1.2, alpha=0.9)
+            
+            # Boundary points (pink edge highlight)
+            T_bound, f_bound, c_bound = extract_arrays(boundary_points)
+            ax.scatter(T_bound, f_bound,
+                    c=c_bound, cmap=cmap_obj, norm=norm,
+                    marker=paper_to_marker[p_name],
+                    s=80, edgecolor="magenta", linewidths=1.2, alpha=0.9)
 
         # annotate redshifts for points
-        annotate = "DCBH_and_boundary"  # "all", "PopIII_only", "DCBH_and_boundary", "extremes", or None
+        annotate = data_selection  # "all", "PopIII_only", "DCBH_and_boundary", "extremes", or None
         if annotate == "all":
             for r in sub:
                 ax.annotate(f"z={r['z']:.1f}", (r["Tvir"], r["fH2"]),
@@ -1980,7 +1983,7 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
 
     #plot fH2 vs T
 
-    converge_when_setup = True
+    converge_when_setup = False 
     if converge_when_setup:
         results_file = os.path.join(output_dir, f"critical_fH2_results_z{z}.npz")
     else:
@@ -2152,18 +2155,21 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
 
     fig, ax1 = plt.subplots(figsize=(10, 9))
     ax1.plot(Tvir_fulllist, fH2_Yoshida03, label=r'$f_{H_2} \propto T^{1.52}$ (Yoshida03)', color='dimgrey', linestyle='--')
- 
-    ax1.plot(T_list, fH2_critical, color = 'k', label='No heating')
-    ax1.plot(T_list, fH2_critical_mean, color = 'r', label='Mean DF heating')  
-    ax1.fill_between(T_list, fH2_critical_p16, fH2_critical_p84, 
+    
+    #only plot T<1e4K data
+    critical_fH2_mask = (T_list <= 1e4)
+    ax1.plot(T_list[critical_fH2_mask], fH2_critical[critical_fH2_mask], color = 'k', label='No heating')
+    ax1.plot(T_list[critical_fH2_mask], fH2_critical_mean[critical_fH2_mask], color = 'r', label='Mean DF heating')  
+    ax1.fill_between(T_list[critical_fH2_mask], fH2_critical_p16[critical_fH2_mask], fH2_critical_p84[critical_fH2_mask], 
                      alpha=0.4, color = 'orange', label='16/84 %')
-    ax1.fill_between(T_list, fH2_critical_p025, fH2_critical_p975,
+    ax1.fill_between(T_list[critical_fH2_mask], fH2_critical_p025[critical_fH2_mask], fH2_critical_p975[critical_fH2_mask],
                         alpha=0.2, color = 'orange', label='2.5/97.5 %')
-    ax1.fill_between(T_list, fH2_critical_p0015, fH2_critical_p9985,
+    ax1.fill_between(T_list[critical_fH2_mask], fH2_critical_p0015[critical_fH2_mask], fH2_critical_p9985[critical_fH2_mask],
                         alpha=0.1, color = 'orange', label='0.15/99.85 %')
 
-    Mgas_max = 1e5 #Msun
+    Mgas_max = 1e6 #Msun
     integration_mode_for_all = "Mgas"
+    latif_label = "Mgas1e6"
 
     papers = [
         dict(
@@ -2238,12 +2244,12 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
 
     ]
 
-
+    data_selection_label = "DCBH_and_boundary"  #"DCBH_and_boundary", "PopIII_only" or "all"
 
     plot_Tvir_vs_fH2_by_paper(
         papers,
         lgM_to_Tvir_minihalo=lgM_to_Tvir_minihalo,
-        annotate="all",   # or "extremes" to only annotate min/max z per halo
+        data_selection=data_selection_label,
         ax = ax1,
         fH2_ylim=(3e-9, 1e-2),
     )
@@ -2267,8 +2273,7 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
     T_list_for_axis = np.logspace(np.log10(80), np.log10(3e4), 100)
     ax2 = add_mass_axis_on_top(ax1, T_list_for_axis, z, Tvir_to_lgM_minihalo, lgM_to_Tvir_minihalo)
     fH2_for_critical_accretion = 1.0e-5
-    ax3 = add_accretion_axis(ax1, T_list_for_axis, z,
-                         fH2_for_critical_accretion=fH2_for_critical_accretion)
+    # ax3 = add_accretion_axis(ax1, T_list_for_axis, z, fH2_for_critical_accretion=fH2_for_critical_accretion)
 
 
     # plt.title(f'Critical $f_{{H_2}}$ vs Temperature at z={z} (SHMF Poisson Sampling), nH: core profile', fontsize=16)
@@ -2276,8 +2281,8 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
     
     plt.tight_layout()
     # filename = os.path.join(output_dir, f"fH2_vs_T_from_SHMF_sampling_z{z}_nHLW{nH}.png")
-    noconverge_tag = "" if converge_when_setup else "noconverge_"
-    filename = os.path.join(output_dir, f"fH2_vs_T_from_SHMF_sampling_z{z}_{noconverge_tag}.png")
+    noconverge_tag = "" if converge_when_setup else "noconverge"
+    filename = os.path.join(output_dir, f"fH2_vs_T_from_SHMF_sampling_z{z}_{noconverge_tag}_{latif_label}_{data_selection_label}.png")
     
     plt.savefig(filename, dpi=300)
     print("plot saved to ", filename)

@@ -359,7 +359,7 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         
     if 'Mach_fixedhostmass' in fig_options:
 
-        fit_mode = "both"  # "maxwell-boltzmann" | "truncated-gaussian" | "both"
+        fit_mode = "maxwell-boltzmann"  # "maxwell-boltzmann" | "truncated-gaussian" | "both"
 
         mach_number_max = 5.0
         mach_selected_fraction = np.mean(mach_number < mach_number_max)
@@ -401,7 +401,7 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
             if n_in_bin >= min_count:
                 tot_bins += 1
 
-        plot_bin_step = 2
+        plot_bin_step = 3
         # if tot_bins >= 10:
         #     plot_bin_step = 2 #show less lines in the plot for clarity
 
@@ -918,7 +918,8 @@ def plot_sigma_vs_hostmass_over_snaps(
         z = d['z']
         t = (z - zmin) / (zmax - zmin) 
         color = cmap(t)
-        label = f"z={z:.2f} (snap {d['snap']})"
+        # label = f"z={z:.2f} (snap {d['snap']})"
+        label = f"z={z:.2f}"
 
         # σ panel (always present)
         h = axes[-1].plot(
@@ -972,22 +973,22 @@ if __name__ == '__main__':
     simulation_set = 'TNG50-1'
 
     # snapNum_list = [0, 1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 40, 50, 59, 67, 72, 78, 84, 91, 99]
-    # snapNum_list = [2, 13, 99]
+    # snapNum_list = [99]
     
     # for snapNum in snapNum_list:
     #     print(f"Processing snapshot {snapNum} ...")
     #     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
     #     processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
     #                                 f'processed_halos_snap_{snapNum}.h5')
-    #     data = load_processed_data(processed_file)
-    #     # Create plots
-    #     output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
-    #     # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass', 
-    #     # 'R200_subhaloVmaxRad', 'tff_tcross', 'M200_Mach', 'M200_Anumber', 'Mach_fit']
-    #     fig_options_2Dhistogram = ['Mach_fixedhostmass']
-    #     # plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
-    #     # plot_host_halo_properties(data, snapNum, output_dir)
-    #     # plot_conditional_logA(data, snapNum, output_dir, xmode="both", weight_by_host=False)
+        # data = load_processed_data(processed_file)
+        # Create plots
+        # output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
+        # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass', 
+        # 'R200_subhaloVmaxRad', 'tff_tcross', 'M200_Mach', 'M200_Anumber', 'Mach_fit']
+        # fig_options_2Dhistogram = ['Mach_fixedhostmass']
+        # plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
+        # plot_host_halo_properties(data, snapNum, output_dir)
+        # plot_conditional_logA(data, snapNum, output_dir, xmode="both", weight_by_host=False)
 
     snapNum_list = [1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 50, 99]
     # # Compare Mach numbers across snapshots

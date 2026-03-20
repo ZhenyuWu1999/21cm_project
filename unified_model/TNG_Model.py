@@ -584,7 +584,7 @@ def plot_Mratio_dN_dlogMratio():
     N_list = np.logspace(-3, 2, num=1000)  # N(>psi)
     JB_corrections = get_cumulativeSHMF_sigma_correction(N_list, 'supersubPoisson')
     plt.plot(N_list, JB_corrections, linestyle='--', color='grey', label='fit of Jiang&van den Bosch paperIII', linewidth=2)
-    plt.axhline(1, color='black', linestyle='--')
+    plt.axhline(1, color='black', linestyle='-')
     ax.set_xscale('log')
     ax.set_xlabel(r'$N(>\psi)$', fontsize=14)
     ax.set_ylabel(r'$\sigma / \sigma_{P}$', fontsize=14)

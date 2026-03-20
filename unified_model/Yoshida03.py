@@ -1519,6 +1519,70 @@ def plot_fH2_vs_T_with_DFvariance(z):
     plt.savefig(os.path.join(output_dir, f"fH2_vs_T_with_DFvariance_z{z}_WG11.png"), dpi=300)
 
 
+def read_pop2prime(filepath="Pop2prime_results/pop2prime_halos.dat"):
+    """
+    Read precomputed Pop2Prime halo data from an ASCII table.
+
+    Expected columns:
+      M200 mvir redshift metallicity fH2_m200 fH2max fH2_Thalf fH2_Tmin
+
+    Returns:
+      list[dict]: one dict per row with keys
+        'M200', 'mvir', 'redshift', 'metallicity',
+        'fH2_m200', 'fH2max', 'fH2_Thalf', 'fH2_Tmin'
+    """
+    data = np.loadtxt(filepath, comments="#")
+    data = np.atleast_2d(data)
+
+    if data.shape[1] != 8:
+        raise ValueError(
+            f"Expected 8 columns in {filepath} "
+            f"(M200, mvir, redshift, metallicity, fH2_m200, fH2max, fH2_Thalf, fH2_Tmin), "
+            f"but found {data.shape[1]}."
+        )
+
+    rows = []
+    for i, row in enumerate(data, start=1):
+        M200 = float(row[0])
+        mvir = float(row[1])
+        redshift = float(row[2])
+        metallicity = float(row[3])
+        fH2_m200 = float(row[4])
+        fH2max = float(row[5])
+        fH2_Thalf = float(row[6])
+        fH2_Tmin = float(row[7])
+
+        if M200 <= 0.0:
+            raise ValueError(f"Invalid M200 at row {i} in {filepath}: {M200}")
+        if mvir <= 0.0:
+            raise ValueError(f"Invalid mvir at row {i} in {filepath}: {mvir}")
+        if redshift <= 0.0:
+            raise ValueError(f"Invalid redshift at row {i} in {filepath}: {redshift}")
+        if metallicity < 0.0:
+            raise ValueError(f"Invalid metallicity at row {i} in {filepath}: {metallicity}")
+        if fH2_m200 < 0.0:
+            raise ValueError(f"Invalid fH2_m200 at row {i} in {filepath}: {fH2_m200}")
+        if fH2max < 0.0:
+            raise ValueError(f"Invalid fH2max at row {i} in {filepath}: {fH2max}")
+        if fH2_Thalf < 0.0:
+            raise ValueError(f"Invalid fH2_Thalf at row {i} in {filepath}: {fH2_Thalf}")
+        if fH2_Tmin < 0.0:
+            raise ValueError(f"Invalid fH2_Tmin at row {i} in {filepath}: {fH2_Tmin}")
+
+        rows.append({
+            "M200": M200,
+            "mvir": mvir,
+            "redshift": redshift,
+            "metallicity": metallicity,
+            "fH2_m200": fH2_m200,
+            "fH2max": fH2max,
+            "fH2_Thalf": fH2_Thalf,
+            "fH2_Tmin": fH2_Tmin,
+        })
+
+    return rows
+
+
 def _iter_points_for_paper(paper, lgM_to_Tvir_minihalo):
     """
     Iterate over data points for a given paper configuration.
@@ -1768,9 +1832,17 @@ def plot_Tvir_vs_fH2_by_paper(papers,
                 np.array([r["logJ"] for r in rows])
             )
 
-        ax.scatter([], [], marker=paper_to_marker[p_name],
-                    c="gray", edgecolor="None",
-                    s=80, alpha=0.9, label=p_name_ext)
+        if data_selection == "PopIII_only":
+            has_points_for_selection = len(PopIII_points) > 0
+        elif data_selection == "DCBH_and_boundary":
+            has_points_for_selection = (len(DCBH_points) + len(boundary_points)) > 0
+        else:
+            has_points_for_selection = (len(PopIII_points) + len(DCBH_points) + len(boundary_points)) > 0
+
+        if has_points_for_selection:
+            ax.scatter([], [], marker=paper_to_marker[p_name],
+                        c="gray", edgecolor="None",
+                        s=80, alpha=0.9, label=p_name_ext)
 
         # PopIII points (black edge)
         if data_selection == "all" or data_selection == "PopIII_only":
@@ -2167,9 +2239,9 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
     ax1.fill_between(T_list[critical_fH2_mask], fH2_critical_p0015[critical_fH2_mask], fH2_critical_p9985[critical_fH2_mask],
                         alpha=0.1, color = 'orange', label='0.15/99.85 %')
 
-    Mgas_max = 1e6 #Msun
+    Mgas_max = 1e5 #Msun
     integration_mode_for_all = "Mgas"
-    latif_label = "Mgas1e6"
+    latif_label = "Mgas1e5"
 
     papers = [
         dict(
@@ -2254,6 +2326,51 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
         fH2_ylim=(3e-9, 1e-2),
     )
 
+    # also add Pop2Prime data points using M200 and fH2_Thalf from the updated catalog
+    flag_add_pop2prime = True
+    if flag_add_pop2prime and (data_selection_label == "PopIII_only" or data_selection_label == "all"):
+        pop2prime_rows = [row for row in read_pop2prime() if row["metallicity"] < 1.0e-6]
+        pop2prime_Tvir = []
+        pop2prime_fH2 = []
+        for row in pop2prime_rows:
+            Tvir = lgM_to_Tvir_minihalo(np.log10(row["M200"] * h_Hubble), row["redshift"])
+            pop2prime_Tvir.append(Tvir)
+            pop2prime_fH2.append(row["fH2_Thalf"])
+        if pop2prime_rows:
+            ax1.scatter(
+                pop2prime_Tvir,
+                pop2prime_fH2,
+                marker="h",
+                s=80,
+                c="gray",
+                edgecolor="black",
+                linewidths=0.6,
+                alpha=0.9,
+                label="_nolegend_",
+            )
+            ax1.scatter(
+                [],
+                [],
+                marker="h",
+                s=80,
+                c="gray",
+                edgecolor="None",
+                alpha=0.9,
+                label="Correa-Magnus2024",
+            )
+
+            for Tvir, fH2, row in zip(pop2prime_Tvir, pop2prime_fH2, pop2prime_rows):
+                ax1.annotate(
+                    f"z={row['redshift']:.1f}",
+                    (Tvir, fH2),
+                    textcoords="offset points",
+                    xytext=(4, 4),
+                    ha="left",
+                    va="bottom",
+                    fontsize=8,
+                    alpha=0.8,
+                )
+
     # all_track_points = plot_precollapse_tracks(
     # ax=ax1,
     # store=latif.Latif2015_2e4K_data,
@@ -2282,7 +2399,7 @@ def plot_fH2_vs_T_from_SHMF_sampling(z):
     plt.tight_layout()
     # filename = os.path.join(output_dir, f"fH2_vs_T_from_SHMF_sampling_z{z}_nHLW{nH}.png")
     noconverge_tag = "" if converge_when_setup else "noconverge"
-    filename = os.path.join(output_dir, f"fH2_vs_T_from_SHMF_sampling_z{z}_{noconverge_tag}_{latif_label}_{data_selection_label}.png")
+    filename = os.path.join(output_dir, f"fH2_vs_T_from_SHMF_sampling_z{z}_{noconverge_tag}_{latif_label}_{data_selection_label}_pop2prime_M200_fH2Thalf.png")
     
     plt.savefig(filename, dpi=300)
     print("plot saved to ", filename)

@@ -1,7 +1,7 @@
 import h5py
 import numpy as np
 from scipy.integrate import solve_ivp
-
+from typing import Dict, Any, Union, Tuple
 
 def print_attrs(name, obj):
     """Helper function to print the name of an HDF5 object and its attributes."""
@@ -25,6 +25,112 @@ def display_hdf5_contents(filepath):
                 for key, val in item.attrs.items():
                     print(f"    {key}: {val}")
 
+def _normalize_attr_value(v):
+    """
+    Normalize HDF5 attribute values into more user-friendly Python types.
+
+    - Convert bytes -> str
+    - Convert numpy scalars (e.g. np.float64) -> native Python scalars (float, int, etc.)
+    - Convert numpy arrays:
+        * size == 1 -> scalar
+        * size > 1  -> Python list
+    - Leave other types unchanged
+    """
+    # 1. Bytes or bytearray -> decode to string
+    if isinstance(v, (bytes, bytearray)):
+        try:
+            return v.decode("utf-8")
+        except Exception:
+            return v.decode("utf-8", errors="ignore")
+
+    # 2. Numpy scalar -> Python scalar
+    if isinstance(v, np.generic):
+        return v.item()
+
+    # 3. Numpy array
+    if isinstance(v, np.ndarray):
+        if v.size == 1:
+            x = v.flatten()[0]
+            return x.item() if isinstance(x, np.generic) else x
+        return v.tolist()
+
+    # 4. Other types -> leave unchanged
+    return v
+
+
+
+def read_hdf5_data(
+    filepath: str,
+    include_attrs: bool = False,
+) -> Union[Dict[str, np.ndarray], Tuple[Dict[str, np.ndarray], Dict[str, Dict[str, Any]]]]:
+    """
+    Read an HDF5 file into Python dictionaries.
+
+    Behavior:
+    ---------
+    - Always reads all Datasets:
+        data_dict['path/to/dataset'] = np.array(dataset)
+
+    - If include_attrs == False (default):
+        * Returns only data_dict (backward compatible with old usage)
+
+    - If include_attrs == True:
+        * Collects attributes from ALL HDF5 groups (including the root group '/')
+        * Returns a tuple: (data_dict, attrs_dict)
+            where attrs_dict[group_path] = {attr_key: attr_value, ...}
+
+    Parameters:
+    -----------
+    filepath : str
+        Path to the HDF5 file.
+    include_attrs : bool, optional
+        Whether to also collect group attributes. Default = False.
+
+    Returns:
+    --------
+    data_dict : dict
+        Dictionary mapping dataset paths -> numpy arrays.
+    attrs_dict : dict (only if include_attrs=True)
+        Dictionary mapping group paths -> dict of attributes.
+
+    Notes:
+    ------
+    - The return type is either:
+        * dict (if include_attrs=False)
+        * (dict, dict) tuple (if include_attrs=True)
+    - Attribute values are normalized with `_normalize_attr_value`
+      for easier handling (e.g. bytes -> str, numpy scalars -> Python scalars).
+    """
+    data_dict: Dict[str, np.ndarray] = {}
+    attrs_dict: Dict[str, Dict[str, Any]] = {}
+
+    with h5py.File(filepath, 'r') as f:
+        # Handle root group attributes
+        if include_attrs and len(f.attrs) > 0:
+            attrs_dict["/"] = {k: _normalize_attr_value(v) for k, v in f.attrs.items()}
+
+        def read_recursive(name, obj):
+            if isinstance(obj, h5py.Dataset):
+                # Store dataset as numpy array
+                data_dict[name] = np.array(obj)
+            elif isinstance(obj, h5py.Group):
+                # Optionally store group attributes
+                if include_attrs and len(obj.attrs) > 0:
+                    attrs_dict[name] = {k: _normalize_attr_value(v) for k, v in obj.attrs.items()}
+                # Recurse into sub-items
+                for subname, subitem in obj.items():
+                    read_recursive(f"{name}/{subname}", subitem)
+
+        f.visititems(read_recursive)
+
+    if include_attrs:
+        return data_dict, attrs_dict
+    else:
+        return data_dict
+
+
+"""
+
 def read_hdf5_data(filepath):
     data_dict = {}
     # Open the HDF5 file in read-only mode
@@ -35,8 +141,8 @@ def read_hdf5_data(filepath):
                 # Store dataset data in dictionary
                 data_dict[name] = np.array(obj)
                 print(f"Dataset: {name} loaded")
-                # for key, val in obj.attrs.items():
-                #     print(f"    {key}: {val}")
+                for key, val in obj.attrs.items():
+                    print(f"    {key}: {val}")
             elif isinstance(obj, h5py.Group):
                 print(f"Group: {name}")
                 for key, val in obj.attrs.items():
@@ -46,6 +152,9 @@ def read_hdf5_data(filepath):
         # Read data starting from root
         f.visititems(read_recursive)
     return data_dict
+
+"""
+
 
 
 def integrate_ode_z(ode_func, z_initial, y_initial, z_final, 

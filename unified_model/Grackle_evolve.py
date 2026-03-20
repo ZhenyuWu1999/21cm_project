@@ -137,10 +137,12 @@ def evolve_constant_density(fc, final_temperature=None,
         fc.solve_chemistry(dt)
         add_to_data(fc, data, extra={"time": current_time})
         current_time += dt
-
+    
     for field in data:
         data[field] = np.squeeze(np.array(data[field]))
     return fc.finalize_data(data=data)
+
+
 
 def evolve_constant_density_with_heating(fc, final_temperature=None, final_time=None, 
                                           safety_factor=0.01, convergence_check_interval=50,

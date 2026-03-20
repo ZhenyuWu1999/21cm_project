@@ -29,6 +29,7 @@ collisional dissociation of H2I:
 *   @  k13 @     H2I + HI --> 3HI (or use k13dd as a more precise rate?)
  3-body reaction:
 *   @  k21 @     2HI + H2I --> H2I + H2I
+*   @  k22 @     2HI + HI --> H2I + HI
  
  """
 import matplotlib.pyplot as plt
@@ -141,6 +142,59 @@ def make_k13dd_interpolators(lnT_for_ktable, k13dd_flat):
     return interps
 
 
+# def make_k13dd_interpolators(lnT_for_ktable, k13dd_flat, order="C", transpose=False):
+#     if transpose:
+#         arr = k13dd_flat.reshape(600, 14, order=order).T
+#     else:
+#         arr = k13dd_flat.reshape(14, 600, order=order)
+
+#     interps = []
+#     for j in range(14):
+#         y = arr[j]
+#         interps.append(
+#             interp1d(
+#                 lnT_for_ktable, y,
+#                 kind="linear",
+#                 bounds_error=False,
+#                 fill_value=(y[0], y[-1]),
+#             )
+#         )
+#     return interps
+
+# def k13_density_dependent(interps, T, nH):
+#     T = np.asarray(T, dtype=float)
+#     nH = np.asarray(nH, dtype=float)
+#     T, nH = np.broadcast_arrays(T, nH)
+
+#     tiny = 1e-40
+#     k13 = np.full_like(T, tiny, dtype=float)
+
+#     valid = (T >= 500.0) & (T < 1.0e6)
+#     if not np.any(valid):
+#         return k13
+
+#     lnT = np.log(T[valid])
+#     c = np.vstack([f(lnT) for f in interps])
+#     nh = np.minimum(nH[valid], 1.0e9)
+
+#     with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+#         cid_log10 = (
+#             c[0] - c[1] / (1.0 + (nh / c[4]) ** c[6]) +
+#             c[2] - c[3] / (1.0 + (nh / c[5]) ** c[6])
+#         )
+#         dt_log10 = (
+#             c[7]  - c[8]  / (1.0 + (nh / c[11]) ** c[13]) +
+#             c[9]  - c[10] / (1.0 + (nh / c[12]) ** c[13])
+#         )
+
+#         k13_valid = np.maximum(10.0 ** cid_log10, tiny) + np.maximum(10.0 ** dt_log10, tiny)
+
+#     # 防止 inf/nan 污染后续项
+#     k13_valid = np.where(np.isfinite(k13_valid), k13_valid, tiny)
+#     k13[valid] = k13_valid
+#     return k13
+
+
 def k13_density_dependent(interps, T, nH):
     """
     Reproduce the Grackle/Fortran implementation of the density-dependent
@@ -185,15 +239,34 @@ def k13_density_dependent(interps, T, nH):
 
     # Convert back to linear scale; protect with tiny lower bound
     tiny = 1e-40
-    k13_CID = np.maximum(10.0 ** cid_log10, tiny)
-    k13_DT  = np.maximum(10.0 ** dt_log10, tiny)
+    # k13_CID = np.maximum(10.0 ** cid_log10, tiny)
+    # k13_DT  = np.maximum(10.0 ** dt_log10, tiny)
 
-    k13_total = k13_CID + k13_DT
+    # k13_total = k13_CID + k13_DT
+
+    # # Valid only for 500 K <= T < 1e6 K
+    # valid = (T >= 500.0) & (T < 1.0e6)
+    # k13 = np.where(valid, k13_total, tiny)
+    # return k13
 
     # Valid only for 500 K <= T < 1e6 K
     valid = (T >= 500.0) & (T < 1.0e6)
-    k13 = np.where(valid, k13_total, tiny)
 
+    k13_total = np.full_like(T, tiny, dtype=float)
+
+    if np.any(valid):
+        # float64 max ~ 1e308 -> log10(max) ~ 308
+        # to avoid overflow in 10**(cid_log10) or 10**(dt_log10), we can clip the log10 values to a reasonable range
+        LOG10_MAX = 300.0
+        cid_clip = np.clip(cid_log10[valid], -400.0, LOG10_MAX)
+        dt_clip  = np.clip(dt_log10[valid],  -400.0, LOG10_MAX)
+
+        k13_CID = np.maximum(10.0 ** cid_clip, tiny)
+        k13_DT  = np.maximum(10.0 ** dt_clip,  tiny)
+
+        k13_total[valid] = k13_CID + k13_DT
+
+    k13 = k13_total
     return k13
 
 
@@ -439,6 +512,7 @@ def run_grackle_Omukai(initial_conditions, final_nH, use_DFheating_flag,
     k13dd = fc.chemistry_data.k13dd  #k13dd
 
     k21_cgs = fc.chemistry_data.k21 * kUnit_3Bdy #k21, 3-body reaction
+    k22_cgs = fc.chemistry_data.k22 * kUnit_3Bdy #k22, 3-body reaction
     k_table = {
         "k7": k7_cgs,
         "k8": k8_cgs,
@@ -448,6 +522,7 @@ def run_grackle_Omukai(initial_conditions, final_nH, use_DFheating_flag,
         "k13": k13_cgs,
         "k13dd": k13dd,
         "k21": k21_cgs,
+        "k22": k22_cgs,
         "T_for_ktable": T_for_ktable,
         "lnT_for_ktable": lnT_for_ktable,
         "kUnit": kUnit,
@@ -499,8 +574,8 @@ def main():
         volumetric_heating_rate = volumetric_heating_rate[0]
 
     use_LW_flag = 1
-    LW_J21 = 1800
-    spectrum_type = "T5"  
+    LW_J21 = 12
+    spectrum_type = "T4"  
 
     final_nH = 1e10 # cm^-3
 
@@ -558,7 +633,8 @@ def main():
     k10_cubic = interp1d(lnT_for_ktable, k_table["k10"], kind='cubic')
     k12_cubic = interp1d(lnT_for_ktable, k_table["k12"], kind='cubic')
     k13_cubic = interp1d(lnT_for_ktable, k_table["k13"], kind='cubic')
-    k21_cubic = interp1d(lnT_for_ktable, k_table["k21"], kind='cubic')
+    # k21_cubic = interp1d(lnT_for_ktable, k_table["k21"], kind='cubic')
+    # k22_cubic = interp1d(lnT_for_ktable, k_table["k22"], kind='cubic')
 
     k7_list = k7_cubic(np.log(temperature_list))
     k8_list = k8_cubic(np.log(temperature_list))
@@ -566,13 +642,14 @@ def main():
     k10_list = k10_cubic(np.log(temperature_list))
     k12_list = k12_cubic(np.log(temperature_list))
     k13_list = k13_cubic(np.log(temperature_list))
-    k21_list = k21_cubic(np.log(temperature_list))
+    # k21_list = k21_cubic(np.log(temperature_list))
+    # k22_list = k22_cubic(np.log(temperature_list))
 
     
-    k13dd_flat = k_table["k13dd"]
-    k13dd_interps = make_k13dd_interpolators(lnT_for_ktable, k13dd_flat)
-    k13dd_GrackleUnit_list = k13_density_dependent(k13dd_interps, temperature_list, nH_list)
-    k13dd_list = k13dd_GrackleUnit_list * kUnit #in cgs units
+    # k13dd_flat = k_table["k13dd"]
+    # k13dd_interps = make_k13dd_interpolators(lnT_for_ktable, k13dd_flat)
+    # k13dd_GrackleUnit_list = k13_density_dependent(k13dd_interps, temperature_list, nH_list)
+    # k13dd_list = k13dd_GrackleUnit_list * kUnit #in cgs units
 
     if spectrum_type == "T4":
         alpha_LW = 2000; beta_LW = 3
@@ -592,9 +669,40 @@ def main():
     kform_total = kform_HM_eff + kform_H2II_eff
     print("k12_list:", k12_list)
     #use k13dd_list instead of k13_list
-    print("k13dd_list:", k13dd_list)
-    kdiss_total = k31_list + k12_list * ne_list + k13dd_list * nH_list + k21_list * nH_list**2
-    y_H2I_Eq = kform_total * y_e * nH_list / kdiss_total
+    # print("k13dd_list:", k13dd_list)
+    # kdiss_total = k31_list + k12_list * ne_list + k13dd_list * nH_list 
+    
+    # --- A, B, C in the y = nH2/nH equation ---
+    # A: source term coefficient for dy/dt (1/s), from 2-body formation: dy/dt += A
+    A_term = (kform_HM_eff + kform_H2II_eff) * y_e * nH_list  # [1/s]
+    # A_term += k22_list * nH_list**2   #do not include 3-body formation for now
+    # B: destruction coefficient multiplying y: dy/dt -= B*y
+    print("terms in B_term:")
+    print("k31_list:", k31_list)
+    print("k12_list * ne_list:", k12_list * ne_list)
+    # print("k13dd_list * nH_list:", k13dd_list * nH_list)
+    print("k13_list * nH_list:", k13_list * nH_list)
+    #temporarily use k13_list instead of k13dd_list to see the difference
+    B_term = k31_list + k12_list * ne_list + k13_list * nH_list  # [1/s]
+    # B_term = k31_list 
+
+    # C: 3-body (H+H+H2) amplification coefficient multiplying y: dy/dt += C*y
+    # C_term = k21_list * nH_list**2  # [1/s]
+    C_term = 0.0 #ignore 3-body amplification for now
+    # --- Instantaneous equilibrium (dy/dt = 0) ---
+    # y_eq = A / (B - C)
+    den = B_term - C_term
+    # safety: avoid division by <=0 (signals runaway / breakdown of this simplified equilibrium model)
+    tiny = 1e-60
+    den_safe = np.where(den > tiny, den, np.nan)  # or use tiny instead of nan if you prefer
+
+    y_H2I_Eq = A_term / den_safe
+    print("A_term:", A_term)
+    print("B_term:", B_term)
+    print("denominator (B - C):", den)
+    print("y_H2I_Eq:", y_H2I_Eq)
+
+    # y_H2I_Eq = kform_total * y_e * nH_list / kdiss_total  #do not use the old version
 
 
     fig, ax1 = plt.subplots(figsize=(8, 6))
@@ -664,6 +772,38 @@ def main():
     #                    data=data, extra_attrs=extra_attrs)
 
     
+    # ===== Third figure: LW vs collisional dissociation contributions (single panel) =====
+    # all are effective source/sink terms in dy_H2/dt, unit ~ 1/s
+    R_form_HM = kform_HM_eff * y_e * nH_list
+    R_form_H2p = kform_H2II_eff * y_e * nH_list
+
+    R_LW = k31_list
+    R_cd_e = k12_list * ne_list
+    R_cd_H = k13_list * nH_list
+    R_cd_tot = R_cd_e + R_cd_H
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.plot(nH_list, R_form_HM, label='R_form_HM', color='tab:red')
+    ax.plot(nH_list, R_form_H2p, label='R_form_H2+', color='tab:orange')
+    ax.plot(nH_list, R_LW, label='R_LW (k31)', color='tab:purple')
+    ax.plot(nH_list, R_cd_e, label='R_cd_e (k12*ne)', color='tab:green')
+    ax.plot(nH_list, R_cd_H, label='R_cd_H (k13*nH)', color='tab:blue')
+    ax.plot(nH_list, R_cd_tot, label='R_cd_tot', color='black', linestyle='--')
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel(r"$n_{\rm H}$ [cm$^{-3}$]", fontsize=14)
+    ax.set_ylabel(r'Contribution to $dy_{\rm H_2}/dt$ [s$^{-1}$]', fontsize=14)
+    ax.legend(fontsize=10, ncol=2)
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+    ax.set_title("Formation vs Dissociation Contributions", fontsize=16)
+
+    output_name_contrib = output_name.replace(".png", "_contribution_compare.png")
+    plt.tight_layout()
+    plt.savefig(output_name_contrib, dpi=300)
+    plt.close()
+    print(f"Contribution comparison plot saved to {output_name_contrib}")
+
 
 if __name__ == "__main__":
     main()

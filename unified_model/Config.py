@@ -1,6 +1,6 @@
 import numpy as np
 SHMF_model = 'BestFit_z'
-snapNum = 2
+snapNum = 99
 simulation_set = 'TNG50-1'
 
 #bestfit parameters for ratio of selected HMF to total HMF (a,b,c,d,e,f), used in HMF_ratio_2Dbestfit()

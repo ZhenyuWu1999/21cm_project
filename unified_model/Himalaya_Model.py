@@ -58,8 +58,8 @@ def read_himalaya(file_path):
 def test_file_reading():
     base_dir = "/ceph/cephfs/bsreedhar/HIMALAYA/HIMALAYA_DMO"
 
-    # simulation_dir = os.path.join(base_dir, "zooms/000", "data")
-    simulation_dir = os.path.join(base_dir, "parent", "data") #(not compatible with yt format now)
+    simulation_dir = os.path.join(base_dir, "zooms/000", "data")
+    # simulation_dir = os.path.join(base_dir, "parent", "data") #(not compatible with yt format now)
     
     snapNum = 10
     fof_sub_path = os.path.join(simulation_dir, "fof_subhalo_tab_%03d.hdf5" % snapNum)
@@ -175,7 +175,7 @@ def plot_hmf_himalaya(data_dict, index_selected, current_redshift, dark_matter_r
     - simulation_volume: The comoving volume of the simulation box (in (Mpc/h)^3).
     - hmf_filename: The filename to save the HMF plot
     """
-
+    h_Hubble = 1.0 #debug
     scale_factor = 1.0/(1.+current_redshift)
     comoving_factor = scale_factor**3
     #plot HMF (halo mass function)
@@ -202,7 +202,7 @@ def plot_hmf_himalaya(data_dict, index_selected, current_redshift, dark_matter_r
     logM_limits = [6, np.log10(1.1*max_M)]  # Limits for log10(M [Msun/h])
     HMF_lgM_press74 = []
     HMF_lgM_sheth99 = []
-    # HMF_lgM_tinker08 = []
+    HMF_lgM_watson13 = []
 
     dlog10m = (logM_limits[1] - logM_limits[0]) / 60
     logM_list = np.arange(logM_limits[0], logM_limits[1], dlog10m)
@@ -211,9 +211,10 @@ def plot_hmf_himalaya(data_dict, index_selected, current_redshift, dark_matter_r
         M = 10**(logM)
         HMF_lgM_press74.append(HMF_Colossus(10**logM, current_redshift, 'press74')* np.log(10)*M)  
         HMF_lgM_sheth99.append(HMF_Colossus(10**logM, current_redshift, 'sheth99')* np.log(10)*M)
-        # HMF_lgM_tinker08.append(HMF_Colossus(10**logM, current_redshift, 'tinker08', mdef = '200c')* np.log(10)*M)
+        HMF_lgM_watson13.append(HMF_Colossus(10**logM, current_redshift, 'watson13')* np.log(10)*M)
     HMF_lgM_press74 = np.array(HMF_lgM_press74)
     HMF_lgM_sheth99 = np.array(HMF_lgM_sheth99)
+    HMF_lgM_watson13 = np.array(HMF_lgM_watson13)   
     # HMF_lgM_tinker08 = np.array(HMF_lgM_tinker08)
     # _, HMF_lgM_tinker08_test = HMF_py_dndlog10m(logM_limits[0], logM_limits[1], dlog10m, current_redshift, 'Tinker08', mdef_model = 'SOCritical', mdef_params = {'overdensity': 200})
 
@@ -227,6 +228,7 @@ def plot_hmf_himalaya(data_dict, index_selected, current_redshift, dark_matter_r
     plt.plot(10**(logM_list),HMF_lgM_press74*comoving_factor, color='k',linestyle='-',label='Press74')
     plt.plot(10**(logM_list),HMF_lgM_sheth99*comoving_factor, color='red',linestyle='-',label='Sheth99')
     # plt.plot(10**(logM_list),HMF_lgM_tinker08*comoving_factor, color='blue',linestyle='-',label='Tinker08')
+    plt.plot(10**(logM_list),HMF_lgM_watson13*comoving_factor, color='orange',linestyle='-',label='Watson13')
     # plt.plot(10**(logM_list),HMF_lgM_tinker08_test,color='orange',linestyle='-',label='Tinker08')
     plt.legend(fontsize=13)
     
@@ -317,6 +319,7 @@ def plot_Mratio_dN_dlogMratio_himalaya(data_dict, all_subhalo_indices, host_indi
     tot_num_host = len(np.unique(host_indices_for_subs))
     print(f"Total number of host halos: {tot_num_host}")  #plot tot distribution separately
 
+    exit()
 
     # 1. Plot mass ratio distributions and fit
     colors = plt.cm.rainbow(np.linspace(0, 1, num_M_bins))
@@ -440,9 +443,11 @@ def plot_Mratio_dN_dlogMratio_himalaya(data_dict, all_subhalo_indices, host_indi
 
 def test_pipeline():
     base_dir = "/ceph/cephfs/bsreedhar/HIMALAYA/HIMALAYA_DMO"
+    h_Hubble = 1.0
     boxsize = 70.0 #cMpc
     boxsize_h = boxsize * h_Hubble  #cMpc/h
     comoving_simulation_volume = boxsize_h**3  #(cMpc/h)^3
+    h_Hubble = 1.0 #debug
 
     simulation_label = "zooms000"  
     if simulation_label not in ["parent", "zooms000"]:
@@ -483,6 +488,9 @@ def test_pipeline():
 
     fof_sub_path = os.path.join(simulation_dir, "fof_subhalo_tab_%03d.hdf5" % snapNum)
     data_dict, attrs_dict = read_hdf5_data(fof_sub_path, include_attrs=True)
+    display_hdf5_contents(fof_sub_path)
+    # print("Attributes in fof_subhalo_tab file:\n", attrs_dict)
+    exit()
 
     # print(data_dict.keys())
     # dict_keys(['Group/GroupAscale', 'Group/GroupFirstSub', 'Group/GroupLen', 'Group/GroupLenType', 
@@ -509,10 +517,16 @@ def test_pipeline():
     print(f"number of halos with R_crit200 = 0: {num_R200_zero}")
     print(f"number of halos with no subhalo: {num_nosubhalo}")
 
+    # print("GroupPos:", data_dict['Group/GroupPos'])
+    print('Group/GroupMassType:', data_dict['Group/GroupMassType'])
+
     mask = mask_groupmass & mask_M200 & mask_R200 & mask_subhalo
     N_selected = np.sum(mask)
     print("number of selected halos: ", N_selected)
     index_selected = np.where(mask)[0]
+
+    exit()
+
 
     # print(index_selected)
 
@@ -538,12 +552,12 @@ def test_pipeline():
     print("number of selected subhalos: ", n_selected_subs)
 
     #now plot HMF 
-    # hmf_filename = os.path.join(results_dir, f"HMF_z{current_redshift:.2f}_snap{snapNum:03d}.png")
-    # plot_hmf_himalaya(data_dict, index_selected, current_redshift, dark_matter_resolution_Msun_h, physical_simulation_volume, hmf_filename)
+    hmf_filename = os.path.join(results_dir, f"HMF_z{current_redshift:.2f}_snap{snapNum:03d}.png")
+    plot_hmf_himalaya(data_dict, index_selected, current_redshift, dark_matter_resolution_Msun_h, physical_simulation_volume, hmf_filename)
 
 
     #plot SHMF
-    plot_Mratio_dN_dlogMratio_himalaya(data_dict, all_subhalo_indices, host_indices_for_subs, current_redshift, snapNum, dark_matter_resolution_Msun_h, results_dir)
+    # plot_Mratio_dN_dlogMratio_himalaya(data_dict, all_subhalo_indices, host_indices_for_subs, current_redshift, snapNum, dark_matter_resolution_Msun_h, results_dir)
 
 
 
@@ -555,5 +569,5 @@ def main():
 
 if __name__ == "__main__":
     print("yt version:", yt.__version__)
-    test_pipeline()
-
+    # test_pipeline()
+    test_file_reading()

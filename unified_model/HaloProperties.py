@@ -118,7 +118,7 @@ def get_gas_lognH_numerical(M_vir_in_Msun, R_vir_Mpc):
 
 if __name__ == "__main__":
     # Test the functions
-    z = 8
+    z = 15
     lognH = get_gas_lognH_analytic(z)
     nH = 10**lognH
     mass_density = get_mass_density_analytic(z)

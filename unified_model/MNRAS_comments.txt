@@ -1,0 +1,73 @@
+Dear Mr Wu,
+
+Copied below are the comments on your manuscript entitled "Impact of subhalo dynamical friction heating on the formation of the first structures in the universe", ref. MN-26-0768-P, which you submitted to Monthly Notices of the Royal Astronomical Society.
+
+Moderate revision of your manuscript is requested before it is reconsidered for publication.
+
+You should submit your revised version, together with your response to any comments from the editor and reviewer at https://mc.manuscriptcentral.com/mnras. The deadline for this is three months from today.
+
+Enter your Author Centre, where you will find your manuscript title listed under "Manuscripts with Decisions". Under "Actions," click on "Create a Revision". Please ensure that you also respond to any comments from the editor or assistant editor.
+
+IMPORTANT: do not submit your revised manuscript as a new paper!
+
+When submitting your revised manuscript, you should provide details of any changes you make to the original manuscript. Changes to the manuscript should also be highlighted (e.g. in bold or colour), to assist the reviewer and editor.
+
+Authors are reminded that all papers submitted to MNRAS will be published Open Access if accepted and an Article Processing Charge will apply. Authors must ensure they have read the details of the charges and, if a waiver or partial waiver is required, and an application has not yet been sent to OUP, the waiver must be applied for before the revision of this paper is submitted.
+https://academic.oup.com/mnras/pages/mnras-open-access
+
+Please ensure that all authors have been listed in your article and their details provided in ScholarOne.
+
+Authors are reminded that the corresponding author will be responsible for signing the licence for this paper, if accepted, and the corresponding author will be responsible for the Article Processing Charge.
+
+Please note, to be eligible for one of OUP’s Read and Publish agreements, the corresponding author must provide their qualifying institution as their primary affiliation at submission. After submission, changing who is designated as the corresponding author will be permitted only where there is a substantive reason to do so. For the avoidance of doubt, changing the corresponding author in order to access Read and Publish funding is not permissible. Please contact the editorial office as soon as possible if any details provided with this submission need to be changed.
+
+We look forward to receiving your revised manuscript.
+
+Best wishes,
+
+Bella
+
+Bella Lock
+Assistant Editor MNRAS
+Royal Astronomical Society
+
+cc: all listed co-authors.
+
+
+Assistant Editor's Comments:
+
+Please include up to six keywords in your manuscript from the following list - https://static.primary.prod.gcms.the-infra.com/static/site/mnras/document/mnras-keywords-list.pdf?node=ef14952c5419b6023225
+
+
+
+Scientific Editor: Prof. Simon White
+
+
+
+Reviewer's Comments:
+
+Impact of subhalo dynamical friction heating on the formation of the first structures in the universe
+Zhenyu Wu, Sadegh Khochfar, Muhammad A. Latif Ben Morton and Britton Smith
+
+The paper examines the effect of baryonic dynamical friction heating by subhalos on host haloes. First, an analysis on the subhalo mass function (SHMF) based on the Illustris TNG50 and POP2PRIME cosmological simulations is conducted. Then, the authors construct a model for the total heating of a halo given an SHMF. The DF heating is compared to the total cooling, globally as a function of redshift, and for specific halos: clusters at z~0, and for POPIII and black hole seeds at z=12-15.
+I find this work important and interesting, and the paper clear and well written. I will gladly recommend that it is published in MNRAS, provided that the authors make some moderate changes to address some issues that I list below. 
+
+Major points:
+1.      DF depends strongly on the ambient densities and relative velocities. The velocities are ~Mach 1, because of energetic considerations during the infall into the potential well, as well as due to the effects of the increased friction in the trans-sonic regime due to the ‘resonant’ behavior of the baryonic DF. The densities, however, change by orders of magnitude within a halo. For the halo-centric motions addressed here, the trajectories of subhaloes as they enter the host halo determine where they will spend most of their energy. However, in this work, the ambient density is assumed constant for the sake of heating (for cooling, on the other hand, the authors consider the actual density profile). This issue is not sufficiently discussed. Please try to establish the validity of this approximation, or, preferably, take into account the effect of the density profile on the heating self-consistently. Note that since this work is based on numerical cosmological simulations it should be straight-forward to get the SH distributions of the radii, velocities and angular momentums of the subhaloes and reconstruct these distributions in the same method as the mass function.
+2.      The halo averaged heating > cooling  condition is a necessary but not sufficient condition for heating the halo. This is because cooling flows occur when there is overcooling at the center, where the cooling rates are usually largest, even if the halo is globally stable. This effect can be tested, for example, by comparing the heating/cooling within some inner radius (for example, the NFW r_s). This point is related to the first one, but not similar: even in a model that assumes a constant density of the halo, it is unclear if H/C>1 at the center.
+
+Minor points:
+1.      Section 2.1, paragraph “Following Kim et al. (2005)”, Using Tvir(M,z). The usage of the virial temperature only makes sense if there is no significant DF heating (or cooling). It is therefore suitable to estimate if the effect is important, but not to estimate the steady state condition when back-reaction of the heating affects the halo.
+2.      Section 2.2, paragraph “Using the same procedure, we further …”. The z=12 formation and tidal stripping mass generally scales with the dynamical time of the halo, that in turn scales with the Hubble time. Therefore, it is not clear that the young age of the universe is a good excuse for using the initial SHMF instead of the evolved one.
+3.      Section 2.2, paragraph “In Figure 4, we show the redshift evolution …”, equation 6. What is the origin of the critical ‘z’? One would expect the problem to be scale free for M that scales like M* - the 1\sigma perturbation halo at each z.
+4.      Section 2.4.1. please define r_s (softening length). When introducing A=GM/cs^2r_s, note in the text the cs is the sound of speed of the host halo, while M,r_s is for the subhalo.
+5.      Section 2.4.1, first paragraph, sentence “This is because of the formation of a detached shock…”. As far as I understand, the formation of a bow shock explains the difference between subsonic and supersonic flows, not between A<1 and A>1. Does the bow-shock formation depend on r_s?
+6.      Section 2.4.1, paragraph “Morton et al (2025) estimate the A numbers …”. Does the distribution of A depend on z? Does the critical Psi for becoming non-linear depend on z?
+7.      Section 2.4.2, “As a result, the average correction …”, The choice of Vt/r_min=20,40,100. What is the physical meaning of VT/r_min in our context? What is the proper t? what are ‘reasonable’ values for you model here? At the end of the paragraph, explain the argument about “The Vt/r_min parameters in the straight line motion scenario are comparable to …”
+8.      Section 2.5. Please justify the use of the HMF, instead of the TNG50 results for the host-halo distribution. Please write down the equation for the convolution of single halo results with the halo distributions.
+9.      Section 4.2, paragraph “In Figure 14, the Pop2Prime halos… “, sentence “In fact, the profiles of these halos show that only …”. Please elaborate where this statement is justified.
+
+Typos:
+1.      Section 2.2, first sentence: “is calculated *by* summing …”
+2.      Section 2.2, Fugure 6
+3.      Figure 11, “The red and orange lines…”. There is also blue, and these are the solid lines.

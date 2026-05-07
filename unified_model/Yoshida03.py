@@ -443,7 +443,7 @@ def compare_Hubble_timescale_and_nH():
     nH_Tegmark = get_nH_Tegmark97(z_list)
     lognH_analytic = get_gas_lognH_analytic(z_list)
     nH_Peebles = np.array([1.12e-5*Ombh2*(1+z)**3 for z in z_list])  # Peebles 1993 Eq. 1
-    nH200_Peebles = np.array([1.12e-5*Ombh2*(1+z)**3*200 for z in z_list])  # Peebles 1993 Eq. 1, 200 times critical density
+    nH200_Peebles = np.array([1.12e-5*Ombh2*(1+z)**3*200 for z in z_list])  # Peebles 1993 Eq. 1, 200 times the background baryon density
     nH_analytic = 10**lognH_analytic
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111)

@@ -11,7 +11,7 @@ def Vel_Virial_analytic_oldversion(M_vir_in_Msun, z):  #van den Bosch Lecture 11
 
 def get_Rvir_analytic(M_vir_in_Msun, z):
     #M_vir in solar mass, return virial radius 
-    #use Crit200 definition
+    #use Mean200/background-density definition
     #return R_vir in Mpc
     rho_halo = 200 * Omega_m* rho_crit_z0_kgm3 * (1+z)**3
     R_vir = (3*M_vir_in_Msun*Msun/(4*np.pi*rho_halo))**(1/3)
@@ -20,7 +20,7 @@ def get_Rvir_analytic(M_vir_in_Msun, z):
 
 def Vel_Virial_analytic(M_vir_in_Msun, z):
     #M_vir in solar mass, return virial velocity in m/s
-    #use Crit200 definition
+    #use Mean200/background-density definition
     #return V_vir in m/s
 
     rho_halo = 200 * Omega_m* rho_crit_z0_kgm3 * (1+z)**3
@@ -30,7 +30,7 @@ def Vel_Virial_analytic(M_vir_in_Msun, z):
 
 def inversefunc_Vel_Virial_analytic(V_vir, z):
     #V_vir in m/s, return M_vir in solar mass
-    #use Crit200 definition
+    #use Mean200/background-density definition
     #return M_vir in solar mass
     rho_halo = 200 * Omega_m* rho_crit_z0_kgm3 * (1+z)**3
     R_vir = np.sqrt(V_vir**2/(G_grav*4.0/3.0*np.pi*rho_halo))
@@ -52,7 +52,7 @@ def Temperature_Virial_analytic(M_vir_in_Msun,z,mean_molecular_weight=None):  #v
 
 def inversefunc_Temperature_Virial_analytic(T_vir, z, mean_molecular_weight=None):  #van den Bosch Lecture 15
     #T_vir in K, return M_vir in solar mass
-    #use Crit200 definition
+    #use Mean200/background-density definition
     if mean_molecular_weight is None:
         mean_molecular_weight = mu
     halo_profile_factor = 3.0/2.0
@@ -89,7 +89,7 @@ def crossing_time(Cs,rSoft):
     return tCross
 
 def get_gas_lognH_analytic(z):
-    #assume 200 times critical density
+    #assume 200 times the cosmological background baryon density
     #return lognH in cm^-3
     rho  = 200 * rho_b0*(1+z)**3 *Msun/Mpc**3
     nH = rho*hydrogen_mass_fraction/mp #now nH is just for hydrogen, not for all particles
@@ -99,7 +99,7 @@ def get_gas_lognH_analytic(z):
     return lognH
 
 def get_mass_density_analytic(z):
-    #assume 200 times critical density, unit kg/m^3
+    #assume 200 times the cosmological background matter density, unit kg/m^3
     rho = 200 * rho_m0*(1+z)**3 *Msun/Mpc**3
     return rho
 

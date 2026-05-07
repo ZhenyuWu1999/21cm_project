@@ -23,6 +23,20 @@ def generalized_NFW_profile(x, rho_s, alpha):
     '''
     return rho_s / x**alpha / (1 + x)**(3 - alpha)
 
+
+def generalized_profile_normalization(concentration, alpha, num_points=4096):
+    """
+    Return rho_s/rho_vir for a generalized NFW profile with arbitrary alpha.
+
+    The normalization is set so that the mean enclosed density inside Rvir is
+    rho_vir, i.e. M(<Rvir) = (4/3) pi Rvir^3 rho_vir.
+    """
+    x_min = min(1.0e-8, concentration * 1.0e-6)
+    x_grid = np.logspace(np.log10(x_min), np.log10(concentration), num_points)
+    integrand = x_grid ** (2.0 - alpha) / (1.0 + x_grid) ** (3.0 - alpha)
+    integral = np.trapezoid(integrand, x_grid)
+    return concentration**3 / (3.0 * integral)
+
 def f_NFW(x):
     return np.log(1+x) - x/(1+x)
 
@@ -68,7 +82,7 @@ def density_NFW_profile(x, M, z, concentration_model):
     z: redshift
     concentration_model: concentration model name for colossus
     '''
-    #assume 200 times critical density, unit kg/m^3
+    #assume 200 times the cosmological background matter density, unit kg/m^3
     rho_vir = 200 * rho_m0*(1+z)**3 *Msun/Mpc**3
     concentration = get_concentration(M, z, concentration_model)
     rho_s = concentration**3 / f_NFW(concentration) / 3.0 #in unit of rho_vir
@@ -102,6 +116,33 @@ def gasdensity_core_profile(x, M, z, concentration_model):
     alpha = 0.0
     f_gas = Omega_b/Omega_m
     return f_gas * generalized_NFW_profile(x, rho_s, alpha) #in unit of rho_vir
+
+
+def density_arbitrary_profile(x, M, z, concentration_model, alpha):
+    '''
+    parameters:
+    x: r/r_s  (concentration: Rvir/r_s = c)
+    M: halo mass in Msun
+    z: redshift
+    concentration_model: concentration model name for colossus
+    alpha: inner slope of the generalized NFW profile
+    '''
+    concentration = get_concentration(M, z, concentration_model)
+    rho_s = generalized_profile_normalization(concentration, alpha)
+    return generalized_NFW_profile(x, rho_s, alpha) #in unit of rho_vir
+
+
+def gasdensity_arbitrary_profile(x, M, z, concentration_model, alpha):
+    '''
+    parameters:
+    x: r/r_s  (concentration: Rvir/r_s = c)
+    M: halo mass in Msun
+    z: redshift
+    concentration_model: concentration model name for colossus
+    alpha: inner slope of the generalized NFW profile
+    '''
+    f_gas = Omega_b/Omega_m
+    return f_gas * density_arbitrary_profile(x, M, z, concentration_model, alpha)
 
 def Velvir_NFW_profile(x, M, z, concentration_model):  #in virial velocity unit
     '''
@@ -414,7 +455,5 @@ if __name__ == "__main__":
     #         compare_cooling_heating_profile(output_dir, M, z, -3, -1, 'Bosch16evolved', 'ludlow16')
     
     # plot_cooling_heating_at_r_Rvir(12, 16, 0.1, 2, 'BestFit_z', 'ludlow16')
-
-
 
 

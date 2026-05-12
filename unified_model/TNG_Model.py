@@ -31,12 +31,12 @@ def load_tng_data(basePath, snapNum):
         'GroupPos',
         'Group_M_Crit200',
         'Group_R_Crit200',
+        'Group_M_Mean200',
+        'Group_R_Mean200',
         'Group_M_Crit500',
         'Group_R_Crit500',
         'GroupVel',
         'GroupGasMetallicity'
-        # 'Group_M_Mean200',
-        # 'Group_R_Mean200'
     ]
     # Load halo data (GroupFirstSub and GroupNsubs are integer fields, keep as is)
     halos = il.groupcat.loadHalos(basePath, snapNum, 
@@ -70,6 +70,88 @@ def load_tng_data(basePath, snapNum):
             subhalos[field] = subhalos[field].astype(np.float64)
     
     return header, halos, subhalos
+
+
+def check_tng_m200_density_definitions():
+    """
+    Quick consistency check for TNG M200/R200 definitions.
+
+    Checks snap 99 (z~0), snap 13 (z~6), and snap 2 (z~12). For each snapshot,
+    prints the first 10 valid halos and compares the density implied by
+    M200c/R200c or M200m/R200m to 200 rho_crit(z) and 200 rho_m(z).
+    """
+    basePath = '/home/zwu/21cm_project/TNG_data/' + simulation_set + '/output'
+    snaps_to_check = [99, 13, 2]
+
+    def summarize_definition(halos, scale_factor, mass_key, radius_key, reference_density, reference_label):
+        mass_msun_h = halos[mass_key] * 1.0e10
+        radius_m = halos[radius_key] / 1.0e3 * scale_factor / h_Hubble * Mpc
+        valid = (mass_msun_h > 0) & (radius_m > 0)
+        if not np.any(valid):
+            print(f"{mass_key}/{radius_key}: no valid halos")
+            return
+
+        valid_indices = np.where(valid)[0][:10]
+        density = (mass_msun_h[valid_indices] * Msun / h_Hubble) / (
+            4.0 / 3.0 * np.pi * radius_m[valid_indices] ** 3
+        )
+        ratio = density / reference_density
+
+        print(f"\n{mass_key} with {radius_key} compared to {reference_label}:")
+        for halo_index, halo_density, halo_ratio in zip(valid_indices, density, ratio):
+            print(
+                f"  halo {halo_index:6d}: "
+                f"rho = {halo_density:.6e} kg/m^3, ratio = {halo_ratio:.6e}"
+            )
+
+    for snapNum in snaps_to_check:
+        header, halos, _ = load_tng_data(basePath, snapNum)
+        redshift = header['Redshift']
+        print(f"\nChecking snap {snapNum} at redshift z={redshift:.6f}")
+        scale_factor = 1.0 / (1.0 + redshift)
+
+        ez2 = (
+            Omega_m * (1.0 + redshift) ** 3
+            + Omega_r * (1.0 + redshift) ** 4
+            + Omega_k * (1.0 + redshift) ** 2
+            + Omega_lambda
+        )
+        rho_crit_z = rho_crit_z0_kgm3 * ez2
+        rho_m_z = Omega_m * rho_crit_z0_kgm3 * (1.0 + redshift) ** 3
+
+        print(f"\nChecking TNG halo density definitions for snap {snapNum}, z={redshift:.6f}")
+        summarize_definition(
+            halos,
+            scale_factor,
+            'Group_M_Crit200',
+            'Group_R_Crit200',
+            200.0 * rho_crit_z,
+            '200 rho_crit(z)',
+        )
+        summarize_definition(
+            halos,
+            scale_factor,
+            'Group_M_Crit200',
+            'Group_R_Crit200',
+            200.0 * rho_m_z,
+            '200 rho_m(z)',
+        )
+        summarize_definition(
+            halos,
+            scale_factor,
+            'Group_M_Mean200',
+            'Group_R_Mean200',
+            200.0 * rho_m_z,
+            '200 rho_m(z)',
+        )
+        summarize_definition(
+            halos,
+            scale_factor,
+            'Group_M_Mean200',
+            'Group_R_Mean200',
+            200.0 * rho_crit_z,
+            '200 rho_crit(z)',
+        )
 
 
 
@@ -659,5 +741,5 @@ if __name__ == '__main__':
     # TNG_model()
     # find_abnormal_mach()
     # analyze_processed_data()
-    plot_Mratio_dN_dlogMratio()  
-    
+    # plot_Mratio_dN_dlogMratio()  
+    check_tng_m200_density_definitions()

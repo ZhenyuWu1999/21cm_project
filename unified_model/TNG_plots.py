@@ -6,8 +6,8 @@ from scipy.stats import truncnorm
 import os
 import matplotlib.lines as mlines
 from TNGDataHandler import load_processed_data
+from HaloProfileStatistics import get_subhalo_host_distance, plot_host_averaged_radial_subhalo_profile
 from physical_constants import Zsun, Myr, kpc, Omega_b, Omega_m, h_Hubble
-
 
 
 def maxwell_boltzmann_pdf(x, sigma):
@@ -483,6 +483,59 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         print(f"Saved figure: {filename}")
         plt.close()
 
+
+
+    if 'dpos_R200' in fig_options:
+        # Plot normalized halo-centric distance of subhalos.
+        # This is separate from dpos_subhaloVmaxRad, which compares host-subhalo
+        # centroid distance with the internal subhalo Vmax radius.
+        _, _, dpos_over_R200 = get_subhalo_host_distance(data)
+        valid_indices = (host_R200 > 0) & (dpos_over_R200 > 0) & np.isfinite(dpos_over_R200)
+        dpos_over_R200_selected = dpos_over_R200[valid_indices]
+        print(f"Number of valid dpos/R200 indices: {np.sum(valid_indices)}")
+        print(f"Number of total indices: {len(valid_indices)}")
+        if len(dpos_over_R200_selected) == 0:
+            print("No valid dpos/R200 values; skip dpos_R200 plots.")
+            return
+
+        fig = plt.figure(figsize=(8, 6), facecolor='w')
+        max_plot = min(3.0, np.percentile(dpos_over_R200_selected, 99.7))
+        bins = np.linspace(0.0, max_plot, 60)
+        plt.hist(dpos_over_R200_selected, bins=bins, histtype='step', linewidth=2)
+        plt.axvline(1.0, color='black', linestyle='--', linewidth=1.5, label=r'$R_{200}$')
+        plt.xlabel(r'$d_{\mathrm{sub-host}}/R_{200}$', fontsize=14)
+        plt.ylabel('Counts', fontsize=14)
+        plt.legend()
+        filename = os.path.join(output_dir, f'dpos_R200_snap_{snapNum}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved figure: {filename}")
+        plt.close()
+
+        sorted_r = np.sort(dpos_over_R200_selected)
+        cdf = np.arange(1, len(sorted_r) + 1) / len(sorted_r)
+        fig = plt.figure(figsize=(8, 6), facecolor='w')
+        plt.plot(sorted_r, cdf, linewidth=2)
+        plt.axvline(1.0, color='black', linestyle='--', linewidth=1.5, label=r'$R_{200}$')
+        plt.xlim(0.0, max_plot)
+        plt.ylim(0.0, 1.0)
+        plt.xlabel(r'$d_{\mathrm{sub-host}}/R_{200}$', fontsize=14)
+        plt.ylabel('Cumulative Fraction', fontsize=14)
+        plt.legend()
+        filename = os.path.join(output_dir, f'dpos_R200_cumulative_snap_{snapNum}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved figure: {filename}")
+        plt.close()
+
+        summary_file = os.path.join(output_dir, f'dpos_R200_summary_snap_{snapNum}.txt')
+        percentiles = [5, 16, 50, 84, 95]
+        values = np.percentile(dpos_over_R200_selected, percentiles)
+        with open(summary_file, 'w') as f:
+            f.write("dpos is the halo-centric subhalo-host centroid distance.\n")
+            f.write("dpos/R200 percentiles:\n")
+            for p, value in zip(percentiles, values):
+                f.write(f"p{p}: {value:.6e}\n")
+            f.write(f"fraction_inside_R200: {np.mean(dpos_over_R200_selected < 1.0):.6e}\n")
+        print(f"Saved summary: {summary_file}")
 
 
     if 'dpos_subhaloVmaxRad' in fig_options:
@@ -973,31 +1026,33 @@ if __name__ == '__main__':
     simulation_set = 'TNG50-1'
 
     # snapNum_list = [0, 1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 40, 50, 59, 67, 72, 78, 84, 91, 99]
-    # snapNum_list = [99]
+    snapNum_list = [99, 13, 2, 1]
     
-    # for snapNum in snapNum_list:
-    #     print(f"Processing snapshot {snapNum} ...")
-    #     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
-    #     processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
-    #                                 f'processed_halos_snap_{snapNum}.h5')
-        # data = load_processed_data(processed_file)
+    for snapNum in snapNum_list:
+        print(f"Processing snapshot {snapNum} ...")
+        base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
+        processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
+                                    f'processed_halos_snap_{snapNum}.h5')
+        data = load_processed_data(processed_file)
         # Create plots
-        # output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
+        output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
         # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass', 
         # 'R200_subhaloVmaxRad', 'tff_tcross', 'M200_Mach', 'M200_Anumber', 'Mach_fit']
         # fig_options_2Dhistogram = ['Mach_fixedhostmass']
-        # plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
+        fig_options_2Dhistogram = ['dpos_R200']
+        plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
+        # plot_host_averaged_radial_subhalo_profile(data, snapNum, output_dir)
         # plot_host_halo_properties(data, snapNum, output_dir)
         # plot_conditional_logA(data, snapNum, output_dir, xmode="both", weight_by_host=False)
 
-    snapNum_list = [1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 50, 99]
+    # snapNum_list = [1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 50, 99]
     # # Compare Mach numbers across snapshots
     # compare_mach_numbers(simulation_set, snapNum_list)
 
-    plot_sigma_vs_hostmass_over_snaps(
-    snapNum_list=snapNum_list,
-    base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
-    simulation_set=simulation_set,
-    fit_mode="truncated-gaussian", # "maxwell-boltzmann" | "truncated-gaussian"
-    min_count_for_plot=0,         
-    )
+    # plot_sigma_vs_hostmass_over_snaps(
+    # snapNum_list=snapNum_list,
+    # base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+    # simulation_set=simulation_set,
+    # fit_mode="truncated-gaussian", # "maxwell-boltzmann" | "truncated-gaussian"
+    # min_count_for_plot=0,         
+    # )

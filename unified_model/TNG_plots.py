@@ -1,13 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import colors, cm
-from scipy.optimize import curve_fit
-from scipy.stats import truncnorm
 import os
 import matplotlib.lines as mlines
 from TNGDataHandler import load_processed_data
 from HaloProfileStatistics import get_subhalo_host_distance, plot_host_averaged_radial_subhalo_profile
-from physical_constants import Zsun, Myr, kpc, Omega_b, Omega_m, h_Hubble
+from physical_constants import G_grav, Mpc, Msun, Zsun, Myr, kpc, Omega_b, Omega_m, h_Hubble
 
 
 def maxwell_boltzmann_pdf(x, sigma):
@@ -57,6 +55,8 @@ def fit_maxwell_boltzmann(data, bins, range_fit=None, initial_guess=None):
     )
     sigma_fit = popt[0]
     """
+    from scipy.optimize import curve_fit
+
     if range_fit is None:
         range_fit = (np.min(data), np.max(data))
     
@@ -82,6 +82,8 @@ def truncated_gaussian_pdf(x, mu, sigma):
     """
     PDF of a Gaussian truncated at x>=0
     """
+    from scipy.stats import truncnorm
+
     a, b = (0 - mu) / sigma, np.inf
     return truncnorm.pdf(x, a, b, loc=mu, scale=sigma)
 
@@ -585,6 +587,649 @@ def _colnorm(H):
     return H / s
 
 
+def _weighted_median(values, weights):
+    """Return the weighted median of one 1D sample."""
+    sort_idx = np.argsort(values)
+    values_sorted = values[sort_idx]
+    weights_sorted = weights[sort_idx]
+    weighted_cdf = np.cumsum(weights_sorted) / np.sum(weights_sorted)
+    return np.interp(0.5, weighted_cdf, values_sorted)
+
+
+def _prepare_tng_orbital_samples(data, x_range=(1.0e-2, 3.0), weight_by_host=False):
+    """
+    Build reusable TNG orbital samples based on M200c/R200c host scaling.
+
+    Returns host-mass values, x=r/R200c, j_norm=j/(R200c*V200c), vr_norm=vr/V200c,
+    and optional host-equal subhalo weights.
+    """
+    host_indices = data.subhalo_data['host_index'].value.astype(int)
+    host_m200_subs = data.halo_data['Group_M_Crit200'].value[host_indices]
+    host_r200_subs = data.halo_data['Group_R_Crit200'].value[host_indices]
+    sub_vel = data.subhalo_data['SubVel'].value
+    host_vel = data.halo_data['GroupVel'].value[host_indices]
+    x_values = get_subhalo_host_distance(data)[2]
+    r_vec_ckpch = get_subhalo_host_distance(data)[0]
+
+    # Convert host-centric displacement from ckpc/h to physical meters.
+    scale_factor = data.header.get('Time', 1.0)
+    r_vec_m = r_vec_ckpch / 1.0e3 * scale_factor / h_Hubble * Mpc
+    r_mag_m = np.sqrt(np.sum(r_vec_m**2, axis=1))
+    v_rel = sub_vel - host_vel
+
+    valid = (
+        np.isfinite(host_m200_subs)
+        & (host_m200_subs > 0)
+        & np.isfinite(host_r200_subs)
+        & (host_r200_subs > 0)
+        & np.isfinite(x_values)
+        & (x_values >= x_range[0])
+        & (x_values <= x_range[1])
+        & np.all(np.isfinite(r_vec_m), axis=1)
+        & (r_mag_m > 0)
+        & np.all(np.isfinite(v_rel), axis=1)
+    )
+
+    host_indices = host_indices[valid]
+    host_m200_subs = host_m200_subs[valid]
+    host_r200_subs = host_r200_subs[valid]
+    x_values = x_values[valid]
+    r_vec_m = r_vec_m[valid]
+    r_mag_m = r_mag_m[valid]
+    v_rel = v_rel[valid]
+
+    v200_mps = np.sqrt(G_grav * (host_m200_subs / h_Hubble) * Msun / (host_r200_subs * Mpc))
+    vr_mps = np.sum(r_vec_m * v_rel, axis=1) / r_mag_m
+    j_orb = np.sqrt(np.sum(np.cross(r_vec_m, v_rel)**2, axis=1))
+    j_norm = j_orb / ((host_r200_subs * Mpc) * v200_mps)
+    vr_norm = vr_mps / v200_mps
+
+    subhalo_weights = None
+    if weight_by_host:
+        # Host-equal weighting: each host contributes unit total weight.
+        subhalo_weights = _host_equal_weights(host_indices)
+
+    return {
+        'host_indices': host_indices,
+        'host_m200_subs': host_m200_subs,
+        'x_values': x_values,
+        'j_norm': j_norm,
+        'vr_norm': vr_norm,
+        'weights': subhalo_weights,
+    }
+
+# radial distribution of Mach number in different host mass bins, with each column normalized to show P(Mach | x)
+
+def plot_conditional_mach_radius_by_hostmass(
+    snapNum,
+    simulation_set='TNG50-1',
+    base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+    output_dir=None,
+    num_mass_bins=5,
+    num_x_bins=32,
+    num_mach_bins=40,
+    x_range=(1.0e-2, 3.0),
+    mach_max=5.0,
+    min_subhalos_per_panel=10,
+    weight_by_host=False,
+):
+    """
+    Plot P(Mach | x) in a 2x3 panel figure split by host-halo M200c.
+
+    The first five panels show log-uniform host-mass bins in M200c and the last
+    panel shows the combined sample. Each x-bin column is normalized so the
+    heatmap reflects the conditional Mach-number distribution at fixed radius.
+    If weight_by_host=True, each host halo contributes equal total weight by
+    assigning each of its subhalos a weight 1/N_sub,host.
+    """
+    processed_file = os.path.join(
+        base_dir,
+        simulation_set,
+        f'snap_{snapNum}',
+        f'processed_halos_snap_{snapNum}.h5',
+    )
+    if output_dir is None:
+        output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
+    os.makedirs(output_dir, exist_ok=True)
+
+    data = load_processed_data(processed_file)
+    redshift = float(data.header['Redshift'])
+    host_indices = data.subhalo_data['host_index'].value.astype(int)
+    host_m200_subs = data.halo_data['Group_M_Crit200'].value[host_indices]
+    x_values = get_subhalo_host_distance(data)[2]
+    mach_number = data.subhalo_data['mach_number'].value
+
+    valid = (
+        np.isfinite(host_m200_subs)
+        & (host_m200_subs > 0)
+        & np.isfinite(x_values)
+        & (x_values >= x_range[0])
+        & (x_values <= x_range[1])
+        & np.isfinite(mach_number)
+        & (mach_number >= 0)
+    )
+    host_m200_subs = host_m200_subs[valid]
+    x_values = x_values[valid]
+    mach_number = mach_number[valid]
+
+    if host_m200_subs.size == 0:
+        raise ValueError('No valid subhalos found for the requested Mach-radius plot.')
+
+    in_mach_range = mach_number <= mach_max
+    host_m200_subs = host_m200_subs[in_mach_range]
+    x_values = x_values[in_mach_range]
+    mach_number = mach_number[in_mach_range]
+    host_indices = host_indices[valid][in_mach_range]
+
+    subhalo_weights = None
+    if weight_by_host:
+        # Host-equal weighting: each host contributes unit total weight.
+        subhalo_weights = _host_equal_weights(host_indices)
+
+    valid_hosts = data.halo_data['Group_M_Crit200'].value
+    valid_hosts = valid_hosts[np.isfinite(valid_hosts) & (valid_hosts > 0)]
+    logM_edges = np.linspace(np.log10(np.min(valid_hosts)), np.log10(np.max(valid_hosts)), num_mass_bins + 1)
+    x_edges = np.logspace(np.log10(x_range[0]), np.log10(x_range[1]), num_x_bins + 1)
+    mach_edges = np.linspace(0.0, mach_max, num_mach_bins + 1)
+    x_centers = np.sqrt(x_edges[:-1] * x_edges[1:])
+
+    panels = []
+    for i in range(num_mass_bins):
+        if i == num_mass_bins - 1:
+            mask = (
+                (np.log10(host_m200_subs) >= logM_edges[i])
+                & (np.log10(host_m200_subs) <= logM_edges[i + 1])
+            )
+        else:
+            mask = (
+                (np.log10(host_m200_subs) >= logM_edges[i])
+                & (np.log10(host_m200_subs) < logM_edges[i + 1])
+            )
+        panels.append(
+            {
+                'label': (
+                    r'$\log_{10}(M_{200c}/M_\odot h^{-1})'
+                    + f' \\in [{logM_edges[i]:.2f}, {logM_edges[i + 1]:.2f}]$'
+                ),
+                'x': x_values[mask],
+                'mach': mach_number[mask],
+                'weights': None if subhalo_weights is None else subhalo_weights[mask],
+                'n_subhalos': int(np.count_nonzero(mask)),
+            }
+        )
+
+    panels.append(
+        {
+            'label': 'All host masses',
+            'x': x_values,
+            'mach': mach_number,
+            'weights': subhalo_weights,
+            'n_subhalos': int(x_values.size),
+        }
+    )
+
+    heatmaps = []
+    medians = []
+    positive_values = []
+    for panel in panels:
+        if panel['n_subhalos'] >= min_subhalos_per_panel:
+            H, _, _ = np.histogram2d(
+                panel['mach'],
+                panel['x'],
+                bins=[mach_edges, x_edges],
+                weights=panel['weights'],
+            )
+            Hc = _colnorm(H)
+            median_curve = np.full(num_x_bins, np.nan)
+            for j in range(num_x_bins):
+                in_bin = (panel['x'] >= x_edges[j]) & (panel['x'] < x_edges[j + 1])
+                if j == num_x_bins - 1:
+                    in_bin = (panel['x'] >= x_edges[j]) & (panel['x'] <= x_edges[j + 1])
+                if np.any(in_bin):
+                    if panel['weights'] is None:
+                        median_curve[j] = np.median(panel['mach'][in_bin])
+                    else:
+                        mach_bin = panel['mach'][in_bin]
+                        weights_bin = panel['weights'][in_bin]
+                        sort_idx = np.argsort(mach_bin)
+                        mach_sorted = mach_bin[sort_idx]
+                        weights_sorted = weights_bin[sort_idx]
+                        weighted_cdf = np.cumsum(weights_sorted) / np.sum(weights_sorted)
+                        median_curve[j] = np.interp(0.5, weighted_cdf, mach_sorted)
+            if np.any(Hc > 0):
+                positive_values.append(Hc[Hc > 0])
+        else:
+            Hc = np.zeros((num_mach_bins, num_x_bins), dtype=float)
+            median_curve = np.full(num_x_bins, np.nan)
+        heatmaps.append(Hc)
+        medians.append(median_curve)
+
+    if positive_values:
+        positive_values = np.concatenate(positive_values)
+        vmax = np.percentile(positive_values, 99.5)
+    else:
+        vmax = 1.0
+    vmax = max(vmax, 1.0e-6)
+    norm = colors.Normalize(vmin=0.0, vmax=vmax)
+
+    fig, axes = plt.subplots(
+        2,
+        3,
+        figsize=(18, 10),
+        sharex=True,
+        sharey=True,
+        facecolor='w',
+        constrained_layout=True,
+    )
+    axes = axes.flatten()
+    mesh = None
+
+    for ax, panel, Hc, median_curve in zip(axes, panels, heatmaps, medians):
+        Xmesh, Ymesh = np.meshgrid(x_edges, mach_edges)
+        mesh = ax.pcolormesh(Xmesh, Ymesh, Hc, shading='auto', cmap='viridis', norm=norm)
+        ax.set_xscale('log')
+        ax.axvline(1.0, lw=1.4, ls=':', color='white', alpha=0.9)
+        ax.axhline(1.0, lw=1.4, ls='--', color='white', alpha=0.9)
+        if np.any(np.isfinite(median_curve)):
+            ax.plot(x_centers, median_curve, color='tab:red', lw=2.0)
+        ax.set_title(f"{panel['label']}\nNsub = {panel['n_subhalos']}", fontsize=11)
+        ax.set_xlim(x_range)
+        ax.set_ylim(0.0, mach_max)
+        ax.tick_params(axis='both', direction='in')
+        if panel['n_subhalos'] < min_subhalos_per_panel:
+            ax.text(
+                0.5,
+                0.5,
+                'Insufficient subhalos',
+                transform=ax.transAxes,
+                ha='center',
+                va='center',
+                fontsize=11,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.75),
+            )
+
+    for ax in axes[3:]:
+        ax.set_xlabel(r'$x = d_{\mathrm{sub-host}}/R_{200c}$', fontsize=13)
+    for ax in axes[::3]:
+        ax.set_ylabel(r'$\mathcal{M}$', fontsize=13)
+
+    cbar = fig.colorbar(mesh, ax=axes.tolist(), fraction=0.03, pad=0.03)
+    cbar.set_label(r'$P(\mathcal{M}\mid x)$', fontsize=13)
+
+    title_suffix = ' WeightByHost' if weight_by_host else ''
+    fig.suptitle(
+        rf'TNG conditional Mach distribution{title_suffix}, z = {redshift:.2f}, '
+        rf'$\mathcal{{M}} < {mach_max:g}$',
+        fontsize=14,
+    )
+
+    output_path = os.path.join(
+        output_dir,
+        f'conditional_mach_radius_M200c_2x3_'
+        f'{"hostweight" if weight_by_host else "subweight"}_snap_{snapNum}.png',
+    )
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"[Saved] {output_path}")
+    return output_path
+
+
+def plot_conditional_jnorm_radius_by_hostmass(
+    snapNum,
+    simulation_set='TNG50-1',
+    base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+    output_dir=None,
+    num_mass_bins=5,
+    num_x_bins=32,
+    num_j_bins=40,
+    x_range=(1.0e-2, 3.0),
+    jnorm_max=5.0,
+    min_subhalos_per_panel=10,
+    weight_by_host=False,
+):
+    """
+    Plot P(j_norm | x) with j_norm = j_orb / (R200c * V200c) in a 2x3 layout.
+    """
+    processed_file = os.path.join(
+        base_dir,
+        simulation_set,
+        f'snap_{snapNum}',
+        f'processed_halos_snap_{snapNum}.h5',
+    )
+    if output_dir is None:
+        output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
+    os.makedirs(output_dir, exist_ok=True)
+
+    data = load_processed_data(processed_file)
+    redshift = float(data.header['Redshift'])
+    orbital = _prepare_tng_orbital_samples(data, x_range=x_range, weight_by_host=weight_by_host)
+
+    host_m200_subs = orbital['host_m200_subs']
+    x_values = orbital['x_values']
+    j_norm = orbital['j_norm']
+    subhalo_weights = orbital['weights']
+
+    valid = np.isfinite(j_norm) & (j_norm >= 0)
+    host_m200_subs = host_m200_subs[valid]
+    x_values = x_values[valid]
+    j_norm = j_norm[valid]
+    if subhalo_weights is not None:
+        subhalo_weights = subhalo_weights[valid]
+
+    if host_m200_subs.size == 0:
+        raise ValueError('No valid subhalos found for the requested j_norm-radius plot.')
+
+    jnorm_max = max(jnorm_max, 1.0e-3)
+    in_range = j_norm <= jnorm_max
+    host_m200_subs = host_m200_subs[in_range]
+    x_values = x_values[in_range]
+    j_norm = j_norm[in_range]
+    if subhalo_weights is not None:
+        subhalo_weights = subhalo_weights[in_range]
+
+    valid_hosts = data.halo_data['Group_M_Crit200'].value
+    valid_hosts = valid_hosts[np.isfinite(valid_hosts) & (valid_hosts > 0)]
+    logM_edges = np.linspace(np.log10(np.min(valid_hosts)), np.log10(np.max(valid_hosts)), num_mass_bins + 1)
+    x_edges = np.logspace(np.log10(x_range[0]), np.log10(x_range[1]), num_x_bins + 1)
+    j_edges = np.linspace(0.0, jnorm_max, num_j_bins + 1)
+    x_centers = np.sqrt(x_edges[:-1] * x_edges[1:])
+
+    panels = []
+    for i in range(num_mass_bins):
+        if i == num_mass_bins - 1:
+            mask = (
+                (np.log10(host_m200_subs) >= logM_edges[i])
+                & (np.log10(host_m200_subs) <= logM_edges[i + 1])
+            )
+        else:
+            mask = (
+                (np.log10(host_m200_subs) >= logM_edges[i])
+                & (np.log10(host_m200_subs) < logM_edges[i + 1])
+            )
+        panels.append(
+            {
+                'label': (
+                    r'$\log_{10}(M_{200c}/M_\odot h^{-1})'
+                    + f' \\in [{logM_edges[i]:.2f}, {logM_edges[i + 1]:.2f}]$'
+                ),
+                'x': x_values[mask],
+                'y': j_norm[mask],
+                'weights': None if subhalo_weights is None else subhalo_weights[mask],
+                'n_subhalos': int(np.count_nonzero(mask)),
+            }
+        )
+
+    panels.append(
+        {
+            'label': 'All host masses',
+            'x': x_values,
+            'y': j_norm,
+            'weights': subhalo_weights,
+            'n_subhalos': int(x_values.size),
+        }
+    )
+
+    heatmaps = []
+    medians = []
+    positive_values = []
+    for panel in panels:
+        if panel['n_subhalos'] >= min_subhalos_per_panel:
+            H, _, _ = np.histogram2d(panel['y'], panel['x'], bins=[j_edges, x_edges], weights=panel['weights'])
+            Hc = _colnorm(H)
+            median_curve = np.full(num_x_bins, np.nan)
+            for j in range(num_x_bins):
+                in_bin = (panel['x'] >= x_edges[j]) & (panel['x'] < x_edges[j + 1])
+                if j == num_x_bins - 1:
+                    in_bin = (panel['x'] >= x_edges[j]) & (panel['x'] <= x_edges[j + 1])
+                if np.any(in_bin):
+                    if panel['weights'] is None:
+                        median_curve[j] = np.median(panel['y'][in_bin])
+                    else:
+                        median_curve[j] = _weighted_median(panel['y'][in_bin], panel['weights'][in_bin])
+            if np.any(Hc > 0):
+                positive_values.append(Hc[Hc > 0])
+        else:
+            Hc = np.zeros((num_j_bins, num_x_bins), dtype=float)
+            median_curve = np.full(num_x_bins, np.nan)
+        heatmaps.append(Hc)
+        medians.append(median_curve)
+
+    if positive_values:
+        positive_values = np.concatenate(positive_values)
+        vmax = np.percentile(positive_values, 99.5)
+    else:
+        vmax = 1.0
+    vmax = max(vmax, 1.0e-6)
+    norm = colors.Normalize(vmin=0.0, vmax=vmax)
+
+    fig, axes = plt.subplots(
+        2, 3, figsize=(18, 10), sharex=True, sharey=True, facecolor='w', constrained_layout=True
+    )
+    axes = axes.flatten()
+    mesh = None
+
+    for ax, panel, Hc, median_curve in zip(axes, panels, heatmaps, medians):
+        Xmesh, Ymesh = np.meshgrid(x_edges, j_edges)
+        mesh = ax.pcolormesh(Xmesh, Ymesh, Hc, shading='auto', cmap='viridis', norm=norm)
+        ax.set_xscale('log')
+        ax.axvline(1.0, lw=1.4, ls=':', color='white', alpha=0.9)
+        if np.any(np.isfinite(median_curve)):
+            ax.plot(x_centers, median_curve, color='tab:red', lw=2.0)
+        ax.set_title(f"{panel['label']}\nNsub = {panel['n_subhalos']}", fontsize=11)
+        ax.set_xlim(x_range)
+        ax.set_ylim(0.0, jnorm_max)
+        ax.tick_params(axis='both', direction='in')
+        if panel['n_subhalos'] < min_subhalos_per_panel:
+            ax.text(
+                0.5, 0.5, 'Insufficient subhalos', transform=ax.transAxes,
+                ha='center', va='center', fontsize=11,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.75),
+            )
+
+    for ax in axes[3:]:
+        ax.set_xlabel(r'$x = d_{\mathrm{sub-host}}/R_{200c}$', fontsize=13)
+    for ax in axes[::3]:
+        ax.set_ylabel(r'$j_{\mathrm{orb}}/(R_{200c}V_{200c})$', fontsize=13)
+
+    cbar = fig.colorbar(mesh, ax=axes.tolist(), fraction=0.03, pad=0.03)
+    cbar.set_label(r'$P(j_{\mathrm{norm}}\mid x)$', fontsize=13)
+
+    title_suffix = ' WeightByHost' if weight_by_host else ''
+    fig.suptitle(
+        rf'TNG conditional orbital-angular-momentum distribution{title_suffix}, '
+        rf'z = {redshift:.2f}',
+        fontsize=14,
+    )
+
+    output_path = os.path.join(
+        output_dir,
+        f'conditional_jnorm_radius_M200c_2x3_'
+        f'{"hostweight" if weight_by_host else "subweight"}_snap_{snapNum}.png',
+    )
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"[Saved] {output_path}")
+    return output_path
+
+
+def plot_conditional_vr_radius_by_hostmass(
+    snapNum,
+    simulation_set='TNG50-1',
+    base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+    output_dir=None,
+    num_mass_bins=5,
+    num_x_bins=32,
+    num_vr_bins=48,
+    x_range=(1.0e-2, 3.0),
+    vr_abs_max=5.0,
+    min_subhalos_per_panel=10,
+    weight_by_host=False,
+):
+    """
+    Plot P(vr/V200c | x) in a 2x3 layout, with negative vr indicating infall.
+    """
+    processed_file = os.path.join(
+        base_dir,
+        simulation_set,
+        f'snap_{snapNum}',
+        f'processed_halos_snap_{snapNum}.h5',
+    )
+    if output_dir is None:
+        output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
+    os.makedirs(output_dir, exist_ok=True)
+
+    data = load_processed_data(processed_file)
+    redshift = float(data.header['Redshift'])
+    orbital = _prepare_tng_orbital_samples(data, x_range=x_range, weight_by_host=weight_by_host)
+
+    host_m200_subs = orbital['host_m200_subs']
+    x_values = orbital['x_values']
+    vr_norm = orbital['vr_norm']
+    subhalo_weights = orbital['weights']
+
+    valid = np.isfinite(vr_norm)
+    host_m200_subs = host_m200_subs[valid]
+    x_values = x_values[valid]
+    vr_norm = vr_norm[valid]
+    if subhalo_weights is not None:
+        subhalo_weights = subhalo_weights[valid]
+
+    if host_m200_subs.size == 0:
+        raise ValueError('No valid subhalos found for the requested vr-radius plot.')
+
+    vr_abs_max = max(vr_abs_max, 0.5)
+    in_range = np.abs(vr_norm) <= vr_abs_max
+    host_m200_subs = host_m200_subs[in_range]
+    x_values = x_values[in_range]
+    vr_norm = vr_norm[in_range]
+    if subhalo_weights is not None:
+        subhalo_weights = subhalo_weights[in_range]
+
+    valid_hosts = data.halo_data['Group_M_Crit200'].value
+    valid_hosts = valid_hosts[np.isfinite(valid_hosts) & (valid_hosts > 0)]
+    logM_edges = np.linspace(np.log10(np.min(valid_hosts)), np.log10(np.max(valid_hosts)), num_mass_bins + 1)
+    x_edges = np.logspace(np.log10(x_range[0]), np.log10(x_range[1]), num_x_bins + 1)
+    vr_edges = np.linspace(-vr_abs_max, vr_abs_max, num_vr_bins + 1)
+    x_centers = np.sqrt(x_edges[:-1] * x_edges[1:])
+
+    panels = []
+    for i in range(num_mass_bins):
+        if i == num_mass_bins - 1:
+            mask = (
+                (np.log10(host_m200_subs) >= logM_edges[i])
+                & (np.log10(host_m200_subs) <= logM_edges[i + 1])
+            )
+        else:
+            mask = (
+                (np.log10(host_m200_subs) >= logM_edges[i])
+                & (np.log10(host_m200_subs) < logM_edges[i + 1])
+            )
+        panels.append(
+            {
+                'label': (
+                    r'$\log_{10}(M_{200c}/M_\odot h^{-1})'
+                    + f' \\in [{logM_edges[i]:.2f}, {logM_edges[i + 1]:.2f}]$'
+                ),
+                'x': x_values[mask],
+                'y': vr_norm[mask],
+                'weights': None if subhalo_weights is None else subhalo_weights[mask],
+                'n_subhalos': int(np.count_nonzero(mask)),
+            }
+        )
+
+    panels.append(
+        {
+            'label': 'All host masses',
+            'x': x_values,
+            'y': vr_norm,
+            'weights': subhalo_weights,
+            'n_subhalos': int(x_values.size),
+        }
+    )
+
+    heatmaps = []
+    medians = []
+    positive_values = []
+    for panel in panels:
+        if panel['n_subhalos'] >= min_subhalos_per_panel:
+            H, _, _ = np.histogram2d(panel['y'], panel['x'], bins=[vr_edges, x_edges], weights=panel['weights'])
+            Hc = _colnorm(H)
+            median_curve = np.full(num_x_bins, np.nan)
+            for j in range(num_x_bins):
+                in_bin = (panel['x'] >= x_edges[j]) & (panel['x'] < x_edges[j + 1])
+                if j == num_x_bins - 1:
+                    in_bin = (panel['x'] >= x_edges[j]) & (panel['x'] <= x_edges[j + 1])
+                if np.any(in_bin):
+                    if panel['weights'] is None:
+                        median_curve[j] = np.median(panel['y'][in_bin])
+                    else:
+                        median_curve[j] = _weighted_median(panel['y'][in_bin], panel['weights'][in_bin])
+            if np.any(Hc > 0):
+                positive_values.append(Hc[Hc > 0])
+        else:
+            Hc = np.zeros((num_vr_bins, num_x_bins), dtype=float)
+            median_curve = np.full(num_x_bins, np.nan)
+        heatmaps.append(Hc)
+        medians.append(median_curve)
+
+    if positive_values:
+        positive_values = np.concatenate(positive_values)
+        vmax = np.percentile(positive_values, 99.5)
+    else:
+        vmax = 1.0
+    vmax = max(vmax, 1.0e-6)
+    norm = colors.Normalize(vmin=0.0, vmax=vmax)
+
+    fig, axes = plt.subplots(
+        2, 3, figsize=(18, 10), sharex=True, sharey=True, facecolor='w', constrained_layout=True
+    )
+    axes = axes.flatten()
+    mesh = None
+
+    for ax, panel, Hc, median_curve in zip(axes, panels, heatmaps, medians):
+        Xmesh, Ymesh = np.meshgrid(x_edges, vr_edges)
+        mesh = ax.pcolormesh(Xmesh, Ymesh, Hc, shading='auto', cmap='RdBu_r', norm=norm)
+        ax.set_xscale('log')
+        ax.axvline(1.0, lw=1.4, ls=':', color='black', alpha=0.8)
+        ax.axhline(0.0, lw=1.2, ls='--', color='black', alpha=0.8)
+        if np.any(np.isfinite(median_curve)):
+            ax.plot(x_centers, median_curve, color='gold', lw=2.0)
+        ax.set_title(f"{panel['label']}\nNsub = {panel['n_subhalos']}", fontsize=11)
+        ax.set_xlim(x_range)
+        ax.set_ylim(-vr_abs_max, vr_abs_max)
+        ax.tick_params(axis='both', direction='in')
+        if panel['n_subhalos'] < min_subhalos_per_panel:
+            ax.text(
+                0.5, 0.5, 'Insufficient subhalos', transform=ax.transAxes,
+                ha='center', va='center', fontsize=11,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.75),
+            )
+
+    for ax in axes[3:]:
+        ax.set_xlabel(r'$x = d_{\mathrm{sub-host}}/R_{200c}$', fontsize=13)
+    for ax in axes[::3]:
+        ax.set_ylabel(r'$v_r/V_{200c}$', fontsize=13)
+
+    cbar = fig.colorbar(mesh, ax=axes.tolist(), fraction=0.03, pad=0.03)
+    cbar.set_label(r'$P(v_r/V_{200c}\mid x)$', fontsize=13)
+
+    title_suffix = ' WeightByHost' if weight_by_host else ''
+    fig.suptitle(
+        rf'TNG conditional radial-velocity distribution{title_suffix}, z = {redshift:.2f}',
+        fontsize=14,
+    )
+
+    output_path = os.path.join(
+        output_dir,
+        f'conditional_vr_radius_M200c_2x3_'
+        f'{"hostweight" if weight_by_host else "subweight"}_snap_{snapNum}.png',
+    )
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"[Saved] {output_path}")
+    return output_path
+
+
 def plot_conditional_logA(
     data, snapNum, output_dir,
     xmode="both",                # "msub" | "psi" | "both"
@@ -1026,24 +1671,24 @@ if __name__ == '__main__':
     simulation_set = 'TNG50-1'
 
     # snapNum_list = [0, 1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 40, 50, 59, 67, 72, 78, 84, 91, 99]
-    snapNum_list = [99, 13, 2, 1]
+    snapNum_list = [99, 50, 13, 6, 2, 1]
     
-    for snapNum in snapNum_list:
-        print(f"Processing snapshot {snapNum} ...")
-        base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
-        processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
-                                    f'processed_halos_snap_{snapNum}.h5')
-        data = load_processed_data(processed_file)
-        # Create plots
-        output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
-        # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass', 
-        # 'R200_subhaloVmaxRad', 'tff_tcross', 'M200_Mach', 'M200_Anumber', 'Mach_fit']
-        # fig_options_2Dhistogram = ['Mach_fixedhostmass']
-        fig_options_2Dhistogram = ['dpos_R200']
-        plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
-        # plot_host_averaged_radial_subhalo_profile(data, snapNum, output_dir)
-        # plot_host_halo_properties(data, snapNum, output_dir)
-        # plot_conditional_logA(data, snapNum, output_dir, xmode="both", weight_by_host=False)
+    # for snapNum in snapNum_list:
+    #     print(f"Processing snapshot {snapNum} ...")
+    #     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
+    #     processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
+    #                                 f'processed_halos_snap_{snapNum}.h5')
+    #     data = load_processed_data(processed_file)
+    #     # Create plots
+    #     output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
+    #     # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass', 
+    #     # 'R200_subhaloVmaxRad', 'tff_tcross', 'M200_Mach', 'M200_Anumber', 'Mach_fit']
+    #     # fig_options_2Dhistogram = ['Mach_fixedhostmass']
+    #     fig_options_2Dhistogram = ['dpos_R200']
+    #     plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
+    #     # plot_host_averaged_radial_subhalo_profile(data, snapNum, output_dir)
+    #     # plot_host_halo_properties(data, snapNum, output_dir)
+    #     # plot_conditional_logA(data, snapNum, output_dir, xmode="both", weight_by_host=False)
 
     # snapNum_list = [1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 50, 99]
     # # Compare Mach numbers across snapshots
@@ -1056,3 +1701,45 @@ if __name__ == '__main__':
     # fit_mode="truncated-gaussian", # "maxwell-boltzmann" | "truncated-gaussian"
     # min_count_for_plot=0,         
     # )
+    for snapNum in snapNum_list:
+        print(f"Plotting conditional Mach-radius distribution for snapshot {snapNum} ...")
+        plot_conditional_mach_radius_by_hostmass(
+            snapNum=snapNum,
+            simulation_set='TNG50-1',
+            base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+            output_dir=None,
+            num_mass_bins=5,
+            num_x_bins=30,
+            num_mach_bins=40,
+            x_range=(1.0e-2, 3.0),
+            min_subhalos_per_panel=10,
+            weight_by_host=False,
+        )
+
+        print(f"Plotting conditional j_norm-radius distribution for snapshot {snapNum} ...")
+        plot_conditional_jnorm_radius_by_hostmass(
+            snapNum=snapNum,
+            simulation_set='TNG50-1',
+            base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+            output_dir=None,
+            num_mass_bins=5,
+            num_x_bins=30,
+            num_j_bins=40,
+            x_range=(1.0e-2, 3.0),
+            min_subhalos_per_panel=10,
+            weight_by_host=False,
+        )
+
+        print(f"Plotting conditional vr-radius distribution for snapshot {snapNum} ...")
+        plot_conditional_vr_radius_by_hostmass(
+            snapNum=snapNum,
+            simulation_set='TNG50-1',
+            base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+            output_dir=None,
+            num_mass_bins=5,
+            num_x_bins=30,
+            num_vr_bins=48,
+            x_range=(1.0e-2, 3.0),
+            min_subhalos_per_panel=10,
+            weight_by_host=False,
+        )

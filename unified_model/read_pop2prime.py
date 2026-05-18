@@ -5,6 +5,9 @@ import yt
 from pathlib import Path
 from HaloMassFunction import SHMF_BestFit_dN_dlgx
 
+POP2PRIME_BASE_DIR = Path("/cephfs/brs/pop2-prime/cc_512_no_dust_continue")
+POP2PRIME_ROCKSTAR_DIR = POP2PRIME_BASE_DIR / "rockstar_halos"
+
 
 def summarize_halo_fields(ds, ad, sample_size=5):
     halo_fields = sorted([field for field in ds.derived_field_list if field[0] == "halos"])
@@ -38,7 +41,7 @@ def get_snapshot_redshifts():
     list[dict]
         Each item has keys: snapshot, a, z, filename.
     """
-    list_dir = Path("/home/zwu/21cm_project/pop2prime_data/rockstar_halos")
+    list_dir = POP2PRIME_ROCKSTAR_DIR
     results = []
 
     def snapshot_number(path):
@@ -421,7 +424,7 @@ if __name__ == "__main__":
     redshift_data = load_snapshot_redshifts()
     target_snapshot = find_nearest_snapshots([target_z])[0]
     matched_entry = next(entry for entry in redshift_data if entry["snapshot"] == target_snapshot)
-    halo_path = f"/home/zwu/21cm_project/pop2prime_data/rockstar_halos/halos_DD{target_snapshot:04d}.0.bin"
+    halo_path = str(POP2PRIME_ROCKSTAR_DIR / f"halos_DD{target_snapshot:04d}.0.bin")
     print(
         f"Using nearest snapshot for target z={target_z}: "
         f"DD{target_snapshot:04d} with a={matched_entry['a']:.6f}, z={matched_entry['z']:.6f}"

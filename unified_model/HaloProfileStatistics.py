@@ -59,6 +59,39 @@ def get_profile_tag(psi_range=None, profile_tag=None):
     return f'psi{left}_{right}'
 
 
+def _get_statistic_metadata(statistic):
+    """Return normalization metadata for a supported radial-profile statistic."""
+    metadata = {
+        'count_dx3': {
+            'ylabel': r'$\mathrm{d}N_{\mathrm{sub}}/\mathrm{d}x^3$',
+            'column_label': 'dN_dx3',
+            'profile_definition': 'dN/dx^3 with x=d_sub-host/R200',
+            'title_label': 'count-per-volume-weighted',
+        },
+        'count_dx': {
+            'ylabel': r'$\mathrm{d}N_{\mathrm{sub}}/\mathrm{d}x$',
+            'column_label': 'dN_dx',
+            'profile_definition': 'dN/dx with x=d_sub-host/R200',
+            'title_label': 'count-weighted',
+        },
+        'mass_dx': {
+            'ylabel': r'$\mathrm{d}\sum (m_{\mathrm{sub}}/M_{\mathrm{host}})/\mathrm{d}x$',
+            'column_label': 'mass_dx',
+            'profile_definition': 'd/dx sum(m_sub/M_host) with x=d_sub-host/R200',
+            'title_label': 'mass-weighted',
+        },
+        'mass2_dx': {
+            'ylabel': r'$\mathrm{d}\sum (m_{\mathrm{sub}}/M_{\mathrm{host}})^2/\mathrm{d}x$',
+            'column_label': 'mass2_dx',
+            'profile_definition': 'd/dx sum((m_sub/M_host)^2) with x=d_sub-host/R200',
+            'title_label': 'mass-squared-weighted',
+        },
+    }
+    if statistic not in metadata:
+        raise ValueError(f'Unknown statistic: {statistic}')
+    return metadata[statistic]
+
+
 PSI_THRESHOLDS_FOR_EXPORT = (1.0e-3, 1.0e-2, 5.0e-2)
 POP2PRIME_TNG_COMPARISON_DIR = Path(
     '/home/zwu/21cm_project/unified_model/Pop2prime_results/Pop2Prime_TNG_comparison'
@@ -131,6 +164,7 @@ def _build_tng_radial_profile_context(
     return {
         'host_indices_for_subs': host_indices_for_subs,
         'host_masses_all': host_masses_all,
+        'sub_masses': sub_masses,
         'valid_hosts': valid_hosts,
         'host_logM_all': host_logM_all,
         'host_mass_bins': host_mass_bins,
@@ -157,6 +191,9 @@ def _compute_host_profile_statistics(
     sub_x_values,
     x_edges,
     dx3,
+    statistic='count_dx3',
+    sub_weights=None,
+    percentile_mode='all_hosts',
 ):
     """Compute per-host radial-profile summary statistics without per-host histograms."""
     n_hosts_total = len(host_ids)
@@ -164,6 +201,8 @@ def _compute_host_profile_statistics(
     if n_hosts_total == 0:
         zeros = np.zeros(num_x_bins)
         return {
+            'profile_matrix': np.zeros((0, num_x_bins), dtype=float),
+            'percentile_matrix': np.zeros((0, num_x_bins), dtype=float),
             'n_hosts_with_subhalos': 0,
             'n_subhalos': 0,
             'mean_profile': zeros,
@@ -173,6 +212,15 @@ def _compute_host_profile_statistics(
         }
 
     profile_matrix = np.zeros((n_hosts_total, num_x_bins), dtype=float)
+    if statistic == 'count_dx3':
+        normalization = dx3
+    elif statistic in {'count_dx', 'mass_dx', 'mass2_dx'}:
+        normalization = x_edges[1:] - x_edges[:-1]
+    else:
+        raise ValueError(f'Unknown statistic: {statistic}')
+    if percentile_mode not in {'all_hosts', 'occupied_hosts'}:
+        raise ValueError(f'Unknown percentile_mode: {percentile_mode}')
+
     if sub_x_values.size > 0:
         x_bin_indices = np.searchsorted(x_edges, sub_x_values, side='right') - 1
         valid_x = (x_bin_indices >= 0) & (x_bin_indices < num_x_bins)
@@ -180,21 +228,31 @@ def _compute_host_profile_statistics(
             local_host_indices = host_local_index[sub_host_indices[valid_x]]
             valid_host = local_host_indices >= 0
             if np.any(valid_host):
+                weights = 1.0 if sub_weights is None else sub_weights[valid_x][valid_host]
+                #sum weights to the appropriate host and x-bin in the profile matrix
                 np.add.at(
                     profile_matrix,
                     (local_host_indices[valid_host], x_bin_indices[valid_x][valid_host]),
-                    1.0,
+                    weights,
                 )
 
     hosts_with_subhalos = int(np.count_nonzero(np.any(profile_matrix > 0, axis=1)))
-    profile_matrix /= dx3[None, :]
+    profile_matrix /= normalization[None, :]
+    percentile_matrix = profile_matrix
+    if percentile_mode == 'occupied_hosts':
+        occupied_mask = np.any(profile_matrix > 0, axis=1)
+        percentile_matrix = profile_matrix[occupied_mask]
+    if percentile_matrix.shape[0] == 0:
+        percentile_matrix = np.zeros((1, num_x_bins), dtype=float)
     return {
+        'profile_matrix': profile_matrix,
+        'percentile_matrix': percentile_matrix,
         'n_hosts_with_subhalos': hosts_with_subhalos,
         'n_subhalos': int(sub_x_values.size),
         'mean_profile': np.mean(profile_matrix, axis=0),
-        'median_profile': np.median(profile_matrix, axis=0),
-        'p16_profile': np.percentile(profile_matrix, 16, axis=0),
-        'p84_profile': np.percentile(profile_matrix, 84, axis=0),
+        'median_profile': np.median(percentile_matrix, axis=0),
+        'p16_profile': np.percentile(percentile_matrix, 16, axis=0),
+        'p84_profile': np.percentile(percentile_matrix, 84, axis=0),
     }
 
 
@@ -211,6 +269,7 @@ def export_tng_radial_profiles_txt(
     num_x_bins=30,
     log_x_bins=True,
     output_filename=None,
+    statistic='count_dx3',
 ):
     """
     Export TNG radial subhalo profiles to one block-structured txt file.
@@ -239,6 +298,7 @@ def export_tng_radial_profiles_txt(
         log_x_bins=log_x_bins,
     )
     _, dark_matter_resolution = get_simulation_resolution(simulation_set)
+    statistic_meta = _get_statistic_metadata(statistic)
 
     if output_filename is None:
         output_filename = f'tng_radial_profiles_allpsi_snap_{snapNum}.txt'
@@ -250,7 +310,8 @@ def export_tng_radial_profiles_txt(
         f.write(f'# redshift {data.header.get("Redshift", np.nan):.6f}\n')
         f.write(f'# simulation_set {simulation_set}\n')
         f.write('# subhalo_definition SUBFIND\n')
-        f.write('# profile_definition dN/dx^3 with x=d_sub-host/R200\n')
+        f.write(f'# profile_definition {statistic_meta["profile_definition"]}\n')
+        f.write(f'# statistic {statistic}\n')
         f.write(f'# host_mass_key {host_mass_key}\n')
         f.write(f'# psi_mass_key {psi_mass_key}\n')
         f.write(f'# num_host_mass_bins {num_M_bins}\n')
@@ -266,6 +327,17 @@ def export_tng_radial_profiles_txt(
             )
             selected_host_indices = context['host_indices_for_subs'][valid_subs]
             selected_x_values = context['dpos_over_R200'][valid_subs]
+            selected_sub_weights = None
+            if statistic == 'mass_dx':
+                selected_sub_weights = (
+                    context['sub_masses'][valid_subs]
+                    / context['host_masses_all'][selected_host_indices]
+                )
+            elif statistic == 'mass2_dx':
+                selected_sub_weights = (
+                    context['sub_masses'][valid_subs]
+                    / context['host_masses_all'][selected_host_indices]
+                ) ** 2
 
             for i in range(context['num_M_bins']):
                 host_ids = context['host_ids_by_bin'][i]
@@ -281,6 +353,8 @@ def export_tng_radial_profiles_txt(
                     sub_x_values=selected_x_values,
                     x_edges=context['x_edges'],
                     dx3=context['dx3'],
+                    statistic=statistic,
+                    sub_weights=selected_sub_weights,
                 )
                 n_hosts_with_subhalos = stats['n_hosts_with_subhalos']
                 n_subhalos = stats['n_subhalos']
@@ -299,7 +373,10 @@ def export_tng_radial_profiles_txt(
                 f.write(f'# n_subhalos {n_subhalos}\n')
                 f.write(
                     '# columns: x_left x_right x_center '
-                    'mean_dN_dx3 median_dN_dx3 p16_dN_dx3 p84_dN_dx3\n'
+                    f'mean_{statistic_meta["column_label"]} '
+                    f'median_{statistic_meta["column_label"]} '
+                    f'p16_{statistic_meta["column_label"]} '
+                    f'p84_{statistic_meta["column_label"]}\n'
                 )
                 for k in range(context['num_x_bins']):
                     f.write(
@@ -446,16 +523,18 @@ def load_tng_profile_blocks(filepath):
                 )
 
     for psi_min, psi_block in psi_blocks.items():
+        statistic = psi_block.get('metadata', {}).get('statistic', metadata.get('statistic', 'count_dx3'))
+        column_label = _get_statistic_metadata(statistic)['column_label']
         for mass_bin_index, mass_bin_block in psi_block['mass_bins'].items():
             rows = np.array(mass_bin_block['rows'], dtype=float)
             mass_bin_block['table'] = {
                 'x_left': rows[:, 0],
                 'x_right': rows[:, 1],
                 'x_center': rows[:, 2],
-                'mean_dN_dx3': rows[:, 3],
-                'median_dN_dx3': rows[:, 4],
-                'p16_dN_dx3': rows[:, 5],
-                'p84_dN_dx3': rows[:, 6],
+                f'mean_{column_label}': rows[:, 3],
+                f'median_{column_label}': rows[:, 4],
+                f'p16_{column_label}': rows[:, 5],
+                f'p84_{column_label}': rows[:, 6],
             }
     return {'metadata': metadata, 'blocks': psi_blocks}
 
@@ -570,16 +649,40 @@ def plot_host_averaged_radial_subhalo_profile(
     log_x_bins=True,
     psi_range=None,
     profile_tag=None,
-    save_prefix='radial_subhalo_profile'
+    save_prefix='radial_subhalo_profile',
+    apply_resolution_cut=None,
+    show_average=None,
+    show_percentile=None,
+    show_individual=None,
+    statistic=None,
+    percentile_mode=None,
 ):
     """
-    Plot host-averaged subhalo radial profile dN/dx^3 with x=d_sub-host/R200.
+    Plot host-averaged subhalo radial profile with x=d_sub-host/R200.
 
     Each host is histogrammed separately, including hosts with zero subhalos in a
-    given host-mass bin. The plotted mean/median are then taken across hosts.
+    given host-mass bin. The mean is always taken across all hosts. Analysis
+    strategy parameters must be passed explicitly by the caller.
     """
     print(f"Plotting host-averaged radial subhalo profile for snap {snapNum} ...")
     os.makedirs(output_dir, exist_ok=True)
+    required_args = {
+        'psi_range': psi_range,
+        'profile_tag': profile_tag,
+        'apply_resolution_cut': apply_resolution_cut,
+        'show_average': show_average,
+        'show_percentile': show_percentile,
+        'show_individual': show_individual,
+        'statistic': statistic,
+        'percentile_mode': percentile_mode,
+    }
+    missing_args = [name for name, value in required_args.items() if value is None]
+    if missing_args:
+        raise ValueError(
+            'plot_host_averaged_radial_subhalo_profile requires explicit values for: '
+            + ', '.join(missing_args)
+        )
+    statistic_meta = _get_statistic_metadata(statistic)
 
     host_indices_for_subs = data.subhalo_data['host_index'].value.astype(int)
     host_masses_all = data.halo_data[host_mass_key].value
@@ -611,10 +714,12 @@ def plot_host_averaged_radial_subhalo_profile(
     x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
     dx3 = x_edges[1:]**3 - x_edges[:-1]**3
 
+    _, dark_matter_resolution = get_simulation_resolution(
+        data.header.get('SimulationName', 'TNG50-1')
+    )
     colors = plt.cm.rainbow(np.linspace(0, 1, num_M_bins))
     fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')
 
-    summary_rows = []
     artificial_small = 1.0e-12
 
     for i in range(num_M_bins):
@@ -635,50 +740,127 @@ def plot_host_averaged_radial_subhalo_profile(
         n_hosts = len(host_ids)
         if n_hosts == 0:
             continue
+        host_mass_min = 10**host_mass_bins[i]
+        host_mass_max = 10**host_mass_bins[i + 1]
+        crit_psi = 50.0 * dark_matter_resolution / host_mass_min
+        is_resolved = psi_range is None or psi_range[0] >= crit_psi
+        print(
+            f'mass bin {i}: logM=[{host_mass_bins[i]:.2f}, {host_mass_bins[i + 1]:.2f}], '
+            f'crit_psi={crit_psi:.3e}, resolved={is_resolved}'
+        )
+        if apply_resolution_cut and not is_resolved:
+            continue
 
-        profile_matrix = np.zeros((n_hosts, num_x_bins))
-        for j, host_id in enumerate(host_ids):
-            sub_mask = valid_subs & (host_indices_for_subs == host_id)
-            counts, _ = np.histogram(dpos_over_R200[sub_mask], bins=x_edges)
-            profile_matrix[j, :] = counts / dx3
-
-        mean_profile = np.mean(profile_matrix, axis=0)
-        median_profile = np.median(profile_matrix, axis=0)
-        p16_profile = np.percentile(profile_matrix, 16, axis=0)
-        p84_profile = np.percentile(profile_matrix, 84, axis=0)
+        host_local_index = np.full(host_masses_all.shape[0], -1, dtype=int)
+        host_local_index[host_ids] = np.arange(host_ids.size)
+        sub_mask = valid_subs & np.isin(host_indices_for_subs, host_ids)
+        sub_weights = None
+        if statistic == 'mass_dx':
+            sub_weights = sub_masses[sub_mask] / host_masses_all[host_indices_for_subs[sub_mask]]
+        elif statistic == 'mass2_dx':
+            sub_weights = (sub_masses[sub_mask] / host_masses_all[host_indices_for_subs[sub_mask]]) ** 2
+        stats = _compute_host_profile_statistics(
+            host_ids=host_ids,
+            host_local_index=host_local_index,
+            sub_host_indices=host_indices_for_subs[sub_mask],
+            sub_x_values=dpos_over_R200[sub_mask],
+            x_edges=x_edges,
+            dx3=dx3,
+            statistic=statistic,
+            sub_weights=sub_weights,
+            percentile_mode=percentile_mode,
+        )
+        profile_matrix = stats['profile_matrix']
+        mean_profile = stats['mean_profile']
+        median_profile = stats['median_profile']
+        p16_profile = stats['p16_profile']
+        p84_profile = stats['p84_profile']
+        nonzero_width = np.where(p84_profile > p16_profile)[0]
+        sample_bins = [0, num_x_bins // 2, num_x_bins - 1]
+        sample_summary = ', '.join(
+            (
+                f'bin{k}: mean={mean_profile[k]:.3e}, median={median_profile[k]:.3e}, '
+                f'p16={p16_profile[k]:.3e}, p84={p84_profile[k]:.3e}'
+            )
+            for k in sample_bins
+        )
+        print(
+            f'mass bin {i} percentile summary: '
+            f'n_hosts={n_hosts}, n_subs={stats["n_subhalos"]}, '
+            f'n_hosts_with_subhalos={stats["n_hosts_with_subhalos"]}, '
+            f'percentile_mode={percentile_mode}, '
+            f'nonzero_width_bins={nonzero_width.size}/{num_x_bins}; {sample_summary}'
+        )
 
         plot_mean = np.where(mean_profile > 0, mean_profile, artificial_small)
         plot_median = np.where(median_profile > 0, median_profile, artificial_small)
-        label = rf'${host_mass_bins[i]:.1f}<\log_{{10}}(M_{{200}}/M_\odot h^{{-1}})<{host_mass_bins[i+1]:.1f}$'
-
-        ax.plot(x_centers, plot_mean, color=colors[i], linewidth=2.0, label=label + ' mean')
-        ax.plot(x_centers, plot_median, color=colors[i], linewidth=1.6, linestyle='--', label=label + ' median')
-        ax.fill_between(
-            x_centers,
-            np.where(p16_profile > 0, p16_profile, artificial_small),
-            np.where(p84_profile > 0, p84_profile, artificial_small),
-            color=colors[i],
-            alpha=0.15,
-            linewidth=0,
+        base_label = rf'${host_mass_bins[i]:.1f}<\log_{{10}}(M_{{200}}/M_\odot h^{{-1}})<{host_mass_bins[i+1]:.1f}$'
+        label = _append_count_label(
+            base_label,
+            n_hosts_total=n_hosts,
+            n_hosts_with_subhalos=stats['n_hosts_with_subhalos'],
+            n_subhalos=stats['n_subhalos'],
         )
 
-        n_subs = int(np.sum(valid_subs & np.isin(host_indices_for_subs, host_ids)))
-        for k in range(num_x_bins):
-            summary_rows.append([
-                i, host_mass_bins[i], host_mass_bins[i + 1], n_hosts, n_subs,
-                x_edges[k], x_edges[k + 1], x_centers[k],
-                mean_profile[k], median_profile[k], p16_profile[k], p84_profile[k]
-            ])
-
+        if show_individual:
+            for row in profile_matrix:
+                ax.plot(
+                    x_centers,
+                    np.where(row > 0, row, artificial_small),
+                    color=colors[i],
+                    linewidth=0.8,
+                    alpha=0.08,
+                )
+        if show_average:
+            ax.plot(x_centers, plot_mean, color=colors[i], linewidth=2.0, label=label + ' mean')
+        if show_percentile:
+            plot_p16 = np.where(p16_profile > 0, p16_profile, artificial_small)
+            plot_p84 = np.where(p84_profile > 0, p84_profile, artificial_small)
+            ax.fill_between(
+                x_centers,
+                plot_p16,
+                plot_p84,
+                color=colors[i],
+                alpha=0.25,
+                linewidth=0,
+            )
+            ax.plot(
+                x_centers,
+                plot_p16,
+                color=colors[i],
+                linewidth=0.9,
+                linestyle=':',
+                alpha=0.9,
+            )
+            ax.plot(
+                x_centers,
+                plot_p84,
+                color=colors[i],
+                linewidth=0.9,
+                linestyle=':',
+                alpha=0.9,
+            )
+            ax.plot(
+                x_centers,
+                plot_median,
+                color=colors[i],
+                linewidth=1.6,
+                linestyle='--',
+                label=label + ' median',
+            )
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlabel(r'$x=d_{\mathrm{sub-host}}/R_{200}$', fontsize=14)
-    ax.set_ylabel(r'$\mathrm{d}N_{\mathrm{sub}}/\mathrm{d}x^3$', fontsize=14)
+    ax.set_ylabel(statistic_meta['ylabel'], fontsize=14)
     ax.axvline(1.0, color='black', linestyle=':', linewidth=1.5)
     redshift = data.header.get('Redshift', np.nan)
-    title = f'snap {snapNum}, z={redshift:.2f}'
+    title = f'snap {snapNum}, z={redshift:.2f}, {statistic_meta["title_label"]}'
     if psi_range is not None:
         title += rf', ${psi_range[0]:.1e}<\psi<{psi_range[1]:.1e}$'
+    if apply_resolution_cut:
+        title += ', resolved bins only'
+    if show_percentile:
+        title += f', pct={percentile_mode}'
     ax.set_title(title, fontsize=13)
     ax.tick_params(direction='in', which='both', labelsize=12)
     ax.legend(fontsize=8, ncol=1)
@@ -686,43 +868,45 @@ def plot_host_averaged_radial_subhalo_profile(
 
     tag = get_profile_tag(psi_range=psi_range, profile_tag=profile_tag)
     tag_suffix = '' if tag == '' else f'_{tag}'
-    filename = os.path.join(output_dir, f'{save_prefix}{tag_suffix}_snap_{snapNum}.png')
+    filename = os.path.join(
+        output_dir,
+        f'{save_prefix}_{statistic}{tag_suffix}_snap_{snapNum}.png'
+    )
     plt.savefig(filename, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"Saved radial subhalo profile: {filename}")
-
-    summary_file = filename.replace('.png', '.txt')
-    header = (
-        'mass_bin_index logM_left logM_right n_hosts n_subs '
-        'x_left x_right x_center mean_dN_dx3 median_dN_dx3 p16_dN_dx3 p84_dN_dx3'
-        f' host_mass_key={host_mass_key} psi_mass_key={psi_mass_key}'
-    )
-    np.savetxt(summary_file, np.array(summary_rows), header=header)
-    print(f"Saved radial subhalo profile data: {summary_file}")
 
 
 def run_subhalo_number_profile(
     snapNum_list=None,
     simulation_set='TNG50-1',
     base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
-    psi_range=(0.05, 1.0),
-    profile_tag='psi0p05_1',
+    psi_range=(0.001, 1.0),
+    profile_tag='psi0p001_1',
     profile_kwargs=None,
 ):
     """
     Main driver for host-averaged subhalo number radial profiles.
 
-    This intentionally handles only the subhalo number profile for now; future
-    Mach, velocity, angular-momentum, and heating-weighted profile drivers can
-    be added as separate functions.
+    This intentionally handles only the dN/dx^3 subhalo number profile for now.
+    The default plotting mode emphasizes the host-averaged mean plus percentile
+    shading, while optionally discarding host-mass bins that fail the subhalo
+    resolution cut for the selected psi range.
     """
     if snapNum_list is None:
-        snapNum_list = [99, 13, 2, 1]
-    if profile_kwargs is None:
-        profile_kwargs = {}
-    profile_kwargs = dict(profile_kwargs)
-    profile_kwargs.setdefault('psi_range', psi_range)
-    profile_kwargs.setdefault('profile_tag', profile_tag)
+        snapNum_list = [50]
+    driver_defaults = {
+        'psi_range': psi_range,
+        'profile_tag': profile_tag,
+        'apply_resolution_cut': True,
+        'show_average': True,
+        'show_percentile': True,
+        'show_individual': False,
+        'statistic': 'mass2_dx',   #count_dx3, count_dx, mass_dx, or mass2_dx
+        'percentile_mode': 'all_hosts',  #'all_hosts' or 'occupied_hosts'
+    }
+    if profile_kwargs is not None:
+        driver_defaults.update(profile_kwargs)
 
     for snapNum in snapNum_list:
         print(f"Processing snapshot {snapNum} ...")
@@ -738,11 +922,11 @@ def run_subhalo_number_profile(
             data,
             snapNum,
             output_dir,
-            **profile_kwargs
+            **driver_defaults
         )
 
 
 if __name__ == '__main__':
-    # run_subhalo_number_profile()
+    run_subhalo_number_profile()
     # export_tng_radial_profiles_txt(snapNum=99)
-    plot_pop2prime_tng_radial_profile_comparison()
+    # plot_pop2prime_tng_radial_profile_comparison()

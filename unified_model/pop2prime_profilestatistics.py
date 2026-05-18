@@ -24,15 +24,15 @@ from read_pop2prime import (
 
 
 POP2PRIME_RESULTS_DIR = Path("/home/zwu/21cm_project/unified_model/Pop2prime_results")
-TARGET_REDSHIFT = 12.0
-HOST_MASS_MIN = 10**5.5  # Msun/h
+TARGET_REDSHIFT = 15.0
+HOST_MASS_MIN = 10**4.5  # Msun/h
 CONCENTRATION_MODEL = "diemer19"
-PSI_MIN = 0.05
+PSI_MIN = 0.05   #Note: this is not the psi_min for plot_pop2prime_radial_subhalo_weighted_profile()
 PSI_THRESHOLDS_FOR_EXPORT = (1.0e-3, 1.0e-2, 5.0e-2)
 GAS_PROFILE_HOST_MASS_MIN = HOST_MASS_MIN
 
 
-def build_x_bins(x_min=1.0e-2, x_max=3.0, num_x_bins=30, log_x_bins=True):
+def build_x_bins(x_min=2.0e-2, x_max=2.0, num_x_bins=20, log_x_bins=True):
     """Return radial bin edges, centers, and x^3 bin widths."""
     if log_x_bins:
         x_edges = np.logspace(np.log10(x_min), np.log10(x_max), num_x_bins + 1)
@@ -43,12 +43,36 @@ def build_x_bins(x_min=1.0e-2, x_max=3.0, num_x_bins=30, log_x_bins=True):
     return x_edges, x_centers, dx3
 
 
+def format_host_mass_min_tag(host_mass_min):
+    """Return a compact filename tag for the host-mass threshold."""
+    return f"lgMmin{np.log10(host_mass_min):.1f}"
+
+
 def minimum_image_displacement(pos, center, box_size):
     """Return displacement vectors with periodic minimum-image wrapping."""
     delta = pos - center
     if box_size is not None and np.all(box_size > 0):
         delta -= box_size * np.round(delta / box_size)
     return delta
+
+
+def _append_count_label(
+    label,
+    n_hosts_total=None,
+    n_hosts_with_subhalos=None,
+    n_subhalos=None,
+):
+    """Append host/subhalo counts to a legend label when available."""
+    suffix_parts = []
+    if n_hosts_total is not None:
+        suffix_parts.append(f"Nhost,total={n_hosts_total}")
+    if n_hosts_with_subhalos is not None:
+        suffix_parts.append(f"Nhost,sub={n_hosts_with_subhalos}")
+    if n_subhalos is not None:
+        suffix_parts.append(f"Nsub={n_subhalos}")
+    if not suffix_parts:
+        return label
+    return f"{label}, " + ", ".join(suffix_parts)
 
 
 def load_pop2prime_halo_catalog(snapshot=None, target_redshift=TARGET_REDSHIFT, print_keys = False):
@@ -244,9 +268,9 @@ def compute_subhalo_count_profile_sample(
 
 def compute_host_averaged_subhalo_count_profile(
     subhalo_count_data,
-    x_min=1.0e-2,
-    x_max=3.0,
-    num_x_bins=30,
+    x_min=2.0e-2,
+    x_max=2.0,
+    num_x_bins=20,
     log_x_bins=True,
 ):
     """
@@ -274,12 +298,77 @@ def compute_host_averaged_subhalo_count_profile(
         "x_edges": x_edges,
         "x_centers": x_centers,
         "profile_matrix": profile_matrix,
+        "host_ids": host_ids,
+        "host_masses": subhalo_count_data["host_masses"],
         "mean_profile": np.mean(profile_matrix, axis=0) if n_hosts > 0 else np.zeros(num_x_bins),
         "median_profile": np.median(profile_matrix, axis=0) if n_hosts > 0 else np.zeros(num_x_bins),
         "p16_profile": np.percentile(profile_matrix, 16, axis=0) if n_hosts > 0 else np.zeros(num_x_bins),
         "p84_profile": np.percentile(profile_matrix, 84, axis=0) if n_hosts > 0 else np.zeros(num_x_bins),
         "n_hosts": n_hosts,
         "n_subhalos": subhalo_count_data["n_subhalos"],
+    }
+
+
+def compute_host_averaged_subhalo_weighted_profile(
+    subhalo_count_data,
+    x_min=2.0e-2,
+    x_max=2.0,
+    num_x_bins=20,
+    log_x_bins=True,
+    statistic="count_dx",
+):
+    """
+    Compute host-averaged radial subhalo profiles with d/dx weighting.
+
+    statistic:
+      - "count_dx": dN_sub / dx
+      - "mass_dx": d/dx sum(m_sub / M_host)
+      - "mass2_dx": d/dx sum((m_sub / M_host)^2)
+    """
+    x_edges, x_centers, _ = build_x_bins(
+        x_min=x_min,
+        x_max=x_max,
+        num_x_bins=num_x_bins,
+        log_x_bins=log_x_bins,
+    )
+    dx = x_edges[1:] - x_edges[:-1]
+
+    host_ids = subhalo_count_data["host_ids"]
+    host_masses = subhalo_count_data["host_masses"]
+    sample = subhalo_count_data["sample"]
+    n_hosts = subhalo_count_data["n_hosts"]
+    profile_matrix = np.zeros((n_hosts, num_x_bins))
+
+    if n_hosts > 0 and sample.size > 0:
+        for i, (host_id, host_mass) in enumerate(zip(host_ids, host_masses)):
+            host_mask = sample["host_id"] == host_id
+            x_values = sample["distance_over_rvir"][host_mask]
+
+            if statistic == "count_dx":
+                weights = None
+            elif statistic == "mass_dx":
+                weights = sample["subhalo_mass"][host_mask] / host_mass
+            elif statistic == "mass2_dx":
+                weights = (sample["subhalo_mass"][host_mask] / host_mass) ** 2
+            else:
+                raise ValueError(f"Unknown statistic: {statistic}")
+
+            histogram, _ = np.histogram(x_values, bins=x_edges, weights=weights)
+            profile_matrix[i, :] = histogram / dx
+
+    return {
+        "x_edges": x_edges,
+        "x_centers": x_centers,
+        "profile_matrix": profile_matrix,
+        "host_ids": host_ids,
+        "host_masses": host_masses,
+        "mean_profile": np.mean(profile_matrix, axis=0) if n_hosts > 0 else np.zeros(num_x_bins),
+        "median_profile": np.median(profile_matrix, axis=0) if n_hosts > 0 else np.zeros(num_x_bins),
+        "p16_profile": np.percentile(profile_matrix, 16, axis=0) if n_hosts > 0 else np.zeros(num_x_bins),
+        "p84_profile": np.percentile(profile_matrix, 84, axis=0) if n_hosts > 0 else np.zeros(num_x_bins),
+        "n_hosts": n_hosts,
+        "n_subhalos": subhalo_count_data["n_subhalos"],
+        "statistic": statistic,
     }
 
 
@@ -508,6 +597,289 @@ def export_subhalo_count_profiles_txt(
             f.write("\n")
 
     print(f"Saved radial profile table to {output_path}")
+    return output_path
+
+
+def plot_pop2prime_radial_subhalo_profiles_allpsi(
+    snapshot=None,
+    target_redshift=TARGET_REDSHIFT,
+    host_mass_min=HOST_MASS_MIN,
+    psi_thresholds=PSI_THRESHOLDS_FOR_EXPORT,
+    output_dir=POP2PRIME_RESULTS_DIR,
+    show_average=True,
+    show_individual=False,
+    show_percentile=False,
+):
+    """
+    Plot Pop2Prime radial subhalo profiles for all psi thresholds in one figure.
+
+    The figure can show the host-averaged dN/dx^3 profile, rainbow-colored
+    individual host profiles, percentile shading, or any combination of them.
+    Individual-host curves use a fixed host-ID color mapping across the psi
+    panels for easier visual comparison.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    catalog = load_pop2prime_halo_catalog(snapshot=snapshot, target_redshift=target_redshift)
+    snapshot = catalog["snapshot"]
+    metadata = find_snapshot_metadata(snapshot)
+    redshift = metadata["z"] if metadata is not None else catalog["redshift"]
+    geometric_parent_ids = get_geometric_parent_ids(catalog)
+    host_mass_tag = format_host_mass_min_tag(host_mass_min)
+
+    host_dir = output_dir / f"pop2prime_host_gas_profiles_DD{snapshot:04d}"
+    host_dir.mkdir(parents=True, exist_ok=True)
+
+    profile_by_psi = {}
+    all_host_ids = set()
+    all_host_masses = []
+    for psi_min in psi_thresholds:
+        radial_data = compute_subhalo_count_profile_sample(
+            catalog,
+            geometric_parent_ids,
+            host_mass_min=host_mass_min,
+            psi_min=psi_min,
+        )
+        profile = compute_host_averaged_subhalo_count_profile(radial_data)
+        profile["n_hosts_with_subhalos"] = get_host_count_with_subhalos(radial_data)
+        profile["n_subhalos"] = radial_data["n_subhalos"]
+        profile_by_psi[psi_min] = profile
+        all_host_ids.update(profile["host_ids"].tolist())
+        all_host_masses.extend(profile["host_masses"].tolist())
+
+    sorted_host_ids = np.array(sorted(all_host_ids), dtype=int)
+    host_color_map = {}
+    if sorted_host_ids.size > 0:
+        host_colors = plt.cm.rainbow(np.linspace(0.0, 1.0, sorted_host_ids.size))
+        host_color_map = {host_id: color for host_id, color in zip(sorted_host_ids, host_colors)}
+
+    host_mass_min_used = min(all_host_masses) if all_host_masses else host_mass_min
+    fig, axes = plt.subplots(1, len(psi_thresholds), figsize=(17, 5.5), sharey=True, facecolor="white")
+    if len(psi_thresholds) == 1:
+        axes = [axes]
+
+    artificial_small = 1.0e-12
+    for ax, psi_min in zip(axes, psi_thresholds):
+        profile = profile_by_psi[psi_min]
+        x_centers = profile["x_centers"]
+
+        if show_individual and profile["host_ids"].size > 0:
+            host_order = np.argsort(profile["host_ids"])
+            for row_index in host_order:
+                host_id = int(profile["host_ids"][row_index])
+                y = profile["profile_matrix"][row_index]
+                y_plot = np.where(y > 0, y, artificial_small)
+                ax.plot(
+                    x_centers,
+                    y_plot,
+                    color=host_color_map[host_id],
+                    linewidth=1.2,
+                    alpha=0.8,
+                    label=f"host {host_id}",
+                )
+
+        if show_average:
+            mean_profile = np.where(profile["mean_profile"] > 0, profile["mean_profile"], artificial_small)
+            ax.plot(
+                x_centers,
+                mean_profile,
+                color="black",
+                linewidth=2.8,
+                label=_append_count_label(
+                    "Pop2Prime mean",
+                    profile["n_hosts"],
+                    profile["n_hosts_with_subhalos"],
+                    profile["n_subhalos"],
+                ),
+            )
+        if show_percentile:
+            p16_profile = np.where(profile["p16_profile"] > 0, profile["p16_profile"], artificial_small)
+            median_profile = np.where(profile["median_profile"] > 0, profile["median_profile"], artificial_small)
+            p84_profile = np.where(profile["p84_profile"] > 0, profile["p84_profile"], artificial_small)
+            ax.fill_between(
+                x_centers,
+                p16_profile,
+                p84_profile,
+                color="black",
+                alpha=0.18,
+                linewidth=0,
+                label="16-84th percentile",
+            )
+            ax.plot(
+                x_centers,
+                median_profile,
+                color="black",
+                linestyle="--",
+                linewidth=2.0,
+                label="median",
+            )
+
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.axvline(1.0, color="black", linestyle=":", linewidth=1.2)
+        ax.set_xlabel(r"$x=d_{\mathrm{sub-host}}/R_{\mathrm{vir}}$", fontsize=13)
+        ax.set_title(rf"$\psi > {psi_min:.0e}$", fontsize=13)
+        ax.tick_params(direction="in", which="both", labelsize=11)
+
+    axes[0].set_ylabel(r"$\mathrm{d}N_{\mathrm{sub}}/\mathrm{d}x^3$", fontsize=14)
+    fig.suptitle(
+        rf"Pop2Prime radial subhalo profiles, z={redshift:.2f}, "
+        rf"$M_{{\mathrm{{host}}}} \geq 10^{{{np.log10(host_mass_min_used):.1f}}}\,M_\odot/h$",
+        fontsize=13,
+    )
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    if handles:
+        axes[0].legend(fontsize=7, ncol=2)
+
+    plt.tight_layout(rect=(0, 0, 1, 0.94))
+    mode_tag = f"avg{int(show_average)}_ind{int(show_individual)}_pct{int(show_percentile)}"
+    output_path = host_dir / f"pop2prime_radial_profiles_allpsi_{mode_tag}_{host_mass_tag}_DD{snapshot:04d}.png"
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"Saved Pop2Prime all-psi radial subhalo profile plot: {output_path}")
+    return output_path
+
+
+def plot_pop2prime_radial_subhalo_weighted_profile(
+    snapshot=None,
+    target_redshift=TARGET_REDSHIFT,
+    host_mass_min=HOST_MASS_MIN,
+    psi_min=1.0e-3,
+    output_dir=POP2PRIME_RESULTS_DIR,
+    show_average=True,
+    show_individual=False,
+    show_percentile=False,
+    statistic="mass2_dx",
+):
+    """
+    Plot one Pop2Prime radial subhalo profile using a low psi threshold and a
+    weighted d/dx statistic suited for DF-heating-oriented analysis.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    catalog = load_pop2prime_halo_catalog(snapshot=snapshot, target_redshift=target_redshift)
+    snapshot = catalog["snapshot"]
+    metadata = find_snapshot_metadata(snapshot)
+    redshift = metadata["z"] if metadata is not None else catalog["redshift"]
+    geometric_parent_ids = get_geometric_parent_ids(catalog)
+    host_mass_tag = format_host_mass_min_tag(host_mass_min)
+
+    host_dir = output_dir / f"pop2prime_host_gas_profiles_DD{snapshot:04d}"
+    host_dir.mkdir(parents=True, exist_ok=True)
+
+    radial_data = compute_subhalo_count_profile_sample(
+        catalog,
+        geometric_parent_ids,
+        host_mass_min=host_mass_min,
+        psi_min=psi_min,
+    )
+    profile = compute_host_averaged_subhalo_weighted_profile(
+        radial_data,
+        statistic=statistic,
+    )
+    profile["n_hosts_with_subhalos"] = get_host_count_with_subhalos(radial_data)
+    profile["n_subhalos"] = radial_data["n_subhalos"]
+
+    sorted_host_ids = np.array(sorted(profile["host_ids"].tolist()), dtype=int)
+    host_color_map = {}
+    if sorted_host_ids.size > 0:
+        host_colors = plt.cm.rainbow(np.linspace(0.0, 1.0, sorted_host_ids.size))
+        host_color_map = {host_id: color for host_id, color in zip(sorted_host_ids, host_colors)}
+
+    ylabel_map = {
+        "count_dx": r"$\mathrm{d}N_{\mathrm{sub}}/\mathrm{d}x$",
+        "mass_dx": r"$\mathrm{d}\sum (m_{\mathrm{sub}}/M_{\mathrm{host}})/\mathrm{d}x$",
+        "mass2_dx": r"$\mathrm{d}\sum (m_{\mathrm{sub}}/M_{\mathrm{host}})^2/\mathrm{d}x$",
+    }
+    title_map = {
+        "count_dx": "count-weighted",
+        "mass_dx": "mass-weighted",
+        "mass2_dx": "mass-squared-weighted",
+    }
+    if statistic not in ylabel_map:
+        raise ValueError(f"Unknown statistic: {statistic}")
+
+    fig, ax = plt.subplots(figsize=(8, 6), facecolor="white")
+    artificial_small = 1.0e-12
+    x_centers = profile["x_centers"]
+
+    if show_individual and profile["host_ids"].size > 0:
+        host_order = np.argsort(profile["host_ids"])
+        for row_index in host_order:
+            host_id = int(profile["host_ids"][row_index])
+            y = profile["profile_matrix"][row_index]
+            y_plot = np.where(y > 0, y, artificial_small)
+            ax.plot(
+                x_centers,
+                y_plot,
+                color=host_color_map[host_id],
+                linewidth=1.2,
+                alpha=0.8,
+                label=f"host {host_id}",
+            )
+
+    if show_average:
+        mean_profile = np.where(profile["mean_profile"] > 0, profile["mean_profile"], artificial_small)
+        ax.plot(
+            x_centers,
+            mean_profile,
+            color="black",
+            linewidth=2.8,
+            label=_append_count_label(
+                "Pop2Prime mean",
+                profile["n_hosts"],
+                profile["n_hosts_with_subhalos"],
+                profile["n_subhalos"],
+            ),
+        )
+    if show_percentile:
+        p16_profile = np.where(profile["p16_profile"] > 0, profile["p16_profile"], artificial_small)
+        median_profile = np.where(profile["median_profile"] > 0, profile["median_profile"], artificial_small)
+        p84_profile = np.where(profile["p84_profile"] > 0, profile["p84_profile"], artificial_small)
+        ax.fill_between(
+            x_centers,
+            p16_profile,
+            p84_profile,
+            color="black",
+            alpha=0.18,
+            linewidth=0,
+            label="16-84th percentile",
+        )
+        ax.plot(
+            x_centers,
+            median_profile,
+            color="black",
+            linestyle="--",
+            linewidth=2.0,
+            label="median",
+        )
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.axvline(1.0, color="black", linestyle=":", linewidth=1.2)
+    ax.set_xlabel(r"$x=d_{\mathrm{sub-host}}/R_{\mathrm{vir}}$", fontsize=14)
+    ax.set_ylabel(ylabel_map[statistic], fontsize=14)
+    ax.set_title(
+        rf"Pop2Prime {title_map[statistic]} profile, z={redshift:.2f}, "
+        rf"$M_{{\mathrm{{host}}}} \geq 10^{{{np.log10(host_mass_min):.1f}}}\,M_\odot/h$, "
+        rf"$\psi > {psi_min:.0e}$",
+        fontsize=12,
+    )
+    ax.tick_params(direction="in", which="both", labelsize=12)
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend(fontsize=8, ncol=2)
+    plt.tight_layout()
+    mode_tag = f"avg{int(show_average)}_ind{int(show_individual)}_pct{int(show_percentile)}"
+    output_path = host_dir / (
+        f"pop2prime_radial_weighted_{statistic}_{mode_tag}_psi_gt_{psi_min:.0e}_{host_mass_tag}_DD{snapshot:04d}.png"
+    )
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"Saved Pop2Prime weighted radial subhalo profile plot: {output_path}")
     return output_path
 
 def run_pop2prime_subhalo_count_profile_analysis(
@@ -1059,13 +1431,14 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None):
     redshift = metadata["redshift"]
     host_profiles = sorted(host_profiles, key=lambda profile: profile["host_id"])
     host_mass_min = min(profile["host_mass"] for profile in host_profiles)
+    host_mass_tag = format_host_mass_min_tag(host_mass_min)
     representative_host_mass_msun = np.median(
         [profile["host_mass"] for profile in host_profiles]
     ) / h_Hubble
     host_colors = plt.cm.rainbow(np.linspace(0.0, 1.0, len(host_profiles)))
     reference_profile = host_profiles[0]
     if has_temperature_column:
-        temperature_ratio_path = output_dir / f"all_hosts_gas_temperature_over_tvir_DD{snapshot:04d}.png"
+        temperature_ratio_path = output_dir / f"all_hosts_gas_temperature_over_tvir_{host_mass_tag}_DD{snapshot:04d}.png"
         fig, ax = plt.subplots(figsize=(8, 6), facecolor="white")
         artificial_small = 1.0e-10
         for profile, color in zip(host_profiles, host_colors):
@@ -1125,19 +1498,19 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None):
         (
             "shell_total_density_norm",
             r"$\rho_{\mathrm{tot}} / \rho_{\mathrm{vir}}$",
-            output_dir / f"all_hosts_total_density_norm_DD{snapshot:04d}.png",
+            output_dir / f"all_hosts_total_density_norm_{host_mass_tag}_DD{snapshot:04d}.png",
             reference_lines,
         ),
         (
             "shell_gas_density_norm",
             r"$\rho_{\mathrm{gas}} / \rho_{\mathrm{vir}}$",
-            output_dir / f"all_hosts_gas_density_norm_DD{snapshot:04d}.png",
+            output_dir / f"all_hosts_gas_density_norm_{host_mass_tag}_DD{snapshot:04d}.png",
             reference_lines,
         ),
         (
             "shell_gas_to_total_density_ratio",
             r"$\rho_{\mathrm{gas}} / \rho_{\mathrm{tot}}$",
-            output_dir / f"all_hosts_gas_to_total_ratio_DD{snapshot:04d}.png",
+            output_dir / f"all_hosts_gas_to_total_ratio_{host_mass_tag}_DD{snapshot:04d}.png",
             None,
         ),
     ]
@@ -1146,7 +1519,7 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None):
             (
                 "shell_gas_temperature_mw",
                 r"$T_{\mathrm{gas,mw}}\,[\mathrm{K}]$",
-                output_dir / f"all_hosts_gas_temperature_mw_DD{snapshot:04d}.png",
+                output_dir / f"all_hosts_gas_temperature_mw_{host_mass_tag}_DD{snapshot:04d}.png",
                 None,
             )
         )
@@ -1299,6 +1672,7 @@ def export_selected_host_gas_profiles(
 
     snapshot = catalog["snapshot"]
     redshift = metadata["z"] if metadata is not None else catalog["redshift"]
+    host_mass_tag = format_host_mass_min_tag(host_mass_min)
     host_dir = output_dir / f"pop2prime_host_gas_profiles_DD{snapshot:04d}"
     host_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1317,10 +1691,10 @@ def export_selected_host_gas_profiles(
         )
         host_profiles.append(profile)
 
-    combined_table_path = host_dir / f"all_host_profiles_DD{snapshot:04d}.txt"
+    combined_table_path = host_dir / f"all_host_profiles_{host_mass_tag}_DD{snapshot:04d}.txt"
     save_host_profile_collection_table(host_profiles, combined_table_path)
 
-    summary_path = host_dir / f"host_summary_DD{snapshot:04d}.txt"
+    summary_path = host_dir / f"host_summary_{host_mass_tag}_DD{snapshot:04d}.txt"
     with summary_path.open("w") as f:
         f.write(f"# snapshot {snapshot}\n")
         f.write(f"# redshift {redshift:.8e}\n")
@@ -1443,10 +1817,23 @@ if __name__ == "__main__":
 
     # target_redshift = float(os.environ.get("TARGET_REDSHIFT", TARGET_REDSHIFT))
     # export_selected_host_gas_profiles(target_redshift=target_redshift)
-
-    input_path = (
-        POP2PRIME_RESULTS_DIR
-        / "pop2prime_host_gas_profiles_DD0525"
-        / "all_host_profiles_DD0525.txt"
+    # plot_pop2prime_radial_subhalo_profiles_allpsi(
+    #     target_redshift=12.0,
+    #     show_average=True,
+    #     show_individual=True,
+    # )
+    plot_pop2prime_radial_subhalo_weighted_profile(
+        target_redshift=12.0,
+        psi_min=1.0e-3,
+        show_average=True,
+        show_individual=False,
+        show_percentile=True,
+        statistic="mass2_dx", #"mass2_dx", "mass_dx", "count_dx"
     )
-    plot_all_host_profiles_overplot(input_path)
+
+    # input_path = (
+    #     POP2PRIME_RESULTS_DIR
+    #     / "pop2prime_host_gas_profiles_DD0525"
+    #     / "all_host_profiles_DD0525.txt"
+    # )
+    # plot_all_host_profiles_overplot(input_path)

@@ -4,8 +4,69 @@ from matplotlib import colors, cm
 import os
 import matplotlib.lines as mlines
 from TNGDataHandler import load_processed_data
-from HaloProfileStatistics import get_subhalo_host_distance, plot_host_averaged_radial_subhalo_profile
+from HaloProfileStatistics import (
+    get_subhalo_host_distance,
+    get_tng_halo_definition_metadata,
+    plot_host_averaged_radial_subhalo_profile,
+)
 from physical_constants import G_grav, Mpc, Msun, Zsun, Myr, kpc, Omega_b, Omega_m, h_Hubble
+
+
+def _halo_def_plot_suffix(radius_definition):
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
+    return '' if halo_meta['tag'] == '200c' else f'_{halo_meta["tag"]}'
+
+
+def _get_selected_host_thermo_arrays(data, host_indices, radius_definition='200c'):
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
+    if halo_meta['tag'] == '200c':
+        cs_key = 'GroupCs_Crit200'
+        tff_key = 'Group_t_ff_Crit200'
+        tvir_key = 'GroupTvir_Crit200'
+    else:
+        cs_key = 'GroupCs_Mean200'
+        tff_key = 'Group_t_ff_Mean200'
+        tvir_key = 'GroupTvir_Mean200'
+
+    group_cs = data.halo_data[cs_key].value
+    group_tff = data.halo_data[tff_key].value
+    group_tvir = data.halo_data[tvir_key].value
+
+    return {
+        'cs_key': cs_key,
+        'tff_key': tff_key,
+        'tvir_key': tvir_key,
+        'group_cs': group_cs,
+        'group_tff': group_tff,
+        'group_tvir': group_tvir,
+        'host_cs': group_cs[host_indices],
+        'host_tff': group_tff[host_indices],
+        'host_tvir': group_tvir[host_indices],
+    }
+
+
+def _get_selected_subhalo_mach_arrays(data, host_indices, radius_definition='200c'):
+    thermo = _get_selected_host_thermo_arrays(data, host_indices, radius_definition=radius_definition)
+    rel_vel_mag = data.subhalo_data['relative_velocity_magnitude'].value
+    vmaxrad = data.subhalo_data['SubVmaxRad'].value
+
+    mach_number = np.full(rel_vel_mag.shape, np.nan, dtype=float)
+    valid_cs = np.isfinite(thermo['host_cs']) & (thermo['host_cs'] > 0)
+    mach_number[valid_cs] = rel_vel_mag[valid_cs] / thermo['host_cs'][valid_cs]
+
+    vmaxrad_tcross = np.full(vmaxrad.shape, np.nan, dtype=float)
+    valid_tcross = np.isfinite(vmaxrad) & (vmaxrad > 0) & valid_cs
+    vmaxrad_tcross[valid_tcross] = vmaxrad[valid_tcross] / thermo['host_cs'][valid_tcross]
+
+    thermo.update(
+        {
+            'mach_number': mach_number,
+            'vmaxrad_tcross': vmaxrad_tcross,
+            'relative_velocity_magnitude': rel_vel_mag,
+            'vmaxrad': vmaxrad,
+        }
+    )
+    return thermo
 
 
 def maxwell_boltzmann_pdf(x, sigma):
@@ -110,10 +171,17 @@ def fit_truncated_gaussian(data, bins=50, range_fit=None, initial_guess=(1.0, 1.
 
 
     
-def plot_host_halo_properties(data, snapNum, output_dir):
+def plot_host_halo_properties(data, snapNum, output_dir, radius_definition='200c'):
     os.makedirs(output_dir, exist_ok=True)
 
-    group_Tvir = data.halo_data['GroupTvir'].value
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
+    plot_suffix = _halo_def_plot_suffix(radius_definition)
+    thermo = _get_selected_host_thermo_arrays(
+        data,
+        np.arange(len(data.halo_data[halo_meta['mass_key']].value), dtype=int),
+        radius_definition=radius_definition,
+    )
+    group_Tvir = thermo['group_tvir']
     group_metallicity = data.halo_data['GroupGasMetallicity'].value
     group_metallicity_Zsun = group_metallicity / Zsun
     #set lower limit of metallicity to be 1e-10 Zsun to avoid -inf in log10
@@ -124,7 +192,7 @@ def plot_host_halo_properties(data, snapNum, output_dir):
     plt.hist(np.log10(group_Tvir), bins=50, histtype='step', linewidth=2)
     plt.xlabel(r'log$_{10}$(T$_{vir}$ [K])', fontsize=14)
     plt.ylabel('Counts', fontsize=14)
-    plt.savefig(os.path.join(output_dir, f'host_Tvir_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'host_Tvir{plot_suffix}_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
     #plot 2D histogram of host halo Tvir vs metallicity
@@ -133,7 +201,7 @@ def plot_host_halo_properties(data, snapNum, output_dir):
     plt.colorbar(label='Counts')
     plt.xlabel(r'log$_{10}$(T$_{vir}$ [K])', fontsize=14)
     plt.ylabel(r'log$_{10}$($\max(Z_{gas}/Z_{\odot}, 1e-10)$)', fontsize=14)
-    plt.savefig(os.path.join(output_dir, f'host_Tvir_metallicity_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f'host_Tvir_metallicity{plot_suffix}_snap_{snapNum}.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
 
@@ -142,9 +210,9 @@ def plot_host_halo_properties(data, snapNum, output_dir):
     halo_dmmass = data.halo_data['GroupDMmass'].value
     halo_stellarmass = data.halo_data['GroupStellarMass'].value
     halo_bhmass = data.halo_data['GroupBHMass'].value
-    halo_mass = data.halo_data['GroupMass'].value
+    halo_mass = data.halo_data[halo_meta['mass_key']].value
 
-    outputfilename = os.path.join(output_dir, f'host_f_baryon_snap_{snapNum}.png')
+    outputfilename = os.path.join(output_dir, f'host_f_baryon{plot_suffix}_snap_{snapNum}.png')
     fig = plt.figure(facecolor='white')
     ax = fig.gca()
 
@@ -163,13 +231,13 @@ def plot_host_halo_properties(data, snapNum, output_dir):
         loc='best',
         markerscale=10  # Use a value greater than 1 to increase marker size in legend
     )
-    plt.xlabel(r'Halo Mass [$M_{\odot}/h$]')
+    plt.xlabel(rf'{halo_meta["mass_label"]} [$M_{{\odot}}/h$]')
     plt.ylabel('Mass Fraction')
     plt.savefig(outputfilename, bbox_inches='tight', dpi=200)
     plt.close()
 
 
-def plot_2D_histogram(data, snapNum, output_dir, fig_options):
+def plot_2D_histogram(data, snapNum, output_dir, fig_options, radius_definition='200c'):
     """
     Create 2D histograms of various TNG simulation properties.
     
@@ -186,21 +254,29 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
     os.makedirs(output_dir, exist_ok=True)
     
     # Extract data from the ProcessedTNGData container
-    host_indices = data.subhalo_data['host_index'].value
+    host_indices = data.subhalo_data['host_index'].value.astype(int)
     
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
+    plot_suffix = _halo_def_plot_suffix(radius_definition)
+
     # Host halo properties (need to use host_indices to match with subhalos)
     host_mass = data.halo_data['GroupMass'].value[host_indices]
-    host_M200 = data.halo_data['Group_M_Crit200'].value[host_indices]
-    host_R200 = data.halo_data['Group_R_Crit200'].value[host_indices] 
+    host_M200 = data.halo_data[halo_meta['mass_key']].value[host_indices]
+    host_R200 = data.halo_data[halo_meta['radius_key']].value[host_indices]
     host_pos = data.halo_data['GroupPos'].value[host_indices]
     
     # Subhalo properties
+    thermo = _get_selected_subhalo_mach_arrays(
+        data,
+        host_indices,
+        radius_definition=radius_definition,
+    )
     subhalo_mass = data.subhalo_data['SubMass'].value
     halfmass_radius = data.subhalo_data['SubHalfmassRad'].value  #unit: m
-    vmaxrad = data.subhalo_data['SubVmaxRad'].value
-    mach_number = data.subhalo_data['mach_number'].value
-    vmaxrad_tcross = data.subhalo_data['vmaxrad_tcross'].value
-    host_tff = data.subhalo_data['host_t_ff'].value
+    vmaxrad = thermo['vmaxrad']
+    mach_number = thermo['mach_number']
+    vmaxrad_tcross = thermo['vmaxrad_tcross']
+    host_tff = thermo['host_tff']
     a_number = data.subhalo_data['A_number'].value
     subhalo_pos = data.subhalo_data['SubPos'].value  #unit: kpc/h
 
@@ -222,9 +298,9 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         fig = plt.figure(figsize=(8, 6), facecolor='w')
         plt.hist2d(np.log10(host_M200), np.log10(subhalo_mass), bins=50)
         plt.colorbar(label='Counts')
-        plt.xlabel(r'log$_{10}$(M$_{200}$ [M$_{\odot}$/h])', fontsize=14)
+        plt.xlabel(rf'log$_{{10}}$({halo_meta["mass_label"]} [M$_{{\odot}}$/h])', fontsize=14)
         plt.ylabel(r'log$_{10}$(m$_{\mathrm{sub}}$ [M$_{\odot}$/h])', fontsize=14)
-        filename = os.path.join(output_dir, f'M200_msub_snap_{snapNum}.png')
+        filename = os.path.join(output_dir, f'M200_msub{plot_suffix}_snap_{snapNum}.png')
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Saved figure: {filename}")
         plt.close()
@@ -239,9 +315,9 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         fig = plt.figure(figsize=(8, 6), facecolor='w')
         plt.hist2d(np.log10(host_R200_selected*1.0e3), np.log10(halfmass_radius_selected/kpc), bins=50)
         plt.colorbar(label='Counts')
-        plt.xlabel(r'log$_{10}$(R$_{200}$ [kpc])', fontsize=14)
+        plt.xlabel(rf'log$_{{10}}$({halo_meta["radius_label"]} [kpc])', fontsize=14)
         plt.ylabel(r'log$_{10}$(r$_{\mathrm{sub,halfmass}}$ [kpc])', fontsize=14)
-        filename = os.path.join(output_dir, f'R200_rsubhalfmass_snap_{snapNum}.png')
+        filename = os.path.join(output_dir, f'R200_rsubhalfmass{plot_suffix}_snap_{snapNum}.png')
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Saved figure: {filename}")
         plt.close()
@@ -251,9 +327,9 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         fig = plt.figure(figsize=(8, 6), facecolor='w')
         plt.hist2d(np.log10(host_R200*1.0e3), np.log10(vmaxrad/kpc), bins=50)
         plt.colorbar(label='Counts')
-        plt.xlabel(r'log$_{10}$(R$_{200}$ [kpc])', fontsize=14)
+        plt.xlabel(rf'log$_{{10}}$({halo_meta["radius_label"]} [kpc])', fontsize=14)
         plt.ylabel(r'log$_{10}$(r$_{\mathrm{sub,VmaxRad}}$ [kpc])', fontsize=14)
-        filename = os.path.join(output_dir, f'R200_subhaloVmaxRad_snap_{snapNum}.png')
+        filename = os.path.join(output_dir, f'R200_subhaloVmaxRad{plot_suffix}_snap_{snapNum}.png')
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Saved figure: {filename}")
         plt.close()
@@ -265,7 +341,7 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         plt.colorbar(label='Counts')
         plt.xlabel(r'log$_{10}$(t$_{\mathrm{ff,host}}$ [Myr])', fontsize=14)
         plt.ylabel(r'log$_{10}$(t$_{\mathrm{cross}}$ [Myr])', fontsize=14)
-        filename = os.path.join(output_dir, f'tff_tcross_snap_{snapNum}.png')
+        filename = os.path.join(output_dir, f'tff_tcross{plot_suffix}_snap_{snapNum}.png')
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Saved figure: {filename}")
         plt.close()
@@ -275,9 +351,9 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         fig = plt.figure(figsize=(8, 6), facecolor='w')
         plt.hist2d(np.log10(host_M200), mach_number, bins=50)
         plt.colorbar(label='Counts')
-        plt.xlabel(r'log$_{10}$(M$_{200}$ [M$_{\odot}$/h])', fontsize=14)
+        plt.xlabel(rf'log$_{{10}}$({halo_meta["mass_label"]} [M$_{{\odot}}$/h])', fontsize=14)
         plt.ylabel(r'$\mathcal{M}$', fontsize=14)
-        filename = os.path.join(output_dir, f'M200_Mach_snap_{snapNum}.png')
+        filename = os.path.join(output_dir, f'M200_Mach{plot_suffix}_snap_{snapNum}.png')
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Saved figure: {filename}")
         plt.close()
@@ -293,7 +369,7 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         ax = fig.gca()
         plt.hist2d(np.log10(host_M200_selected), np.log10(a_number_selected), bins=50)
         plt.colorbar(label='Subhalo Counts')
-        plt.xlabel(r'log$_{10}$(M$_{200}$ [M$_{\odot}$/h])', fontsize=14)
+        plt.xlabel(rf'log$_{{10}}$({halo_meta["mass_label"]} [M$_{{\odot}}$/h])', fontsize=14)
         plt.ylabel(r'log$_{10} \mathcal{A}$', fontsize=14)
         ax.tick_params(axis='both', direction='in')
         #add a text at left bottom corner for the redshift
@@ -302,7 +378,7 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         props = dict(boxstyle='round', facecolor='white', alpha=0.5)
         ax.text(0.05, 0.15, textstr, transform=ax.transAxes, fontsize=14,
                 verticalalignment='top', bbox=props)
-        filename = os.path.join(output_dir, f'M200_Anumber_snap_{snapNum}.png')
+        filename = os.path.join(output_dir, f'M200_Anumber{plot_suffix}_snap_{snapNum}.png')
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Saved figure: {filename}")
         plt.close()
@@ -327,7 +403,7 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         # M200_bins = 10**lgM200_bins
 
         #save best fit sigma to a file
-        bestfit_mach_filename = os.path.join(output_dir, f'best_fit_Mach_sigma_new.txt')
+        bestfit_mach_filename = os.path.join(output_dir, f'best_fit_Mach_sigma_new{plot_suffix}.txt')
         with open(bestfit_mach_filename, 'w') as f:
             f.write(f"threshold Mach number: {mach_number_max}, fraction of Mach number < {mach_number_max}: {mach_selected_fraction}\n")
             f.write("M200_min, M200_max, Best Fit Sigma\n")
@@ -351,10 +427,10 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
             with open(bestfit_mach_filename, 'a') as f:
                 f.write(f"{M200_bins[i]:.2e}, {M200_bins[i+1]:.2e}, {popt[0]}\n")
 
-        plt.xlabel('$\mathcal{M}$', fontsize=14)
+        plt.xlabel(r'$\mathcal{M}$', fontsize=14)
         plt.ylabel('Probability Density', fontsize=14)
         plt.legend()
-        filename = os.path.join(output_dir, f'M200_Mach_bins_snap_{snapNum}.png')
+        filename = os.path.join(output_dir, f'M200_Mach_bins{plot_suffix}_snap_{snapNum}.png')
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Saved figure: {filename}")
         plt.close()
@@ -372,8 +448,8 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         min_count = 50
 
         # Define output files
-        out_trunc = os.path.join(output_dir, 'best_fit_Mach_truncatedgaussian_fixedhostmass.txt')
-        out_maxwell = os.path.join(output_dir, 'best_fit_Mach_sigma_fixedhostmass.txt')
+        out_trunc = os.path.join(output_dir, f'best_fit_Mach_truncatedgaussian_fixedhostmass{plot_suffix}.txt')
+        out_maxwell = os.path.join(output_dir, f'best_fit_Mach_sigma_fixedhostmass{plot_suffix}.txt')
 
         # Write headers
         for fname, mode in [(out_trunc, "truncated-gaussian"), (out_maxwell, "maxwell-boltzmann")]:
@@ -468,18 +544,18 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         if handles:
             axes[list(axes.keys())[-1]].legend(
                 handles, labels,
-                title=r'$\log_{10}(M_{200}\,[M_\odot/h])$',
+                title=rf'$\log_{{10}}({halo_meta["mass_label"]}\,[M_\odot/h])$',
                 frameon=True, facecolor='white', edgecolor='black', framealpha=0.95,
                 loc='best'
             )
 
         # === Save ===
         if fit_mode == "both":
-            filename = os.path.join(output_dir, f'M200_Mach_both_fixedhostmass_snap_{snapNum}.png')
+            filename = os.path.join(output_dir, f'M200_Mach_both_fixedhostmass{plot_suffix}_snap_{snapNum}.png')
         elif fit_mode == "truncated-gaussian":
-            filename = os.path.join(output_dir, f'M200_Mach_truncatedgaussian_fixedhostmass_snap_{snapNum}.png')
+            filename = os.path.join(output_dir, f'M200_Mach_truncatedgaussian_fixedhostmass{plot_suffix}_snap_{snapNum}.png')
         elif fit_mode == "maxwell-boltzmann":
-            filename = os.path.join(output_dir, f'M200_Mach_maxwellboltzmann_fixedhostmass_snap_{snapNum}.png')
+            filename = os.path.join(output_dir, f'M200_Mach_maxwellboltzmann_fixedhostmass{plot_suffix}_snap_{snapNum}.png')
 
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Saved figure: {filename}")
@@ -491,7 +567,7 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         # Plot normalized halo-centric distance of subhalos.
         # This is separate from dpos_subhaloVmaxRad, which compares host-subhalo
         # centroid distance with the internal subhalo Vmax radius.
-        _, _, dpos_over_R200 = get_subhalo_host_distance(data)
+        _, _, dpos_over_R200 = get_subhalo_host_distance(data, radius_definition=radius_definition)
         valid_indices = (host_R200 > 0) & (dpos_over_R200 > 0) & np.isfinite(dpos_over_R200)
         dpos_over_R200_selected = dpos_over_R200[valid_indices]
         print(f"Number of valid dpos/R200 indices: {np.sum(valid_indices)}")
@@ -504,11 +580,11 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         max_plot = min(3.0, np.percentile(dpos_over_R200_selected, 99.7))
         bins = np.linspace(0.0, max_plot, 60)
         plt.hist(dpos_over_R200_selected, bins=bins, histtype='step', linewidth=2)
-        plt.axvline(1.0, color='black', linestyle='--', linewidth=1.5, label=r'$R_{200}$')
-        plt.xlabel(r'$d_{\mathrm{sub-host}}/R_{200}$', fontsize=14)
+        plt.axvline(1.0, color='black', linestyle='--', linewidth=1.5, label=rf'${halo_meta["radius_label"]}$')
+        plt.xlabel(rf'$d_{{\mathrm{{sub-host}}}}/{halo_meta["radius_label"]}$', fontsize=14)
         plt.ylabel('Counts', fontsize=14)
         plt.legend()
-        filename = os.path.join(output_dir, f'dpos_R200_snap_{snapNum}.png')
+        filename = os.path.join(output_dir, f'dpos_R200{plot_suffix}_snap_{snapNum}.png')
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Saved figure: {filename}")
         plt.close()
@@ -517,18 +593,18 @@ def plot_2D_histogram(data, snapNum, output_dir, fig_options):
         cdf = np.arange(1, len(sorted_r) + 1) / len(sorted_r)
         fig = plt.figure(figsize=(8, 6), facecolor='w')
         plt.plot(sorted_r, cdf, linewidth=2)
-        plt.axvline(1.0, color='black', linestyle='--', linewidth=1.5, label=r'$R_{200}$')
+        plt.axvline(1.0, color='black', linestyle='--', linewidth=1.5, label=rf'${halo_meta["radius_label"]}$')
         plt.xlim(0.0, max_plot)
         plt.ylim(0.0, 1.0)
-        plt.xlabel(r'$d_{\mathrm{sub-host}}/R_{200}$', fontsize=14)
+        plt.xlabel(rf'$d_{{\mathrm{{sub-host}}}}/{halo_meta["radius_label"]}$', fontsize=14)
         plt.ylabel('Cumulative Fraction', fontsize=14)
         plt.legend()
-        filename = os.path.join(output_dir, f'dpos_R200_cumulative_snap_{snapNum}.png')
+        filename = os.path.join(output_dir, f'dpos_R200_cumulative{plot_suffix}_snap_{snapNum}.png')
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Saved figure: {filename}")
         plt.close()
 
-        summary_file = os.path.join(output_dir, f'dpos_R200_summary_snap_{snapNum}.txt')
+        summary_file = os.path.join(output_dir, f'dpos_R200_summary{plot_suffix}_snap_{snapNum}.txt')
         percentiles = [5, 16, 50, 84, 95]
         values = np.percentile(dpos_over_R200_selected, percentiles)
         with open(summary_file, 'w') as f:
@@ -596,20 +672,25 @@ def _weighted_median(values, weights):
     return np.interp(0.5, weighted_cdf, values_sorted)
 
 
-def _prepare_tng_orbital_samples(data, x_range=(1.0e-2, 3.0), weight_by_host=False):
+def _prepare_tng_orbital_samples(
+    data,
+    x_range=(1.0e-2, 3.0),
+    weight_by_host=False,
+    radius_definition='200c',
+):
     """
-    Build reusable TNG orbital samples based on M200c/R200c host scaling.
+    Build reusable TNG orbital samples based on one host-halo definition.
 
-    Returns host-mass values, x=r/R200c, j_norm=j/(R200c*V200c), vr_norm=vr/V200c,
+    Returns host-mass values, x=r/R200, j_norm=j/(R200*V200), vr_norm=vr/V200,
     and optional host-equal subhalo weights.
     """
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
     host_indices = data.subhalo_data['host_index'].value.astype(int)
-    host_m200_subs = data.halo_data['Group_M_Crit200'].value[host_indices]
-    host_r200_subs = data.halo_data['Group_R_Crit200'].value[host_indices]
+    host_m200_subs = data.halo_data[halo_meta['mass_key']].value[host_indices]
+    host_r200_subs = data.halo_data[halo_meta['radius_key']].value[host_indices]
     sub_vel = data.subhalo_data['SubVel'].value
     host_vel = data.halo_data['GroupVel'].value[host_indices]
-    x_values = get_subhalo_host_distance(data)[2]
-    r_vec_ckpch = get_subhalo_host_distance(data)[0]
+    r_vec_ckpch, _, x_values = get_subhalo_host_distance(data, radius_definition=radius_definition)
 
     # Convert host-centric displacement from ckpc/h to physical meters.
     scale_factor = data.header.get('Time', 1.0)
@@ -656,6 +737,7 @@ def _prepare_tng_orbital_samples(data, x_range=(1.0e-2, 3.0), weight_by_host=Fal
         'j_norm': j_norm,
         'vr_norm': vr_norm,
         'weights': subhalo_weights,
+        'halo_meta': halo_meta,
     }
 
 # radial distribution of Mach number in different host mass bins, with each column normalized to show P(Mach | x)
@@ -672,9 +754,10 @@ def plot_conditional_mach_radius_by_hostmass(
     mach_max=5.0,
     min_subhalos_per_panel=10,
     weight_by_host=False,
+    radius_definition='200c',
 ):
     """
-    Plot P(Mach | x) in a 2x3 panel figure split by host-halo M200c.
+    Plot P(Mach | x) in a 2x3 panel figure split by host-halo M200.
 
     The first five panels show log-uniform host-mass bins in M200c and the last
     panel shows the combined sample. Each x-bin column is normalized so the
@@ -693,11 +776,18 @@ def plot_conditional_mach_radius_by_hostmass(
     os.makedirs(output_dir, exist_ok=True)
 
     data = load_processed_data(processed_file)
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
+    plot_suffix = _halo_def_plot_suffix(radius_definition)
     redshift = float(data.header['Redshift'])
     host_indices = data.subhalo_data['host_index'].value.astype(int)
-    host_m200_subs = data.halo_data['Group_M_Crit200'].value[host_indices]
-    x_values = get_subhalo_host_distance(data)[2]
-    mach_number = data.subhalo_data['mach_number'].value
+    host_m200_subs = data.halo_data[halo_meta['mass_key']].value[host_indices]
+    x_values = get_subhalo_host_distance(data, radius_definition=radius_definition)[2]
+    thermo = _get_selected_subhalo_mach_arrays(
+        data,
+        host_indices,
+        radius_definition=radius_definition,
+    )
+    mach_number = thermo['mach_number']
 
     valid = (
         np.isfinite(host_m200_subs)
@@ -726,7 +816,7 @@ def plot_conditional_mach_radius_by_hostmass(
         # Host-equal weighting: each host contributes unit total weight.
         subhalo_weights = _host_equal_weights(host_indices)
 
-    valid_hosts = data.halo_data['Group_M_Crit200'].value
+    valid_hosts = data.halo_data[halo_meta['mass_key']].value
     valid_hosts = valid_hosts[np.isfinite(valid_hosts) & (valid_hosts > 0)]
     logM_edges = np.linspace(np.log10(np.min(valid_hosts)), np.log10(np.max(valid_hosts)), num_mass_bins + 1)
     x_edges = np.logspace(np.log10(x_range[0]), np.log10(x_range[1]), num_x_bins + 1)
@@ -748,8 +838,8 @@ def plot_conditional_mach_radius_by_hostmass(
         panels.append(
             {
                 'label': (
-                    r'$\log_{10}(M_{200c}/M_\odot h^{-1})'
-                    + f' \\in [{logM_edges[i]:.2f}, {logM_edges[i + 1]:.2f}]$'
+                    rf'$\log_{{10}}({halo_meta["mass_label"]}/M_\odot h^{{-1}}) '
+                    rf'\in [{logM_edges[i]:.2f}, {logM_edges[i + 1]:.2f}]$'
                 ),
                 'x': x_values[mask],
                 'mach': mach_number[mask],
@@ -849,7 +939,7 @@ def plot_conditional_mach_radius_by_hostmass(
             )
 
     for ax in axes[3:]:
-        ax.set_xlabel(r'$x = d_{\mathrm{sub-host}}/R_{200c}$', fontsize=13)
+        ax.set_xlabel(rf'$x = d_{{\mathrm{{sub-host}}}}/{halo_meta["radius_label"]}$', fontsize=13)
     for ax in axes[::3]:
         ax.set_ylabel(r'$\mathcal{M}$', fontsize=13)
 
@@ -865,7 +955,7 @@ def plot_conditional_mach_radius_by_hostmass(
 
     output_path = os.path.join(
         output_dir,
-        f'conditional_mach_radius_M200c_2x3_'
+        f'conditional_mach_radius_{halo_meta["tag"]}_2x3_'
         f'{"hostweight" if weight_by_host else "subweight"}_snap_{snapNum}.png',
     )
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -886,9 +976,10 @@ def plot_conditional_jnorm_radius_by_hostmass(
     jnorm_max=5.0,
     min_subhalos_per_panel=10,
     weight_by_host=False,
+    radius_definition='200c',
 ):
     """
-    Plot P(j_norm | x) with j_norm = j_orb / (R200c * V200c) in a 2x3 layout.
+    Plot P(j_norm | x) with j_norm = j_orb / (R200 * V200) in a 2x3 layout.
     """
     processed_file = os.path.join(
         base_dir,
@@ -901,8 +992,14 @@ def plot_conditional_jnorm_radius_by_hostmass(
     os.makedirs(output_dir, exist_ok=True)
 
     data = load_processed_data(processed_file)
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
     redshift = float(data.header['Redshift'])
-    orbital = _prepare_tng_orbital_samples(data, x_range=x_range, weight_by_host=weight_by_host)
+    orbital = _prepare_tng_orbital_samples(
+        data,
+        x_range=x_range,
+        weight_by_host=weight_by_host,
+        radius_definition=radius_definition,
+    )
 
     host_m200_subs = orbital['host_m200_subs']
     x_values = orbital['x_values']
@@ -927,7 +1024,7 @@ def plot_conditional_jnorm_radius_by_hostmass(
     if subhalo_weights is not None:
         subhalo_weights = subhalo_weights[in_range]
 
-    valid_hosts = data.halo_data['Group_M_Crit200'].value
+    valid_hosts = data.halo_data[halo_meta['mass_key']].value
     valid_hosts = valid_hosts[np.isfinite(valid_hosts) & (valid_hosts > 0)]
     logM_edges = np.linspace(np.log10(np.min(valid_hosts)), np.log10(np.max(valid_hosts)), num_mass_bins + 1)
     x_edges = np.logspace(np.log10(x_range[0]), np.log10(x_range[1]), num_x_bins + 1)
@@ -949,8 +1046,8 @@ def plot_conditional_jnorm_radius_by_hostmass(
         panels.append(
             {
                 'label': (
-                    r'$\log_{10}(M_{200c}/M_\odot h^{-1})'
-                    + f' \\in [{logM_edges[i]:.2f}, {logM_edges[i + 1]:.2f}]$'
+                    rf'$\log_{{10}}({halo_meta["mass_label"]}/M_\odot h^{{-1}}) '
+                    rf'\in [{logM_edges[i]:.2f}, {logM_edges[i + 1]:.2f}]$'
                 ),
                 'x': x_values[mask],
                 'y': j_norm[mask],
@@ -1027,9 +1124,9 @@ def plot_conditional_jnorm_radius_by_hostmass(
             )
 
     for ax in axes[3:]:
-        ax.set_xlabel(r'$x = d_{\mathrm{sub-host}}/R_{200c}$', fontsize=13)
+        ax.set_xlabel(rf'$x = d_{{\mathrm{{sub-host}}}}/{halo_meta["radius_label"]}$', fontsize=13)
     for ax in axes[::3]:
-        ax.set_ylabel(r'$j_{\mathrm{orb}}/(R_{200c}V_{200c})$', fontsize=13)
+        ax.set_ylabel(rf'$j_{{\mathrm{{orb}}}}/({halo_meta["radius_label"]}{halo_meta["v_label"]})$', fontsize=13)
 
     cbar = fig.colorbar(mesh, ax=axes.tolist(), fraction=0.03, pad=0.03)
     cbar.set_label(r'$P(j_{\mathrm{norm}}\mid x)$', fontsize=13)
@@ -1043,7 +1140,7 @@ def plot_conditional_jnorm_radius_by_hostmass(
 
     output_path = os.path.join(
         output_dir,
-        f'conditional_jnorm_radius_M200c_2x3_'
+        f'conditional_jnorm_radius_{halo_meta["tag"]}_2x3_'
         f'{"hostweight" if weight_by_host else "subweight"}_snap_{snapNum}.png',
     )
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -1064,9 +1161,10 @@ def plot_conditional_vr_radius_by_hostmass(
     vr_abs_max=5.0,
     min_subhalos_per_panel=10,
     weight_by_host=False,
+    radius_definition='200c',
 ):
     """
-    Plot P(vr/V200c | x) in a 2x3 layout, with negative vr indicating infall.
+    Plot P(vr/V200 | x) in a 2x3 layout, with negative vr indicating infall.
     """
     processed_file = os.path.join(
         base_dir,
@@ -1079,8 +1177,14 @@ def plot_conditional_vr_radius_by_hostmass(
     os.makedirs(output_dir, exist_ok=True)
 
     data = load_processed_data(processed_file)
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
     redshift = float(data.header['Redshift'])
-    orbital = _prepare_tng_orbital_samples(data, x_range=x_range, weight_by_host=weight_by_host)
+    orbital = _prepare_tng_orbital_samples(
+        data,
+        x_range=x_range,
+        weight_by_host=weight_by_host,
+        radius_definition=radius_definition,
+    )
 
     host_m200_subs = orbital['host_m200_subs']
     x_values = orbital['x_values']
@@ -1105,7 +1209,7 @@ def plot_conditional_vr_radius_by_hostmass(
     if subhalo_weights is not None:
         subhalo_weights = subhalo_weights[in_range]
 
-    valid_hosts = data.halo_data['Group_M_Crit200'].value
+    valid_hosts = data.halo_data[halo_meta['mass_key']].value
     valid_hosts = valid_hosts[np.isfinite(valid_hosts) & (valid_hosts > 0)]
     logM_edges = np.linspace(np.log10(np.min(valid_hosts)), np.log10(np.max(valid_hosts)), num_mass_bins + 1)
     x_edges = np.logspace(np.log10(x_range[0]), np.log10(x_range[1]), num_x_bins + 1)
@@ -1127,8 +1231,8 @@ def plot_conditional_vr_radius_by_hostmass(
         panels.append(
             {
                 'label': (
-                    r'$\log_{10}(M_{200c}/M_\odot h^{-1})'
-                    + f' \\in [{logM_edges[i]:.2f}, {logM_edges[i + 1]:.2f}]$'
+                    rf'$\log_{{10}}({halo_meta["mass_label"]}/M_\odot h^{{-1}}) '
+                    rf'\in [{logM_edges[i]:.2f}, {logM_edges[i + 1]:.2f}]$'
                 ),
                 'x': x_values[mask],
                 'y': vr_norm[mask],
@@ -1206,12 +1310,12 @@ def plot_conditional_vr_radius_by_hostmass(
             )
 
     for ax in axes[3:]:
-        ax.set_xlabel(r'$x = d_{\mathrm{sub-host}}/R_{200c}$', fontsize=13)
+        ax.set_xlabel(rf'$x = d_{{\mathrm{{sub-host}}}}/{halo_meta["radius_label"]}$', fontsize=13)
     for ax in axes[::3]:
-        ax.set_ylabel(r'$v_r/V_{200c}$', fontsize=13)
+        ax.set_ylabel(rf'$v_r/{halo_meta["v_label"]}$', fontsize=13)
 
     cbar = fig.colorbar(mesh, ax=axes.tolist(), fraction=0.03, pad=0.03)
-    cbar.set_label(r'$P(v_r/V_{200c}\mid x)$', fontsize=13)
+    cbar.set_label(rf'$P(v_r/{halo_meta["v_label"]}\mid x)$', fontsize=13)
 
     title_suffix = ' WeightByHost' if weight_by_host else ''
     fig.suptitle(
@@ -1221,7 +1325,7 @@ def plot_conditional_vr_radius_by_hostmass(
 
     output_path = os.path.join(
         output_dir,
-        f'conditional_vr_radius_M200c_2x3_'
+        f'conditional_vr_radius_{halo_meta["tag"]}_2x3_'
         f'{"hostweight" if weight_by_host else "subweight"}_snap_{snapNum}.png',
     )
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -1409,7 +1513,7 @@ def plot_conditional_logA(
     plt.close() 
 
 
-def compare_mach_numbers(simulation_set, snapNums):
+def compare_mach_numbers(simulation_set, snapNums, radius_definition='200c'):
     """
     Compare Mach number distributions at different redshifts.
     
@@ -1422,9 +1526,16 @@ def compare_mach_numbers(simulation_set, snapNums):
     """
     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
     num_snapshots = len(snapNums)
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
+    plot_suffix = _halo_def_plot_suffix(radius_definition)
     
     #write best fit sigma to a file
-    output_filename = os.path.join(base_dir, simulation_set, 'analysis', 'best_fit_Mach_sigma_allz.txt')
+    output_filename = os.path.join(
+        base_dir,
+        simulation_set,
+        'analysis',
+        f'best_fit_Mach_sigma_allz_{halo_meta["tag"]}.txt',
+    )
     with open(output_filename, 'w') as f:
         f.write("Snapshot, Redshift, Best Fit Sigma, F(Mach < 5)\n")
 
@@ -1437,9 +1548,16 @@ def compare_mach_numbers(simulation_set, snapNums):
         processed_file = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 
                                     f'processed_halos_snap_{snapNum}.h5')
         data = load_processed_data(processed_file)
+        host_indices = data.subhalo_data['host_index'].value.astype(int)
+        thermo = _get_selected_subhalo_mach_arrays(
+            data,
+            host_indices,
+            radius_definition=radius_definition,
+        )
         
         # Get Mach numbers and filter out Mach > 5
-        all_mach_numbers = data.subhalo_data['mach_number'].value
+        all_mach_numbers = thermo['mach_number']
+        all_mach_numbers = all_mach_numbers[np.isfinite(all_mach_numbers) & (all_mach_numbers >= 0)]
         mach_numbers = all_mach_numbers[all_mach_numbers < 5]
         selected_fraction = len(mach_numbers) / len(all_mach_numbers)
         redshift = data.header['Redshift']
@@ -1476,7 +1594,7 @@ def compare_mach_numbers(simulation_set, snapNums):
     plt.grid(True, alpha=0.3)
     plot_dir = os.path.join(base_dir, simulation_set, 'analysis')
     os.makedirs(plot_dir, exist_ok=True)
-    plt.savefig(os.path.join(plot_dir, 'mach_number_distribution_cutMach5_allz.png'), 
+    plt.savefig(os.path.join(plot_dir, f'mach_number_distribution_cutMach5_allz{plot_suffix}.png'), 
                 dpi=300, bbox_inches='tight')
     plt.close()
 
@@ -1489,7 +1607,8 @@ def plot_sigma_vs_hostmass_over_snaps(
     *,
     fit_mode="maxwell-boltzmann",  # or "truncated-gaussian"
     min_count_for_plot=0,        
-    cmap_name='plasma'            
+    cmap_name='plasma',
+    radius_definition='200c',
 ):
     
     """
@@ -1510,6 +1629,8 @@ def plot_sigma_vs_hostmass_over_snaps(
         Colormap name for redshift encoding
     """
 
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
+
     # Helper: get redshift from processed file header
     def _read_redshift(sim_set, snap):
         try:
@@ -1526,12 +1647,12 @@ def plot_sigma_vs_hostmass_over_snaps(
 
     #  File & label config 
     if fit_mode == "maxwell-boltzmann":
-        filename_txt = 'best_fit_Mach_maxwellboltzmann_fixedhostmass.txt'
-        output_png = 'bestfit_sigma_MB_vs_hostmass_over_snaps.png'
+        filename_txt = f'best_fit_Mach_maxwellboltzmann_fixedhostmass_{halo_meta["tag"]}.txt'
+        output_png = f'bestfit_sigma_MB_vs_hostmass_over_snaps_{halo_meta["tag"]}.png'
         ylabels = [r'Best-fit $\sigma$ (Maxwell)']
     elif fit_mode == "truncated-gaussian":
-        filename_txt = 'best_fit_Mach_truncatedgaussian_fixedhostmass.txt'
-        output_png = 'bestfit_mu_sigma_TG_vs_hostmass_over_snaps.png'
+        filename_txt = f'best_fit_Mach_truncatedgaussian_fixedhostmass_{halo_meta["tag"]}.txt'
+        output_png = f'bestfit_mu_sigma_TG_vs_hostmass_over_snaps_{halo_meta["tag"]}.png'
         ylabels = [r'Best-fit $\mu$ (Truncated Gaussian)',
                    r'Best-fit $\sigma$ (Truncated Gaussian)']
     else:
@@ -1636,7 +1757,7 @@ def plot_sigma_vs_hostmass_over_snaps(
 
     # ------------------ Axis labels ------------------
     for i, ax in enumerate(axes):
-        ax.set_xlabel(r'$\log_{10}(M_{200}\,[M_\odot/h])$', fontsize=13)
+        ax.set_xlabel(rf'$\log_{{10}}({halo_meta["mass_label"]}\,[M_\odot/h])$', fontsize=13)
         ax.set_ylabel(ylabels[i], fontsize=13)
         ax.tick_params(axis='both', direction='in')
 
@@ -1669,10 +1790,12 @@ def plot_sigma_vs_hostmass_over_snaps(
 
 if __name__ == '__main__':
     simulation_set = 'TNG50-1'
+    # radius_definitions = ['200c', '200m']
+    radius_definitions = ['200m']
 
     # snapNum_list = [0, 1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 40, 50, 59, 67, 72, 78, 84, 91, 99]
-    snapNum_list = [99, 50, 13, 6, 2, 1]
-    
+    # snapNum_list = [99, 50, 13, 6, 2, 1]
+    snapNum_list = [99, 50, 13]
     # for snapNum in snapNum_list:
     #     print(f"Processing snapshot {snapNum} ...")
     #     base_dir = '/home/zwu/21cm_project/unified_model/TNG_results/'
@@ -1681,65 +1804,80 @@ if __name__ == '__main__':
     #     data = load_processed_data(processed_file)
     #     # Create plots
     #     output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
-    #     # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass', 
+    #     # fig_options_2Dhistogram = ['Mtot_msub', 'M200_msub', 'R200_rsubhalfmass',
     #     # 'R200_subhaloVmaxRad', 'tff_tcross', 'M200_Mach', 'M200_Anumber', 'Mach_fit']
     #     # fig_options_2Dhistogram = ['Mach_fixedhostmass']
     #     fig_options_2Dhistogram = ['dpos_R200']
-    #     plot_2D_histogram(data, snapNum, output_dir, fig_options_2Dhistogram)
-    #     # plot_host_averaged_radial_subhalo_profile(data, snapNum, output_dir)
-    #     # plot_host_halo_properties(data, snapNum, output_dir)
+    #     for radius_definition in radius_definitions:
+    #         plot_2D_histogram(
+    #             data, snapNum, output_dir, fig_options_2Dhistogram,
+    #             radius_definition=radius_definition
+    #         )
+    #         # plot_host_averaged_radial_subhalo_profile(
+    #         #     data, snapNum, output_dir, radius_definition=radius_definition
+    #         # )
+    #         # plot_host_halo_properties(
+    #         #     data, snapNum, output_dir, radius_definition=radius_definition
+    #         # )
     #     # plot_conditional_logA(data, snapNum, output_dir, xmode="both", weight_by_host=False)
 
     # snapNum_list = [1, 2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 50, 99]
     # # Compare Mach numbers across snapshots
-    # compare_mach_numbers(simulation_set, snapNum_list)
+    # for radius_definition in radius_definitions:
+    #     compare_mach_numbers(simulation_set, snapNum_list, radius_definition=radius_definition)
 
-    # plot_sigma_vs_hostmass_over_snaps(
-    # snapNum_list=snapNum_list,
-    # base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
-    # simulation_set=simulation_set,
-    # fit_mode="truncated-gaussian", # "maxwell-boltzmann" | "truncated-gaussian"
-    # min_count_for_plot=0,         
-    # )
+    # for radius_definition in radius_definitions:
+    #     plot_sigma_vs_hostmass_over_snaps(
+    #         snapNum_list=snapNum_list,
+    #         base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+    #         simulation_set=simulation_set,
+    #         fit_mode="truncated-gaussian", # "maxwell-boltzmann" | "truncated-gaussian"
+    #         min_count_for_plot=0,
+    #         radius_definition=radius_definition,
+    #     )
     for snapNum in snapNum_list:
-        print(f"Plotting conditional Mach-radius distribution for snapshot {snapNum} ...")
-        plot_conditional_mach_radius_by_hostmass(
-            snapNum=snapNum,
-            simulation_set='TNG50-1',
-            base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
-            output_dir=None,
-            num_mass_bins=5,
-            num_x_bins=30,
-            num_mach_bins=40,
-            x_range=(1.0e-2, 3.0),
-            min_subhalos_per_panel=10,
-            weight_by_host=False,
-        )
+        for radius_definition in radius_definitions:
+            print(f"Plotting conditional Mach-radius distribution for snapshot {snapNum} ({radius_definition}) ...")
+            plot_conditional_mach_radius_by_hostmass(
+                snapNum=snapNum,
+                simulation_set='TNG50-1',
+                base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+                output_dir=None,
+                num_mass_bins=5,
+                num_x_bins=30,
+                num_mach_bins=40,
+                x_range=(1.0e-2, 3.0),
+                min_subhalos_per_panel=10,
+                weight_by_host=False,
+                radius_definition=radius_definition,
+            )
 
-        print(f"Plotting conditional j_norm-radius distribution for snapshot {snapNum} ...")
-        plot_conditional_jnorm_radius_by_hostmass(
-            snapNum=snapNum,
-            simulation_set='TNG50-1',
-            base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
-            output_dir=None,
-            num_mass_bins=5,
-            num_x_bins=30,
-            num_j_bins=40,
-            x_range=(1.0e-2, 3.0),
-            min_subhalos_per_panel=10,
-            weight_by_host=False,
-        )
+            print(f"Plotting conditional j_norm-radius distribution for snapshot {snapNum} ({radius_definition}) ...")
+            plot_conditional_jnorm_radius_by_hostmass(
+                snapNum=snapNum,
+                simulation_set='TNG50-1',
+                base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+                output_dir=None,
+                num_mass_bins=5,
+                num_x_bins=30,
+                num_j_bins=40,
+                x_range=(1.0e-2, 3.0),
+                min_subhalos_per_panel=10,
+                weight_by_host=False,
+                radius_definition=radius_definition,
+            )
 
-        print(f"Plotting conditional vr-radius distribution for snapshot {snapNum} ...")
-        plot_conditional_vr_radius_by_hostmass(
-            snapNum=snapNum,
-            simulation_set='TNG50-1',
-            base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
-            output_dir=None,
-            num_mass_bins=5,
-            num_x_bins=30,
-            num_vr_bins=48,
-            x_range=(1.0e-2, 3.0),
-            min_subhalos_per_panel=10,
-            weight_by_host=False,
-        )
+            print(f"Plotting conditional vr-radius distribution for snapshot {snapNum} ({radius_definition}) ...")
+            plot_conditional_vr_radius_by_hostmass(
+                snapNum=snapNum,
+                simulation_set='TNG50-1',
+                base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
+                output_dir=None,
+                num_mass_bins=5,
+                num_x_bins=30,
+                num_vr_bins=48,
+                x_range=(1.0e-2, 3.0),
+                min_subhalos_per_panel=10,
+                weight_by_host=False,
+                radius_definition=radius_definition,
+            )

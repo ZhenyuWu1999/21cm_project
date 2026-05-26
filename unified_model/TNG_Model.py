@@ -214,7 +214,10 @@ def TNG_model():
     M_all = halos['GroupMass'][index_selected] * 1e10  # Msun/h
     M_crit200_all = halos['Group_M_Crit200'][index_selected] * 1e10  # Msun/h
     R_crit200_all = halos['Group_R_Crit200'][index_selected] / 1e3 * scale_factor / h_Hubble  # Mpc
+    M_mean200_all = halos['Group_M_Mean200'][index_selected] * 1e10  # Msun/h
+    R_mean200_all = halos['Group_R_Mean200'][index_selected] / 1e3 * scale_factor / h_Hubble  # Mpc
     R_crit200_m_all = R_crit200_all * Mpc  # meters
+    R_mean200_m_all = R_mean200_all * Mpc  # meters
     group_vel_all = halos['GroupVel'][index_selected] * 1e3 / scale_factor  # m/s, shape (N_selected, 3)
     M_gas_all = halos['GroupMassType'][index_selected][:, 0] * 1e10  # Msun/h
     M_dm_all = halos['GroupMassType'][index_selected][:, 1] * 1e10  # Msun/h
@@ -226,9 +229,12 @@ def TNG_model():
     
     #derived quantities of host halos
     vel_host_all = np.sqrt(np.sum(group_vel_all**2, axis=1))  # m/s
-    rho_halo_all = (M_crit200_all * Msun/h_Hubble) / (4/3 * np.pi * R_crit200_m_all**3)  # kg/m^3
-    Tvir_host_all = np.array([Temperature_Virial_numerical(m/h_Hubble, r) 
-                             for m, r in zip(M_crit200_all, R_crit200_all)])  # K
+    rho_halo_crit200_all = (M_crit200_all * Msun/h_Hubble) / (4/3 * np.pi * R_crit200_m_all**3)  # kg/m^3
+    rho_halo_mean200_all = (M_mean200_all * Msun/h_Hubble) / (4/3 * np.pi * R_mean200_m_all**3)  # kg/m^3
+    Tvir_host_crit200_all = np.array([Temperature_Virial_numerical(m/h_Hubble, r)
+                                      for m, r in zip(M_crit200_all, R_crit200_all)])  # K
+    Tvir_host_mean200_all = np.array([Temperature_Virial_numerical(m/h_Hubble, r)
+                                      for m, r in zip(M_mean200_all, R_mean200_all)])  # K
     '''
     #check analytical version
     Tvir_host_all_analytic_old = np.array([Temperature_Virial_analytic_oldversion(m/h_Hubble, current_redshift)
@@ -242,8 +248,10 @@ def TNG_model():
     exit()
     '''
     
-    Cs_host_all = np.sqrt(5.0/3.0 * kB * Tvir_host_all / (mu*mp))  # m/s
-    t_ff_all = freefall_factor / np.sqrt(G_grav * rho_halo_all)  # s
+    Cs_host_crit200_all = np.sqrt(5.0/3.0 * kB * Tvir_host_crit200_all / (mu*mp))  # m/s
+    Cs_host_mean200_all = np.sqrt(5.0/3.0 * kB * Tvir_host_mean200_all / (mu*mp))  # m/s
+    t_ff_crit200_all = freefall_factor / np.sqrt(G_grav * rho_halo_crit200_all)  # s
+    t_ff_mean200_all = freefall_factor / np.sqrt(G_grav * rho_halo_mean200_all)  # s
     #add to AllTNGData
     AllTNGData.add_halo_quantity('original_index', index_selected, 'dimensionless','Original index in TNG data',dtype=np.int32)
     AllTNGData.add_halo_quantity('GroupMass', M_all, 'Msun/h', 'Total mass of the halo')
@@ -254,12 +262,21 @@ def TNG_model():
     AllTNGData.add_halo_quantity('GroupBHMass', M_bh_all, 'Msun/h', 'Black hole mass of the halo')
     AllTNGData.add_halo_quantity('Group_M_Crit200', M_crit200_all, 'Msun/h', 'M200')
     AllTNGData.add_halo_quantity('Group_R_Crit200', R_crit200_all, 'Mpc', 'R200')
+    AllTNGData.add_halo_quantity('Group_M_Mean200', M_mean200_all, 'Msun/h', 'M200m')
+    AllTNGData.add_halo_quantity('Group_R_Mean200', R_mean200_all, 'Mpc', 'R200m')
     AllTNGData.add_halo_quantity('GroupVel', group_vel_all, 'm/s', 'Velocity of host halo')
     AllTNGData.add_halo_quantity('GroupVelMag', vel_host_all, 'm/s', 'Magnitude of velocity of host halo')
     AllTNGData.add_halo_quantity('GroupGasMetallicity', gas_metallicity_host_all, 'dimensionless', 'Gas metallicity of host halo')
-    AllTNGData.add_halo_quantity('GroupTvir', Tvir_host_all, 'K', 'Virial temperature of host halo')
-    AllTNGData.add_halo_quantity('GroupCs', Cs_host_all, 'm/s', 'Sound speed of host halo')
-    AllTNGData.add_halo_quantity('Group_t_ff', t_ff_all, 's', 'Free-fall time of host halo')
+    # Backward-compatible aliases: keep the historical unsuffixed fields mapped to Crit200.
+    AllTNGData.add_halo_quantity('GroupTvir', Tvir_host_crit200_all, 'K', 'Virial temperature of host halo (Crit200)')
+    AllTNGData.add_halo_quantity('GroupCs', Cs_host_crit200_all, 'm/s', 'Sound speed of host halo (Crit200)')
+    AllTNGData.add_halo_quantity('Group_t_ff', t_ff_crit200_all, 's', 'Free-fall time of host halo (Crit200)')
+    AllTNGData.add_halo_quantity('GroupTvir_Crit200', Tvir_host_crit200_all, 'K', 'Virial temperature of host halo (Crit200)')
+    AllTNGData.add_halo_quantity('GroupCs_Crit200', Cs_host_crit200_all, 'm/s', 'Sound speed of host halo (Crit200)')
+    AllTNGData.add_halo_quantity('Group_t_ff_Crit200', t_ff_crit200_all, 's', 'Free-fall time of host halo (Crit200)')
+    AllTNGData.add_halo_quantity('GroupTvir_Mean200', Tvir_host_mean200_all, 'K', 'Virial temperature of host halo (Mean200)')
+    AllTNGData.add_halo_quantity('GroupCs_Mean200', Cs_host_mean200_all, 'm/s', 'Sound speed of host halo (Mean200)')
+    AllTNGData.add_halo_quantity('Group_t_ff_Mean200', t_ff_mean200_all, 's', 'Free-fall time of host halo (Mean200)')
     
     # print("AllTNGData.halo_data['GroupMass']: ", AllTNGData.halo_data['GroupMass'])
     #print(AllTNGData.halo_data['GroupMass'].value)
@@ -300,8 +317,8 @@ def TNG_model():
 
     #also get the corresponding host halo properties
     host_vel_for_subs = group_vel_all[host_indices_for_subs]  # m/s
-    host_cs_for_subs = Cs_host_all[host_indices_for_subs]  # m/s
-    host_tff_for_subs = t_ff_all[host_indices_for_subs]  # s
+    host_cs_for_subs = Cs_host_crit200_all[host_indices_for_subs]  # m/s
+    host_tff_for_subs = t_ff_crit200_all[host_indices_for_subs]  # s
 
     
     #derived quantities of subhalos
@@ -738,8 +755,8 @@ def analyze_processed_data():
     '''
 
 if __name__ == '__main__':
-    # TNG_model()
+    TNG_model()
     # find_abnormal_mach()
     # analyze_processed_data()
     # plot_Mratio_dN_dlogMratio()  
-    check_tng_m200_density_definitions()
+    # check_tng_m200_density_definitions()

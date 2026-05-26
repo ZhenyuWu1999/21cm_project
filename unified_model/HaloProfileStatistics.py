@@ -9,6 +9,57 @@ from TNGDataHandler import load_processed_data
 from physical_constants import h_Hubble
 
 
+def normalize_tng_halo_definition(radius_definition):
+    """Return a canonical TNG halo-definition tag: '200c' or '200m'."""
+    value = str(radius_definition).strip().lower()
+    aliases = {
+        '200c': '200c',
+        'crit200': '200c',
+        'm200c': '200c',
+        'r200c': '200c',
+        '200m': '200m',
+        'mean200': '200m',
+        'm200m': '200m',
+        'r200m': '200m',
+    }
+    if value not in aliases:
+        raise ValueError(f'Unknown radius_definition: {radius_definition}')
+    return aliases[value]
+
+
+def get_tng_halo_definition_keys(radius_definition='200c'):
+    """Return the processed-data mass/radius keys for one TNG halo definition."""
+    normalized = normalize_tng_halo_definition(radius_definition)
+    if normalized == '200c':
+        return 'Group_M_Crit200', 'Group_R_Crit200'
+    return 'Group_M_Mean200', 'Group_R_Mean200'
+
+
+def get_tng_halo_definition_metadata(radius_definition='200c'):
+    """Return reusable metadata for a TNG halo definition."""
+    normalized = normalize_tng_halo_definition(radius_definition)
+    mass_key, radius_key = get_tng_halo_definition_keys(normalized)
+    if normalized == '200c':
+        return {
+            'definition': normalized,
+            'mass_key': mass_key,
+            'radius_key': radius_key,
+            'mass_label': 'M200c',
+            'radius_label': 'R200c',
+            'v_label': 'V200c',
+            'tag': '200c',
+        }
+    return {
+        'definition': normalized,
+        'mass_key': mass_key,
+        'radius_key': radius_key,
+        'mass_label': 'M200m',
+        'radius_label': 'R200m',
+        'v_label': 'V200m',
+        'tag': '200m',
+    }
+
+
 def minimum_image_displacement(pos, center, box_size):
     """Return displacement vectors in ckpc/h with periodic minimum-image wrapping."""
     delta = pos - center
@@ -17,16 +68,18 @@ def minimum_image_displacement(pos, center, box_size):
     return delta
 
 
-def get_subhalo_host_distance(data):
+def get_subhalo_host_distance(data, radius_definition='200c'):
     """
     Return host-centric subhalo distance vectors and normalized radii.
 
-    SubhaloPos and GroupPos are comoving ckpc/h. Group_R_Crit200 is physical Mpc.
+    SubhaloPos and GroupPos are comoving ckpc/h. The selected host radius is
+    stored as a physical Mpc quantity in processed TNG data.
     """
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
     host_indices = data.subhalo_data['host_index'].value
     subhalo_pos = data.subhalo_data['SubPos'].value
     host_pos = data.halo_data['GroupPos'].value[host_indices]
-    host_R200 = data.halo_data['Group_R_Crit200'].value[host_indices]
+    host_R200 = data.halo_data[halo_meta['radius_key']].value[host_indices]
 
     box_size = data.header.get('BoxSize', None)
     scale_factor = data.header.get('Time', 1.0)
@@ -37,9 +90,9 @@ def get_subhalo_host_distance(data):
     return dpos_vec_ckpch, dpos_phys_mpc, dpos_over_R200
 
 
-def get_subhalo_host_distance_over_R200(data):
+def get_subhalo_host_distance_over_R200(data, radius_definition='200c'):
     """Return d_sub-host/R200 for processed TNG subhalos."""
-    return get_subhalo_host_distance(data)[2]
+    return get_subhalo_host_distance(data, radius_definition=radius_definition)[2]
 
 
 def _format_profile_value_tag(value):
@@ -102,6 +155,7 @@ def _build_tng_radial_profile_context(
     data,
     host_mass_key='GroupMass',
     psi_mass_key='GroupMass',
+    radius_definition='200c',
     num_M_bins=5,
     x_min=1.0e-2,
     x_max=3.0,
@@ -109,12 +163,16 @@ def _build_tng_radial_profile_context(
     log_x_bins=True,
 ):
     """Precompute reusable arrays for TNG radial-profile exports."""
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
     host_indices_for_subs = data.subhalo_data['host_index'].value.astype(int)
     host_masses_all = data.halo_data[host_mass_key].value
     psi_host_masses_all = data.halo_data[psi_mass_key].value
     sub_masses = data.subhalo_data['SubMass'].value
     psi_host_masses_for_subs = psi_host_masses_all[host_indices_for_subs]
-    dpos_over_R200 = get_subhalo_host_distance_over_R200(data)
+    dpos_over_R200 = get_subhalo_host_distance_over_R200(
+        data,
+        radius_definition=radius_definition,
+    )
 
     valid_subs_base = (
         np.isfinite(dpos_over_R200)
@@ -178,6 +236,8 @@ def _build_tng_radial_profile_context(
         'num_M_bins': num_M_bins,
         'host_mass_key': host_mass_key,
         'psi_mass_key': psi_mass_key,
+        'radius_definition': halo_meta['definition'],
+        'radius_key': halo_meta['radius_key'],
         'host_bin_masks': host_bin_masks,
         'host_ids_by_bin': host_ids_by_bin,
         'host_local_index_by_bin': host_local_index_by_bin,
@@ -263,6 +323,7 @@ def export_tng_radial_profiles_txt(
     psi_thresholds=PSI_THRESHOLDS_FOR_EXPORT,
     host_mass_key='GroupMass',
     psi_mass_key='GroupMass',
+    radius_definition='200c',
     num_M_bins=5,
     x_min=1.0e-2,
     x_max=3.0,
@@ -287,10 +348,12 @@ def export_tng_radial_profiles_txt(
     os.makedirs(output_dir, exist_ok=True)
 
     data = load_processed_data(processed_file)
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
     context = _build_tng_radial_profile_context(
         data,
         host_mass_key=host_mass_key,
         psi_mass_key=psi_mass_key,
+        radius_definition=radius_definition,
         num_M_bins=num_M_bins,
         x_min=x_min,
         x_max=x_max,
@@ -301,7 +364,7 @@ def export_tng_radial_profiles_txt(
     statistic_meta = _get_statistic_metadata(statistic)
 
     if output_filename is None:
-        output_filename = f'tng_radial_profiles_allpsi_snap_{snapNum}.txt'
+        output_filename = f'tng_radial_profiles_allpsi_{halo_meta["tag"]}_snap_{snapNum}.txt'
     output_path = os.path.join(output_dir, output_filename)
 
     print(f'Calculating individual radial profile and Exporting TNG radial profiles to txt for snap {snapNum} ...')
@@ -314,6 +377,8 @@ def export_tng_radial_profiles_txt(
         f.write(f'# statistic {statistic}\n')
         f.write(f'# host_mass_key {host_mass_key}\n')
         f.write(f'# psi_mass_key {psi_mass_key}\n')
+        f.write(f'# radius_definition {halo_meta["definition"]}\n')
+        f.write(f'# radius_key {halo_meta["radius_key"]}\n')
         f.write(f'# num_host_mass_bins {num_M_bins}\n')
         f.write(f'# dark_matter_resolution_Msunh {dark_matter_resolution:.8e}\n')
         f.write('\n')
@@ -642,6 +707,7 @@ def plot_host_averaged_radial_subhalo_profile(
     output_dir,
     host_mass_key='GroupMass',
     psi_mass_key='GroupMass',
+    radius_definition='200c',
     num_M_bins=5,
     x_min=1.0e-2,
     x_max=3.0,
@@ -683,13 +749,17 @@ def plot_host_averaged_radial_subhalo_profile(
             + ', '.join(missing_args)
         )
     statistic_meta = _get_statistic_metadata(statistic)
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
 
     host_indices_for_subs = data.subhalo_data['host_index'].value.astype(int)
     host_masses_all = data.halo_data[host_mass_key].value
     psi_host_masses_all = data.halo_data[psi_mass_key].value
     sub_masses = data.subhalo_data['SubMass'].value
     psi_host_masses_for_subs = psi_host_masses_all[host_indices_for_subs]
-    dpos_over_R200 = get_subhalo_host_distance_over_R200(data)
+    dpos_over_R200 = get_subhalo_host_distance_over_R200(
+        data,
+        radius_definition=radius_definition,
+    )
 
     valid_subs = (
         np.isfinite(dpos_over_R200)
@@ -794,7 +864,10 @@ def plot_host_averaged_radial_subhalo_profile(
 
         plot_mean = np.where(mean_profile > 0, mean_profile, artificial_small)
         plot_median = np.where(median_profile > 0, median_profile, artificial_small)
-        base_label = rf'${host_mass_bins[i]:.1f}<\log_{{10}}(M_{{200}}/M_\odot h^{{-1}})<{host_mass_bins[i+1]:.1f}$'
+        base_label = (
+            rf'${host_mass_bins[i]:.1f}<\log_{{10}}({halo_meta["mass_label"]}/M_\odot h^{{-1}})'
+            rf'<{host_mass_bins[i+1]:.1f}$'
+        )
         label = _append_count_label(
             base_label,
             n_hosts_total=n_hosts,
@@ -850,7 +923,7 @@ def plot_host_averaged_radial_subhalo_profile(
             )
     ax.set_xscale('log')
     ax.set_yscale('log')
-    ax.set_xlabel(r'$x=d_{\mathrm{sub-host}}/R_{200}$', fontsize=14)
+    ax.set_xlabel(rf'$x=d_{{\mathrm{{sub-host}}}}/{halo_meta["radius_label"]}$', fontsize=14)
     ax.set_ylabel(statistic_meta['ylabel'], fontsize=14)
     ax.axvline(1.0, color='black', linestyle=':', linewidth=1.5)
     redshift = data.header.get('Redshift', np.nan)
@@ -870,7 +943,7 @@ def plot_host_averaged_radial_subhalo_profile(
     tag_suffix = '' if tag == '' else f'_{tag}'
     filename = os.path.join(
         output_dir,
-        f'{save_prefix}_{statistic}{tag_suffix}_snap_{snapNum}.png'
+        f'{save_prefix}_{halo_meta["tag"]}_{statistic}{tag_suffix}_snap_{snapNum}.png'
     )
     plt.savefig(filename, dpi=300, bbox_inches='tight')
     plt.close()
@@ -883,6 +956,7 @@ def run_subhalo_number_profile(
     base_dir='/home/zwu/21cm_project/unified_model/TNG_results/',
     psi_range=(0.001, 1.0),
     profile_tag='psi0p001_1',
+    radius_definition=('200c', '200m'),
     profile_kwargs=None,
 ):
     """
@@ -894,7 +968,7 @@ def run_subhalo_number_profile(
     resolution cut for the selected psi range.
     """
     if snapNum_list is None:
-        snapNum_list = [50]
+        snapNum_list = [99, 50, 13]
     driver_defaults = {
         'psi_range': psi_range,
         'profile_tag': profile_tag,
@@ -908,6 +982,11 @@ def run_subhalo_number_profile(
     if profile_kwargs is not None:
         driver_defaults.update(profile_kwargs)
 
+    if isinstance(radius_definition, str):
+        radius_definitions = [radius_definition]
+    else:
+        radius_definitions = list(radius_definition)
+
     for snapNum in snapNum_list:
         print(f"Processing snapshot {snapNum} ...")
         processed_file = os.path.join(
@@ -918,12 +997,14 @@ def run_subhalo_number_profile(
         )
         output_dir = os.path.join(base_dir, simulation_set, f'snap_{snapNum}', 'analysis')
         data = load_processed_data(processed_file)
-        plot_host_averaged_radial_subhalo_profile(
-            data,
-            snapNum,
-            output_dir,
-            **driver_defaults
-        )
+        for radius_definition_value in radius_definitions:
+            plot_host_averaged_radial_subhalo_profile(
+                data,
+                snapNum,
+                output_dir,
+                radius_definition=radius_definition_value,
+                **driver_defaults
+            )
 
 
 if __name__ == '__main__':

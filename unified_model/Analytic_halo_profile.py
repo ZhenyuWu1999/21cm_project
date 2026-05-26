@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import warnings
+from scipy.special import hyp2f1
 from colossus.cosmology import cosmology
 cosmology.setCosmology('planck15')
 from colossus.halo import concentration
@@ -13,6 +14,7 @@ warnings.filterwarnings('error', category=RuntimeWarning)
 
 from physical_constants import *
 from linear_evolution import D_z
+from HaloProperties import Temperature_Virial_analytic
 
 def generalized_NFW_profile(x, rho_s, alpha):
     '''
@@ -55,6 +57,193 @@ def get_profile_corr_for_cooling(profile_type, concentration):
         raise ValueError(f"Unknown profile_type: {profile_type}")
 
     return (factor1 * factor2)
+
+
+def get_A_alpha_c(concentration, alpha):
+    """
+    Return A_alpha(c) = integral_0^c x^(2-alpha) / (1+x)^(3-alpha) dx.
+
+    This is the mass-normalization factor for the generalized NFW profile
+    rho/rho_vir = c^3 / (3 A_alpha(c)) / [x^alpha (1+x)^(3-alpha)].
+    """
+    if np.isclose(alpha, 1.0):
+        return f_NFW(concentration)
+    if np.isclose(alpha, 0.0):
+        return f_core(concentration)
+    if not (-0.5 < alpha < 1.0):
+        raise ValueError("alpha must satisfy -0.5 < alpha <= 1.")
+
+    z = concentration / (1.0 + concentration)
+    b = 3.0 - alpha
+    return (z**b / b) * hyp2f1(1.0, b, b + 1.0, z)
+
+
+def get_A_alpha_x(x, alpha):
+    """
+    Return A_alpha(x) = integral_0^x t^(2-alpha) / (1+t)^(3-alpha) dt.
+    """
+    x_array = np.asarray(x, dtype=float)
+    if np.any(x_array < 0):
+        raise ValueError("x must be non-negative.")
+
+    if np.isclose(alpha, 1.0):
+        result = f_NFW(x_array)
+    elif np.isclose(alpha, 0.0):
+        result = f_core(x_array)
+    else:
+        if not (-0.5 < alpha < 1.0):
+            raise ValueError("alpha must satisfy -0.5 < alpha <= 1.")
+        z = x_array / (1.0 + x_array)
+        b = 3.0 - alpha
+        result = (z**b / b) * hyp2f1(1.0, b, b + 1.0, z)
+
+    return result.item() if np.ndim(x) == 0 else result
+
+
+def get_profile_corr_for_cooling_within_radius(radii_Rvir, concentration, alpha):
+    """
+    Return the cumulative cooling correction I_profile(<r) for a generalized
+    NFW gas-density profile with inner slope alpha.
+
+    Parameters
+    ----------
+    radii_Rvir : float or array-like
+        Radii expressed in units of Rvir.
+    concentration : float
+        Halo concentration c = Rvir / r_s.
+    alpha : float
+        Inner slope of the generalized NFW profile.
+
+    Returns
+    -------
+    float or np.ndarray
+        Cumulative cooling correction relative to the uniform-density virial
+        baseline. By construction, I_profile(<Rvir) equals the global
+        profile correction.
+    """
+    scalar_input = np.isscalar(radii_Rvir)
+    radii_Rvir = np.atleast_1d(np.asarray(radii_Rvir, dtype=float))
+    if np.any(radii_Rvir < 0):
+        raise ValueError("radii_Rvir must be non-negative.")
+
+    A_alpha = get_A_alpha_c(concentration, alpha)
+    radii_clipped = np.clip(radii_Rvir, 0.0, 1.0)
+    x = radii_clipped * concentration
+    X = x / (1.0 + x)
+
+    prefactor = concentration**3 / (3.0 * A_alpha**2)
+    profile_corr = prefactor * (
+        X**(3.0 - 2.0 * alpha) / (3.0 - 2.0 * alpha)
+        - 2.0 * X**(4.0 - 2.0 * alpha) / (4.0 - 2.0 * alpha)
+        + X**(5.0 - 2.0 * alpha) / (5.0 - 2.0 * alpha)
+    )
+
+    if scalar_input:
+        return float(profile_corr[0])
+    return profile_corr
+
+
+def get_cumulative_cooling_fraction(radii_Rvir, concentration, alpha):
+    """
+    Return C(<r) / C(<Rvir) for a generalized NFW gas-density profile.
+    """
+    cumulative_corr = get_profile_corr_for_cooling_within_radius(
+        radii_Rvir, concentration, alpha
+    )
+    total_corr = get_profile_corr_for_cooling_within_radius(
+        1.0, concentration, alpha
+    )
+    return cumulative_corr / total_corr
+
+
+def get_cumulative_heating_fraction_modelA(radii_Rvir, concentration, alpha):
+    """
+    Return H_A(<r) / H_A(<Rvir) for heating Model A, where h_A(r) ∝ rho_g(r).
+    """
+    scalar_input = np.isscalar(radii_Rvir)
+    radii_Rvir = np.atleast_1d(np.asarray(radii_Rvir, dtype=float))
+    if np.any(radii_Rvir < 0):
+        raise ValueError("radii_Rvir must be non-negative.")
+
+    radii_clipped = np.clip(radii_Rvir, 0.0, 1.0)
+    x = radii_clipped * concentration
+    heating_fraction = get_A_alpha_x(x, alpha) / get_A_alpha_c(concentration, alpha)
+
+    if scalar_input:
+        return float(heating_fraction[0])
+    return heating_fraction
+
+
+def get_toy_Ksub_top_hat(x, amplitude, x_min=0.1, x_max=1.0):
+    """
+    Return a toy top-hat K_sub(x) = d/dx sum psi^2.
+    """
+    x_array = np.asarray(x, dtype=float)
+    kernel = np.zeros_like(x_array, dtype=float)
+    mask = (x_array >= x_min) & (x_array <= x_max)
+    kernel[mask] = amplitude
+    return kernel.item() if np.ndim(x) == 0 else kernel
+
+
+def get_cumulative_heating_ratio_modelB_toy(
+    radii_Rvir,
+    Mvir,
+    redshift,
+    concentration,
+    alpha,
+    H_global,
+    mean_molecular_weight=mu,
+    f_gas=Omega_b / Omega_m,
+    ksub_model='top_hat',
+    **kernel_kwargs,
+):
+    """
+    Return H_B(<r) / H_global for a toy Model B subhalo kernel.
+
+    The numerator follows the shell-integrated Model B expression,
+        H_B(<r) \propto \int_0^x rho_g(x') K_sub(x') dx',
+    while the denominator H_global is a fixed reference from the previous
+    global-heating model. Therefore the toy-kernel amplitude is retained in the
+    ratio and should not cancel out.
+    """
+    scalar_input = np.isscalar(radii_Rvir)
+    radii_Rvir = np.atleast_1d(np.asarray(radii_Rvir, dtype=float))
+    if np.any(radii_Rvir < 0):
+        raise ValueError("radii_Rvir must be non-negative.")
+    if H_global <= 0:
+        raise ValueError("H_global must be positive.")
+
+    radii_clipped = np.clip(radii_Rvir, 0.0, 1.0)
+    order = np.argsort(radii_clipped)
+    x_eval = radii_clipped[order]
+
+    x_grid = np.logspace(-4, 0, 4000)
+    if ksub_model == 'top_hat':
+        ksub_grid = get_toy_Ksub_top_hat(x_grid, **kernel_kwargs)
+    else:
+        raise ValueError(f"Unknown ksub_model: {ksub_model}")
+
+    rho_vir = 200.0 * rho_m0 * (1.0 + redshift) ** 3 * Msun / Mpc**3
+    rho_shape = gasdensity_arbitrary_profile(x_grid * concentration, Mvir / h_Hubble, redshift, 'diemer19', alpha)
+    rho_g_grid = rho_shape * (f_gas / (Omega_b / Omega_m)) * rho_vir
+
+    Tvir = Temperature_Virial_analytic(Mvir / h_Hubble, redshift, mean_molecular_weight)
+    cs = np.sqrt(5.0 / 3.0 * kB * Tvir / (mean_molecular_weight * mp))
+    prefactor = 4.0 * np.pi * (G_grav * Mvir * Msun / h_Hubble) ** 2 / cs
+
+    cumulative_integral = np.zeros_like(x_eval)
+    integrand = rho_g_grid * ksub_grid
+    for i, xmax in enumerate(x_eval):
+        mask = x_grid <= xmax
+        if np.any(mask):
+            cumulative_integral[i] = np.trapezoid(integrand[mask], x_grid[mask])
+
+    ratio_sorted = prefactor * cumulative_integral / H_global
+    if scalar_input:
+        return float(ratio_sorted[0])
+
+    inverse_order = np.argsort(order)
+    return ratio_sorted[inverse_order]
 
 
 def get_concentration(M_in_Msun, z, model_name):

@@ -331,6 +331,58 @@ def get_EqCooling_for_single_host(Mvir, redshift, param_sets, mean_molecular_wei
     return results
 
 
+def get_cumulative_cooling_and_heating_withinradius_singlehost(
+    Mvir,
+    redshift,
+    param_sets,
+    radii_Rvir,
+    alpha,
+    concentration_model='diemer19',
+    f_gas=Omega_b/Omega_m,
+    mean_molecular_weight=mu,
+    converge_when_setup=True,
+):
+    """
+    Return cumulative cooling within selected radii for one host halo.
+
+    For now this function only computes cooling and returns the radii sorted
+    in ascending order together with the cumulative cooling fraction
+    C(<r)/C(<Rvir) and cumulative cooling rate.
+    """
+    radii_sorted = np.sort(np.atleast_1d(np.asarray(radii_Rvir, dtype=float)))
+    if np.any(radii_sorted < 0):
+        raise ValueError("radii_Rvir must be non-negative.")
+
+    concentration_value = get_concentration(Mvir / h_Hubble, redshift, concentration_model)
+    total_cooling_baseline = np.asarray(
+        get_EqCooling_for_single_host(
+            Mvir,
+            redshift,
+            param_sets,
+            mean_molecular_weight=mean_molecular_weight,
+            converge_when_setup=converge_when_setup,
+        ),
+        dtype=float,
+    )
+
+    cooling_fraction = np.asarray(
+        get_cumulative_cooling_fraction(radii_sorted, concentration_value, alpha),
+        dtype=float,
+    )
+
+    f_gas_array = np.asarray(f_gas, dtype=float)
+    if f_gas_array.ndim == 0:
+        f_gas_array = np.full(len(param_sets), float(f_gas_array))
+    elif f_gas_array.shape != (len(param_sets),):
+        raise ValueError("f_gas must be scalar or have the same length as param_sets.")
+    fg_correction_sq = (f_gas_array / (Omega_b / Omega_m)) ** 2
+
+    cumulative_cooling = np.outer(cooling_fraction, total_cooling_baseline * fg_correction_sq)
+
+    return radii_sorted, cooling_fraction, cumulative_cooling
+
+
+"""
 def get_EqCoolingDensity(r_Rvir, Mvir, redshift, concentration_model, param_sets):
     #r_Rir: ratio of r/Rvir
     #Mvir in Msun/h
@@ -394,7 +446,7 @@ def get_EqCoolingDensity(r_Rvir, Mvir, redshift, concentration_model, param_sets
 
     return all_cooling_Eq_NFW_results, all_cooling_Eq_core_results
                                     
-
+"""
     
 """
 def get_NonEqCooling_for_single_host(Mvir, redshift, heating_singlehost):
@@ -1517,6 +1569,189 @@ def plot_global_heating_cooling_singlehost_minihalo(redshift):
                     
     """
 
+
+def test_cooling_profile():
+    """
+    Lightweight sanity check for cumulative cooling fractions.
+    """
+    test_cases = [
+        {
+            "label": "case 1 (z=0 halo)",
+            "Mvir": 1.0e12,  # Msun/h
+            "redshift": 0.0,
+            "param_sets": [{"gas_metallicity": 0.0, "f_H2": 0.0}],
+        },
+        {
+            "label": "case 2 (high-z minihalo)",
+            "Mvir": 1.0e6,  # Msun/h
+            "redshift": 15.0,
+            "param_sets": [{"gas_metallicity": 0.0, "f_H2": 1.0e-5}],
+        },
+    ]
+    concentration_model = 'diemer19'
+    toy_kernels = [
+        {"model": "top_hat", "amplitude": 1.0e-3, "x_min": 0.1, "x_max": 1.0},
+        {"model": "top_hat", "amplitude": 1.0e-5, "x_min": 0.1, "x_max": 1.0},
+    ]
+    output_dir = '/home/zwu/21cm_project/unified_model/debug'
+    os.makedirs(output_dir, exist_ok=True)
+
+    for case in test_cases:
+        Mvir = case["Mvir"]
+        redshift = case["redshift"]
+        concentration_value = get_concentration(Mvir / h_Hubble, redshift, concentration_model)
+        rs_over_rvir = 1.0 / concentration_value
+        radii_Rvir = [rs_over_rvir, 0.5, 1.0]
+        r_grid = np.logspace(-3, 0, 300)
+        mean_molecular_weight = mu_minihalo if redshift >= 10 else mu
+        H_global_ref = integrate_SHMF_heating_for_single_host(
+            redshift,
+            -3.0,
+            0.0,
+            np.log10(Mvir),
+            'BestFit_z',
+            mean_molecular_weight=mean_molecular_weight,
+        )
+
+        print(f"\nCooling-profile sanity check: {case['label']}")
+        print(f"Mvir={Mvir:.2e} Msun/h, z={redshift:.1f}")
+        print(f"concentration = {concentration_value:.6f}, r_s/Rvir = {rs_over_rvir:.6f}")
+        print(f"radii_Rvir = {radii_Rvir}")
+        print(f"reference H_global = {H_global_ref:.3e} J/s")
+
+        for alpha in [0.0, 1.0]:
+            cooling_fraction = get_cumulative_cooling_fraction(
+                radii_Rvir, concentration_value, alpha
+            )
+            heating_fraction = get_cumulative_heating_fraction_modelA(
+                radii_Rvir, concentration_value, alpha
+            )
+            print(f"alpha = {alpha:.1f}, cooling fraction = {cooling_fraction}")
+            print(f"alpha = {alpha:.1f}, heating fraction Model A = {heating_fraction}")
+            for kernel in toy_kernels:
+                heating_ratio_B = get_cumulative_heating_ratio_modelB_toy(
+                    radii_Rvir,
+                    Mvir,
+                    redshift,
+                    concentration_value,
+                    alpha,
+                    H_global_ref,
+                    mean_molecular_weight=mean_molecular_weight,
+                    ksub_model=kernel['model'],
+                    amplitude=kernel['amplitude'],
+                    x_min=kernel['x_min'],
+                    x_max=kernel['x_max'],
+                )
+                print(
+                    f"alpha = {alpha:.1f}, heating ratio Model B/H_global, "
+                    f"kernel={kernel['model']}(K0={kernel['amplitude']:.0e}, "
+                    f"x=[{kernel['x_min']:.2f},{kernel['x_max']:.2f}]) = {heating_ratio_B}"
+                )
+
+        radii_sorted, cooling_fraction_sorted, cumulative_cooling = (
+            get_cumulative_cooling_and_heating_withinradius_singlehost(
+                Mvir=Mvir,
+                redshift=redshift,
+                param_sets=case["param_sets"],
+                radii_Rvir=radii_Rvir,
+                alpha=0.0,
+                concentration_model=concentration_model,
+                f_gas=Omega_b / Omega_m,
+                mean_molecular_weight=mean_molecular_weight,
+                converge_when_setup=True,
+            )
+        )
+        print("wrapper radii_sorted =", radii_sorted)
+        print("wrapper cooling fraction =", cooling_fraction_sorted)
+        print("wrapper cumulative cooling shape =", cumulative_cooling.shape)
+
+        fig, ax = plt.subplots(figsize=(8, 6), facecolor='white')
+        for alpha in [0.0, 1.0]:
+            cooling_fraction_grid = get_cumulative_cooling_fraction(
+                r_grid, concentration_value, alpha
+            )
+            heating_fraction_grid = get_cumulative_heating_fraction_modelA(
+                r_grid, concentration_value, alpha
+            )
+            ax.plot(
+                r_grid,
+                cooling_fraction_grid,
+                linewidth=2,
+                label=rf'Cooling, $\alpha={alpha:.1f}$',
+            )
+            ax.plot(
+                r_grid,
+                heating_fraction_grid,
+                linewidth=2,
+                linestyle='--',
+                label=rf'Heating Model A, $\alpha={alpha:.1f}$',
+            )
+            for kernel in toy_kernels:
+                heating_ratio_B_grid = get_cumulative_heating_ratio_modelB_toy(
+                    r_grid,
+                    Mvir,
+                    redshift,
+                    concentration_value,
+                    alpha,
+                    H_global_ref,
+                    mean_molecular_weight=mean_molecular_weight,
+                    ksub_model=kernel['model'],
+                    amplitude=kernel['amplitude'],
+                    x_min=kernel['x_min'],
+                    x_max=kernel['x_max'],
+                )
+                plot_kwargs = {
+                    'linewidth': 1.8,
+                    'linestyle': ':',
+                    'label': (
+                        rf'Heating Model B, $\alpha={alpha:.1f}$, '
+                        rf'{kernel["model"]}: $K_0={kernel["amplitude"]:.0e}$, '
+                        rf'$x\in[{kernel["x_min"]:.1f},{kernel["x_max"]:.1f}]$'
+                    ),
+                }
+                if np.isclose(kernel['amplitude'], 1.0e-3):
+                    plot_kwargs.update({
+                        'marker': 'o',
+                        'markersize': 6,
+                        'markerfacecolor': 'none',
+                        'markeredgewidth': 1.2,
+                        'markevery': 18,
+                    })
+                elif np.isclose(kernel['amplitude'], 1.0e-5):
+                    plot_kwargs.update({
+                        'marker': '^',
+                        'markersize': 7.5,
+                        'markerfacecolor': 'none',
+                        'markeredgewidth': 1.2,
+                        'markevery': 18,
+                    })
+                ax.plot(
+                    r_grid,
+                    heating_ratio_B_grid,
+                    **plot_kwargs,
+                )
+
+        ax.axvline(rs_over_rvir, color='black', linestyle='-.', linewidth=1.2, label=r'$r_s/R_{\rm vir}$')
+        ax.axvline(0.5, color='grey', linestyle=':', linewidth=1.2, label=r'$0.5\,R_{\rm vir}$')
+        ax.set_xscale('log')
+        ax.set_xlim(1.0e-3, 1.0)
+        # ax.set_ylim(0.0, 5.0)
+        ax.set_xlabel(r'$r/R_{\rm vir}$', fontsize=14)
+        ax.set_ylabel(r'Cumulative fraction', fontsize=14)
+        ax.set_title(
+            rf'{case["label"]}, $M={Mvir:.1e}\,M_\odot/h$, z={redshift:.1f}, {concentration_model}',
+            fontsize=12,
+        )
+        ax.tick_params(axis='both', direction='in')
+        ax.legend(fontsize=10)
+        plt.tight_layout()
+
+        safe_label = case["label"].replace(" ", "_").replace("(", "").replace(")", "")
+        filename = os.path.join(output_dir, f'cooling_heating_fraction_{safe_label}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        print(f"saved cooling/heating-fraction plot: {filename}")
+
 if __name__ == "__main__":
     
     #1. cosmic DF heating (integrate over HMF)
@@ -1526,7 +1761,8 @@ if __name__ == "__main__":
     # for z, snapNum in zip(z_list, snapNum_list):
     #     plot_cosmic_DFheating(z, snapNum)
     
-    plot_cosmic_DFheating_multi_z(redshifts=[0, 6, 12], snapNums=[99, 13, 2])
+    test_cooling_profile()
+    # plot_cosmic_DFheating_multi_z(redshifts=[0, 6, 12], snapNums=[99, 13, 2])
     # plot_peak_lgM_cosmic_DFheating()
 
     #2. compare heating and cooling for a single host halo

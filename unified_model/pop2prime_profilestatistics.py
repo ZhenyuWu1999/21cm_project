@@ -1,15 +1,16 @@
 import os
+import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import yt
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
 from Analytic_halo_profile import (
     density_NFW_profile,
     gasdensity_arbitrary_profile,
-    gasdensity_core_profile,
-    gasdensity_NFW_profile,
     get_concentration,
 )
 from HaloProperties import Temperature_Virial_analytic
@@ -24,12 +25,17 @@ from read_pop2prime import (
 
 
 POP2PRIME_RESULTS_DIR = Path("/home/zwu/21cm_project/unified_model/Pop2prime_results")
-TARGET_REDSHIFT = 15.0
-HOST_MASS_MIN = 10**4.5  # Msun/h
+TARGET_REDSHIFT = 12.0
+HOST_MASS_MIN = 10**5.5  # Msun/h
 CONCENTRATION_MODEL = "diemer19"
 PSI_MIN = 0.05   #Note: this is not the psi_min for plot_pop2prime_radial_subhalo_weighted_profile()
 PSI_THRESHOLDS_FOR_EXPORT = (1.0e-3, 1.0e-2, 5.0e-2)
 GAS_PROFILE_HOST_MASS_MIN = HOST_MASS_MIN
+PAPER_GAS_FRACTION_LOW = 0.03
+PAPER_GAS_PROFILE_ALPHAS = (-0.5, 1.5)
+PAPER_DENSITY_YMIN = 1.0e-3
+JB17_ETA = 2.0
+JB17_MU = 4.0
 
 
 def build_x_bins(x_min=2.0e-2, x_max=2.0, num_x_bins=20, log_x_bins=True):
@@ -43,9 +49,76 @@ def build_x_bins(x_min=2.0e-2, x_max=2.0, num_x_bins=20, log_x_bins=True):
     return x_edges, x_centers, dx3
 
 
+def interpolate_profile_at_x(x_centers, profile, x_target=1.0):
+    """Estimate a positive profile value at x_target from neighboring bins."""
+    x_centers = np.asarray(x_centers, dtype=float)
+    profile = np.asarray(profile, dtype=float)
+    valid = np.isfinite(x_centers) & np.isfinite(profile) & (profile > 0)
+    if np.count_nonzero(valid) == 0:
+        return np.nan
+
+    x_valid = x_centers[valid]
+    profile_valid = profile[valid]
+    if x_target <= x_valid[0]:
+        return profile_valid[0]
+    if x_target >= x_valid[-1]:
+        return profile_valid[-1]
+    return np.interp(x_target, x_valid, profile_valid)
+
+
+def normalize_profile_at_x(x_centers, profile, x_target=1.0):
+    """Return profile/profile(x_target), preserving invalid normalizations as NaN."""
+    normalization = interpolate_profile_at_x(x_centers, profile, x_target=x_target)
+    if not np.isfinite(normalization) or normalization <= 0:
+        return np.full_like(profile, np.nan, dtype=float), normalization
+    return np.asarray(profile, dtype=float) / normalization, normalization
+
+
+def jb17_radial_bias(x_values, eta=JB17_ETA, mu=JB17_MU):
+    """Return the JB17 radial bias factor with the corrected parameter order."""
+    x_values = np.asarray(x_values, dtype=float)
+    return (2.0 ** mu) * x_values ** eta / (1.0 + x_values) ** mu
+
+
+def nfw_count_dx3_shape(x_values, concentration):
+    """Return the NFW dN/dx^3 shape for x=r/Rvir up to an overall constant."""
+    x_values = np.asarray(x_values, dtype=float)
+    cx = concentration * x_values
+    return 1.0 / (cx * (1.0 + cx) ** 2)
+
+
+def build_jb17_reference_profiles(x_centers, host_mass_msunh, redshift):
+    """Return normalized NFW and JB17-modified NFW reference profiles."""
+    concentration = get_concentration(host_mass_msunh / h_Hubble, redshift, CONCENTRATION_MODEL)
+    nfw_profile = nfw_count_dx3_shape(x_centers, concentration)
+    jb17_profile = nfw_profile * jb17_radial_bias(x_centers)
+    nfw_profile, _ = normalize_profile_at_x(x_centers, nfw_profile, x_target=1.0)
+    jb17_profile, _ = normalize_profile_at_x(x_centers, jb17_profile, x_target=1.0)
+    return nfw_profile, jb17_profile, concentration
+
+
 def format_host_mass_min_tag(host_mass_min):
     """Return a compact filename tag for the host-mass threshold."""
     return f"lgMmin{np.log10(host_mass_min):.1f}"
+
+
+def infer_host_mass_min_for_label(input_path, metadata, host_profiles):
+    """
+    Return the host-mass threshold to display in plot labels.
+
+    Preference order:
+    1. Explicit metadata saved in the table header.
+    2. Filename tag like ``lgMmin5.5``.
+    3. The actual minimum host mass in the loaded sample.
+    """
+    if "host_mass_min_Msunh" in metadata:
+        return float(metadata["host_mass_min_Msunh"])
+
+    match = re.search(r"lgMmin([0-9]+(?:\.[0-9]+)?)", Path(input_path).name)
+    if match is not None:
+        return 10 ** float(match.group(1))
+
+    return min(profile["host_mass"] for profile in host_profiles)
 
 
 def minimum_image_displacement(pos, center, box_size):
@@ -600,6 +673,212 @@ def export_subhalo_count_profiles_txt(
     return output_path
 
 
+def load_exported_subhalo_count_profiles_txt(input_path):
+    """Load an exported Pop2Prime dN/dx^3 radial-profile table."""
+    input_path = Path(input_path)
+    metadata = {}
+    profiles = []
+    current = None
+    rows = []
+
+    def finish_current_profile():
+        if current is None:
+            return
+        data = np.asarray(rows, dtype=float)
+        if data.size == 0:
+            data = np.zeros((0, 7), dtype=float)
+        current.update(
+            {
+                "x_left": data[:, 0],
+                "x_right": data[:, 1],
+                "x_centers": data[:, 2],
+                "mean_profile": data[:, 3],
+                "median_profile": data[:, 4],
+                "p16_profile": data[:, 5],
+                "p84_profile": data[:, 6],
+            }
+        )
+        profiles.append(current)
+
+    with input_path.open() as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("#"):
+                parts = line[1:].strip().split()
+                if not parts:
+                    continue
+                key = parts[0]
+                if key == "psi_min":
+                    finish_current_profile()
+                    current = {"psi_min": float(parts[1])}
+                    rows = []
+                elif current is not None and key in {"n_hosts_total", "n_hosts_with_subhalos", "n_subhalos"}:
+                    current[key] = int(parts[1])
+                elif current is None and len(parts) >= 2:
+                    value = parts[1]
+                    try:
+                        metadata[key] = float(value)
+                    except ValueError:
+                        metadata[key] = " ".join(parts[1:])
+                continue
+            rows.append([float(value) for value in line.split()])
+
+    finish_current_profile()
+    return {"metadata": metadata, "profiles": profiles, "input_path": input_path}
+
+
+def infer_mean_host_mass_for_exported_profiles(input_path, snapshot):
+    """Return mean host mass from the matching per-host profile table if present."""
+    input_path = Path(input_path)
+    candidate_paths = [
+        input_path.parent / f"pop2prime_host_gas_profiles_DD{snapshot:04d}" / f"all_host_profiles_DD{snapshot:04d}.txt",
+        input_path.parent / f"pop2prime_host_gas_profiles_DD{snapshot:04d}" / f"all_host_profiles_withoutT_DD{snapshot:04d}.txt",
+    ]
+    for candidate_path in candidate_paths:
+        if not candidate_path.exists():
+            continue
+        data = np.loadtxt(candidate_path)
+        if data.ndim == 1:
+            data = data[None, :]
+        host_ids = data[:, 1].astype(int)
+        host_masses = data[:, 2]
+        _, first_indices = np.unique(host_ids, return_index=True)
+        return float(np.mean(host_masses[first_indices])), candidate_path
+    return np.nan, None
+
+
+def plot_exported_pop2prime_radial_profiles_with_jb17(
+    input_path,
+    output_dir=None,
+    normalize_at_vir=True,
+    show_percentile=True,
+):
+    """Plot exported Pop2Prime dN/dx^3 profiles against NFW and corrected JB17."""
+    loaded = load_exported_subhalo_count_profiles_txt(input_path)
+    metadata = loaded["metadata"]
+    profiles = loaded["profiles"]
+    if len(profiles) == 0:
+        raise RuntimeError(f"No profile blocks were found in {input_path}")
+
+    input_path = loaded["input_path"]
+    output_dir = Path(output_dir) if output_dir is not None else input_path.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    redshift = float(metadata.get("redshift", TARGET_REDSHIFT))
+    host_mass_min = float(metadata.get("host_mass_min_Msunh", HOST_MASS_MIN))
+    host_mass_max = float(metadata.get("host_mass_max_Msunh", host_mass_min))
+    snapshot = int(metadata.get("snapshot", -1))
+    mean_host_mass, mean_host_mass_source = infer_mean_host_mass_for_exported_profiles(
+        input_path,
+        snapshot,
+    )
+    if np.isfinite(mean_host_mass) and mean_host_mass > 0:
+        reference_host_mass = mean_host_mass
+        reference_mass_label = r"mean host mass"
+        print(f"Using mean host mass for analytic reference: {reference_host_mass:.8e} Msun/h")
+        print(f"Mean host mass source: {mean_host_mass_source}")
+    else:
+        reference_host_mass = np.sqrt(host_mass_min * host_mass_max)
+        reference_mass_label = r"$\sqrt{M_{\rm min}M_{\rm max}}$ fallback"
+        print(f"Using fallback reference host mass: {reference_host_mass:.8e} Msun/h")
+
+    fig, axes = plt.subplots(1, len(profiles), figsize=(17, 5.5), sharey=True, facecolor="white")
+    if len(profiles) == 1:
+        axes = [axes]
+
+    artificial_small = 1.0e-12
+    reference_concentration = np.nan
+    for ax, profile in zip(axes, profiles):
+        x_centers = profile["x_centers"]
+        mean_profile = profile["mean_profile"]
+        if normalize_at_vir:
+            mean_profile, _ = normalize_profile_at_x(x_centers, mean_profile, x_target=1.0)
+        mean_profile = np.where(np.isfinite(mean_profile) & (mean_profile > 0), mean_profile, artificial_small)
+        ax.plot(
+            x_centers,
+            mean_profile,
+            color="black",
+            linewidth=2.8,
+            label=_append_count_label(
+                "Pop2Prime mean",
+                profile.get("n_hosts_total"),
+                profile.get("n_hosts_with_subhalos"),
+                profile.get("n_subhalos"),
+            ),
+        )
+
+        if show_percentile:
+            p16_profile = profile["p16_profile"]
+            median_profile = profile["median_profile"]
+            p84_profile = profile["p84_profile"]
+            if normalize_at_vir:
+                p16_profile, _ = normalize_profile_at_x(x_centers, p16_profile, x_target=1.0)
+                median_profile, _ = normalize_profile_at_x(x_centers, median_profile, x_target=1.0)
+                p84_profile, _ = normalize_profile_at_x(x_centers, p84_profile, x_target=1.0)
+            p16_profile = np.where(np.isfinite(p16_profile) & (p16_profile > 0), p16_profile, artificial_small)
+            median_profile = np.where(np.isfinite(median_profile) & (median_profile > 0), median_profile, artificial_small)
+            p84_profile = np.where(np.isfinite(p84_profile) & (p84_profile > 0), p84_profile, artificial_small)
+            ax.fill_between(x_centers, p16_profile, p84_profile, color="black", alpha=0.18, linewidth=0)
+            ax.plot(x_centers, median_profile, color="black", linestyle="--", linewidth=2.0, label="median")
+
+        nfw_reference, jb17_reference, reference_concentration = build_jb17_reference_profiles(
+            x_centers,
+            reference_host_mass,
+            redshift,
+        )
+        nfw_reference = np.where(np.isfinite(nfw_reference) & (nfw_reference > 0), nfw_reference, artificial_small)
+        jb17_reference = np.where(np.isfinite(jb17_reference) & (jb17_reference > 0), jb17_reference, artificial_small)
+        ax.plot(
+            x_centers,
+            nfw_reference,
+            color="#D85A30",
+            linewidth=2.0,
+            linestyle="-.",
+            label=rf"NFW, $c={reference_concentration:.2f}$",
+        )
+        ax.plot(
+            x_centers,
+            jb17_reference,
+            color="#1D9E75",
+            linewidth=2.0,
+            linestyle="--",
+            label=rf"NFW $\times$ JB17, $(\eta,\mu)=({JB17_ETA:.0f},{JB17_MU:.0f})$",
+        )
+
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_ylim(bottom=1.0e-3)
+        ax.axvline(1.0, color="black", linestyle=":", linewidth=1.2)
+        ax.set_xlabel(r"$x=d_{\mathrm{sub-host}}/R_{\mathrm{vir}}$", fontsize=13)
+        ax.set_title(rf"$\psi > {profile['psi_min']:.0e}$", fontsize=13)
+        ax.tick_params(direction="in", which="both", labelsize=11)
+
+    ylabel = r"$\mathrm{d}N_{\mathrm{sub}}/\mathrm{d}x^3$"
+    if normalize_at_vir:
+        ylabel = "Normalized " + ylabel
+    axes[0].set_ylabel(ylabel, fontsize=14)
+    fig.suptitle(
+        rf"Pop2Prime radial subhalo profiles, z={redshift:.2f}, "
+        rf"analytic ref ({reference_mass_label}): "
+        rf"$M_{{\mathrm{{host}}}}=10^{{{np.log10(reference_host_mass):.1f}}}\,M_\odot/h$, "
+        rf"{CONCENTRATION_MODEL} $c={reference_concentration:.2f}$",
+        fontsize=13,
+    )
+    handles, labels = axes[0].get_legend_handles_labels()
+    if handles:
+        axes[0].legend(fontsize=7, ncol=2)
+
+    plt.tight_layout(rect=(0, 0, 1, 0.94))
+    norm_tag = "_normRvir" if normalize_at_vir else ""
+    output_path = output_dir / f"{input_path.stem}{norm_tag}_JB17eta{JB17_ETA:.0f}mu{JB17_MU:.0f}.png"
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"Saved exported Pop2Prime JB17 comparison plot: {output_path}")
+    return output_path
+
+
 def plot_pop2prime_radial_subhalo_profiles_allpsi(
     snapshot=None,
     target_redshift=TARGET_REDSHIFT,
@@ -609,6 +888,8 @@ def plot_pop2prime_radial_subhalo_profiles_allpsi(
     show_average=True,
     show_individual=False,
     show_percentile=False,
+    show_jb17_reference=True,
+    normalize_at_vir=True,
 ):
     """
     Plot Pop2Prime radial subhalo profiles for all psi thresholds in one figure.
@@ -655,6 +936,7 @@ def plot_pop2prime_radial_subhalo_profiles_allpsi(
         host_color_map = {host_id: color for host_id, color in zip(sorted_host_ids, host_colors)}
 
     host_mass_min_used = min(all_host_masses) if all_host_masses else host_mass_min
+    reference_host_mass = np.median(all_host_masses) if all_host_masses else host_mass_min
     fig, axes = plt.subplots(1, len(psi_thresholds), figsize=(17, 5.5), sharey=True, facecolor="white")
     if len(psi_thresholds) == 1:
         axes = [axes]
@@ -669,7 +951,9 @@ def plot_pop2prime_radial_subhalo_profiles_allpsi(
             for row_index in host_order:
                 host_id = int(profile["host_ids"][row_index])
                 y = profile["profile_matrix"][row_index]
-                y_plot = np.where(y > 0, y, artificial_small)
+                if normalize_at_vir:
+                    y, _ = normalize_profile_at_x(x_centers, y, x_target=1.0)
+                y_plot = np.where(np.isfinite(y) & (y > 0), y, artificial_small)
                 ax.plot(
                     x_centers,
                     y_plot,
@@ -680,7 +964,10 @@ def plot_pop2prime_radial_subhalo_profiles_allpsi(
                 )
 
         if show_average:
-            mean_profile = np.where(profile["mean_profile"] > 0, profile["mean_profile"], artificial_small)
+            mean_profile = profile["mean_profile"]
+            if normalize_at_vir:
+                mean_profile, mean_norm = normalize_profile_at_x(x_centers, mean_profile, x_target=1.0)
+            mean_profile = np.where(np.isfinite(mean_profile) & (mean_profile > 0), mean_profile, artificial_small)
             ax.plot(
                 x_centers,
                 mean_profile,
@@ -694,9 +981,16 @@ def plot_pop2prime_radial_subhalo_profiles_allpsi(
                 ),
             )
         if show_percentile:
-            p16_profile = np.where(profile["p16_profile"] > 0, profile["p16_profile"], artificial_small)
-            median_profile = np.where(profile["median_profile"] > 0, profile["median_profile"], artificial_small)
-            p84_profile = np.where(profile["p84_profile"] > 0, profile["p84_profile"], artificial_small)
+            p16_profile = profile["p16_profile"]
+            median_profile = profile["median_profile"]
+            p84_profile = profile["p84_profile"]
+            if normalize_at_vir:
+                p16_profile, _ = normalize_profile_at_x(x_centers, p16_profile, x_target=1.0)
+                median_profile, _ = normalize_profile_at_x(x_centers, median_profile, x_target=1.0)
+                p84_profile, _ = normalize_profile_at_x(x_centers, p84_profile, x_target=1.0)
+            p16_profile = np.where(np.isfinite(p16_profile) & (p16_profile > 0), p16_profile, artificial_small)
+            median_profile = np.where(np.isfinite(median_profile) & (median_profile > 0), median_profile, artificial_small)
+            p84_profile = np.where(np.isfinite(p84_profile) & (p84_profile > 0), p84_profile, artificial_small)
             ax.fill_between(
                 x_centers,
                 p16_profile,
@@ -715,6 +1009,39 @@ def plot_pop2prime_radial_subhalo_profiles_allpsi(
                 label="median",
             )
 
+        if show_jb17_reference:
+            nfw_reference, jb17_reference, reference_concentration = build_jb17_reference_profiles(
+                x_centers,
+                reference_host_mass,
+                redshift,
+            )
+            nfw_reference = np.where(
+                np.isfinite(nfw_reference) & (nfw_reference > 0),
+                nfw_reference,
+                artificial_small,
+            )
+            jb17_reference = np.where(
+                np.isfinite(jb17_reference) & (jb17_reference > 0),
+                jb17_reference,
+                artificial_small,
+            )
+            ax.plot(
+                x_centers,
+                nfw_reference,
+                color="#D85A30",
+                linewidth=2.0,
+                linestyle="-.",
+                label=rf"NFW, $c={reference_concentration:.2f}$",
+            )
+            ax.plot(
+                x_centers,
+                jb17_reference,
+                color="#1D9E75",
+                linewidth=2.0,
+                linestyle="--",
+                label=rf"NFW $\times$ JB17, $(\eta,\mu)=({JB17_ETA:.0f},{JB17_MU:.0f})$",
+            )
+
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.axvline(1.0, color="black", linestyle=":", linewidth=1.2)
@@ -722,7 +1049,10 @@ def plot_pop2prime_radial_subhalo_profiles_allpsi(
         ax.set_title(rf"$\psi > {psi_min:.0e}$", fontsize=13)
         ax.tick_params(direction="in", which="both", labelsize=11)
 
-    axes[0].set_ylabel(r"$\mathrm{d}N_{\mathrm{sub}}/\mathrm{d}x^3$", fontsize=14)
+    ylabel = r"$\mathrm{d}N_{\mathrm{sub}}/\mathrm{d}x^3$"
+    if normalize_at_vir:
+        ylabel = "Normalized " + ylabel
+    axes[0].set_ylabel(ylabel, fontsize=14)
     fig.suptitle(
         rf"Pop2Prime radial subhalo profiles, z={redshift:.2f}, "
         rf"$M_{{\mathrm{{host}}}} \geq 10^{{{np.log10(host_mass_min_used):.1f}}}\,M_\odot/h$",
@@ -735,7 +1065,9 @@ def plot_pop2prime_radial_subhalo_profiles_allpsi(
 
     plt.tight_layout(rect=(0, 0, 1, 0.94))
     mode_tag = f"avg{int(show_average)}_ind{int(show_individual)}_pct{int(show_percentile)}"
-    output_path = host_dir / f"pop2prime_radial_profiles_allpsi_{mode_tag}_{host_mass_tag}_DD{snapshot:04d}.png"
+    ref_tag = f"_JB17eta{JB17_ETA:.0f}mu{JB17_MU:.0f}" if show_jb17_reference else ""
+    norm_tag = "_normRvir" if normalize_at_vir else ""
+    output_path = host_dir / f"pop2prime_radial_profiles_allpsi_{mode_tag}{norm_tag}{ref_tag}_{host_mass_tag}_DD{snapshot:04d}.png"
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"Saved Pop2Prime all-psi radial subhalo profile plot: {output_path}")
@@ -859,6 +1191,7 @@ def plot_pop2prime_radial_subhalo_weighted_profile(
 
     ax.set_xscale("log")
     ax.set_yscale("log")
+    ax.set_ylim(bottom=1.0e-3)
     ax.axvline(1.0, color="black", linestyle=":", linewidth=1.2)
     ax.set_xlabel(r"$x=d_{\mathrm{sub-host}}/R_{\mathrm{vir}}$", fontsize=14)
     ax.set_ylabel(ylabel_map[statistic], fontsize=14)
@@ -1268,17 +1601,20 @@ def save_single_host_profile_table(profile, output_path):
     print(f"Saved host profile table to {output_path}")
 
 
-def save_host_profile_collection_table(host_profiles, output_path):
+def save_host_profile_collection_table(host_profiles, output_path, host_mass_min=None):
     """Save all selected host-halo profiles for one snapshot to a single txt table."""
     if len(host_profiles) == 0:
         raise ValueError("host_profiles is empty.")
 
     reference_profile = host_profiles[0]
+    if host_mass_min is None:
+        host_mass_min = min(profile["host_mass"] for profile in host_profiles)
     header_lines = [
         f"snapshot {reference_profile['snapshot']}",
         f"redshift {reference_profile['redshift']:.8e}",
         f"density_unit {reference_profile['density_unit']}",
         f"n_hosts {len(host_profiles)}",
+        f"host_mass_min_Msunh {host_mass_min:.8e}",
         (
             "columns: host_index host_id host_mass_Msunh host_rvir_kpc "
             "rho_vir rho_200_crit rho_200_m rho_200_b "
@@ -1414,7 +1750,7 @@ def load_host_profile_collection_table(input_path):
     }
 
 
-def plot_all_host_profiles_overplot(input_path, output_dir=None):
+def plot_all_host_profiles_overplot(input_path, output_dir=None, host_mass_min=None):
     """Read one combined host-profile table and generate standard overplot figures."""
     loaded = load_host_profile_collection_table(input_path)
     metadata = loaded["metadata"]
@@ -1429,12 +1765,26 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None):
 
     snapshot = metadata["snapshot"]
     redshift = metadata["redshift"]
+    if host_mass_min is not None:
+        host_profiles = [
+            profile for profile in host_profiles if profile["host_mass"] >= host_mass_min
+        ]
+        if len(host_profiles) == 0:
+            raise RuntimeError(
+                f"No host profiles satisfy host_mass_min={host_mass_min:.3e} Msun/h "
+                f"in {input_path}."
+            )
     host_profiles = sorted(host_profiles, key=lambda profile: profile["host_id"])
-    host_mass_min = min(profile["host_mass"] for profile in host_profiles)
-    host_mass_tag = format_host_mass_min_tag(host_mass_min)
+    label_host_mass_min = (
+        infer_host_mass_min_for_label(input_path, metadata, host_profiles)
+        if host_mass_min is None
+        else float(host_mass_min)
+    )
+    host_mass_tag = format_host_mass_min_tag(label_host_mass_min)
     representative_host_mass_msun = np.median(
         [profile["host_mass"] for profile in host_profiles]
     ) / h_Hubble
+    mean_rho_vir = np.mean([profile["rho_vir"] for profile in host_profiles])
     host_colors = plt.cm.rainbow(np.linspace(0.0, 1.0, len(host_profiles)))
     reference_profile = host_profiles[0]
     if has_temperature_column:
@@ -1463,7 +1813,7 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None):
         ax.set_ylabel(r"$T_{\mathrm{gas,mw}} / T_{\mathrm{vir}}$", fontsize=14)
         ax.set_title(
             rf"Pop2Prime host temperature profiles, z={redshift:.2f}, "
-            rf"$M_{{\mathrm{{host}}}} \geq 10^{{{np.log10(host_mass_min):.1f}}}\,M_\odot/h$",
+            rf"$M_{{\mathrm{{host}}}} \geq 10^{{{np.log10(label_host_mass_min):.1f}}}\,M_\odot/h$",
             fontsize=12,
         )
         ax.tick_params(direction="in", which="both", labelsize=12)
@@ -1475,38 +1825,194 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None):
 
     reference_lines = [
         {
-            "y": reference_profile["rho_200_crit"] / reference_profile["rho_vir"],
+            "y": reference_profile["rho_200_crit"] / mean_rho_vir,
             "color": "tab:red",
             "linestyle": "--",
-            "label": rf"$200\,\rho_{{\rm crit}}(z={redshift:.2f}) / \rho_{{\rm vir}}$",
+            "label": rf"$200\,\rho_{{\rm crit}}(z={redshift:.2f}) / \bar{{\rho}}_{{\rm vir}}$",
         },
         {
-            "y": reference_profile["rho_200_m"] / reference_profile["rho_vir"],
-            "color": "tab:purple",
-            "linestyle": "--",
-            "label": rf"$200\,\rho_{{\rm m}}(z={redshift:.2f}) / \rho_{{\rm vir}}$",
-        },
-        {
-            "y": reference_profile["rho_200_b"] / reference_profile["rho_vir"],
-            "color": "tab:orange",
-            "linestyle": "--",
-            "label": rf"$200\,\rho_{{\rm b}}(z={redshift:.2f}) / \rho_{{\rm vir}}$",
+            "y": reference_profile["rho_200_b"] / mean_rho_vir,
+            "color": "tab:blue",
+            "linestyle": ":",
+            "label": rf"$200\,\rho_{{\rm b}}(z={redshift:.2f}) / \bar{{\rho}}_{{\rm vir}}$",
         },
     ]
 
+    combined_density_output_path = (
+        output_dir / f"all_hosts_density_profiles_combined_{host_mass_tag}_DD{snapshot:04d}.png"
+    )
+    fig, ax = plt.subplots(figsize=(9, 6.5), facecolor="white")
+    artificial_small = 1.0e-10
+    for profile, color in zip(host_profiles, host_colors):
+        total_density_plot = np.where(
+            profile["shell_total_density_norm"] > 0,
+            profile["shell_total_density_norm"],
+            artificial_small,
+        )
+        total_density_plot = np.maximum(total_density_plot, PAPER_DENSITY_YMIN)
+        gas_density_plot = np.where(
+            profile["shell_gas_density_norm"] > 0,
+            profile["shell_gas_density_norm"],
+            artificial_small,
+        )
+        gas_density_plot = np.maximum(gas_density_plot, PAPER_DENSITY_YMIN)
+        ax.plot(
+            profile["x_centers"],
+            total_density_plot,
+            color=color,
+            linewidth=1.5,
+            alpha=0.8,
+            label=f"host {profile['host_id']}",
+        )
+        ax.plot(
+            profile["x_centers"],
+            gas_density_plot,
+            color=color,
+            linewidth=1.3,
+            linestyle="--",
+            alpha=0.8,
+        )
+
+    nfw_concentration = get_concentration(
+        representative_host_mass_msun,
+        redshift,
+        CONCENTRATION_MODEL,
+    )
+    profile_radii = reference_profile["x_centers"]
+    scaled_radii = profile_radii * nfw_concentration
+    total_nfw_profile = density_NFW_profile(
+        scaled_radii,
+        representative_host_mass_msun,
+        redshift,
+        CONCENTRATION_MODEL,
+    )
+    total_nfw_profile = np.maximum(total_nfw_profile, PAPER_DENSITY_YMIN)
+    ax.plot(
+        profile_radii,
+        total_nfw_profile,
+        color="black",
+        linestyle="-",
+        linewidth=3.2,
+        label=rf"NFW total ({CONCENTRATION_MODEL})",
+        zorder=5,
+    )
+
+    gas_profiles_cosmic = []
+    for alpha in PAPER_GAS_PROFILE_ALPHAS:
+        gas_profiles_cosmic.append(
+            gasdensity_arbitrary_profile(
+                scaled_radii,
+                representative_host_mass_msun,
+                redshift,
+                CONCENTRATION_MODEL,
+                alpha=alpha,
+            )
+        )
+    gas_profiles_cosmic = np.asarray(gas_profiles_cosmic)
+    gas_band_lower = np.maximum(np.min(gas_profiles_cosmic, axis=0), PAPER_DENSITY_YMIN)
+    gas_band_upper = np.maximum(np.max(gas_profiles_cosmic, axis=0), PAPER_DENSITY_YMIN)
+    ax.fill_between(
+        profile_radii,
+        gas_band_lower,
+        gas_band_upper,
+        color="0.45",
+        alpha=0.38,
+        linewidth=0.0,
+        label=(
+            r"Gas gNFW band, $\alpha \in [-0.5,1.5]$, "
+            rf"$f_{{\rm g}}=\Omega_{{\rm b}}/\Omega_{{\rm m}}={Omega_b / Omega_m:.3f}$"
+        ),
+        zorder=2,
+    )
+
+    low_fgas_scale = PAPER_GAS_FRACTION_LOW / (Omega_b / Omega_m)
+    ax.fill_between(
+        profile_radii,
+        np.maximum(gas_band_lower * low_fgas_scale, PAPER_DENSITY_YMIN),
+        np.maximum(gas_band_upper * low_fgas_scale, PAPER_DENSITY_YMIN),
+        color="0.75",
+        alpha=0.24,
+        linewidth=0.0,
+        label=(
+            r"Gas gNFW band, $\alpha \in [-0.5,1.5]$, "
+            rf"$f_{{\rm g}}={PAPER_GAS_FRACTION_LOW:.2f}$"
+        ),
+        zorder=1,
+    )
+
+    for ref in reference_lines:
+        ax.axhline(
+            ref["y"],
+            color=ref["color"],
+            linestyle=ref["linestyle"],
+            linewidth=3.0,
+            label=ref["label"],
+        )
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_ylim(bottom=PAPER_DENSITY_YMIN)
+    ax.axvline(1.0, color="black", linestyle=":", linewidth=1.2)
+    ax.set_xlabel(r"$x=r/R_{\mathrm{vir}}$", fontsize=14)
+    ax.set_ylabel(r"$\rho / \rho_{\mathrm{vir}}$", fontsize=14)
+    ax.set_title(
+        rf"Pop2Prime host density profiles, z={redshift:.2f}, "
+        rf"$M_{{\mathrm{{host}}}} \geq 10^{{{np.log10(label_host_mass_min):.1f}}}\,M_\odot/h$",
+        fontsize=12,
+    )
+    ax.tick_params(direction="in", which="both", labelsize=12)
+
+    style_handles = [
+        Line2D([0], [0], color="0.25", linewidth=1.6, linestyle="-", label="host total density"),
+        Line2D([0], [0], color="0.25", linewidth=1.4, linestyle="--", label="host gas density"),
+        Line2D([0], [0], color="black", linewidth=3.2, linestyle="-", label=rf"NFW total ({CONCENTRATION_MODEL})"),
+        Patch(
+            facecolor="0.45",
+            alpha=0.38,
+            label=(
+                r"gas gNFW, $\alpha \in [-0.5,1.5]$, "
+                rf"$f_{{\rm g}}=\Omega_{{\rm b}}/\Omega_{{\rm m}}={Omega_b / Omega_m:.3f}$"
+            ),
+        ),
+        Patch(
+            facecolor="0.75",
+            alpha=0.24,
+            label=(
+                r"gas gNFW, $\alpha \in [-0.5,1.5]$, "
+                rf"$f_{{\rm g}}={PAPER_GAS_FRACTION_LOW:.2f}$"
+            ),
+        ),
+    ]
+    style_legend = ax.legend(handles=style_handles, fontsize=8.5, loc="upper right")
+    ax.add_artist(style_legend)
+
+    host_handles = [
+        Line2D([0], [0], color=color, linewidth=1.8, linestyle="-", label=f"host {profile['host_id']}")
+        for profile, color in zip(host_profiles, host_colors)
+    ]
+    reference_handles = [
+        Line2D(
+            [0],
+            [0],
+            color=ref["color"],
+            linewidth=1.8,
+            linestyle=ref["linestyle"],
+            label=ref["label"],
+        )
+        for ref in reference_lines
+    ]
+    ax.legend(
+        handles=host_handles + reference_handles,
+        fontsize=7.8,
+        ncol=2,
+        loc="lower left",
+    )
+    plt.tight_layout()
+    plt.savefig(combined_density_output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"Saved combined density overplot figure to {combined_density_output_path}")
+
     plot_specs = [
-        (
-            "shell_total_density_norm",
-            r"$\rho_{\mathrm{tot}} / \rho_{\mathrm{vir}}$",
-            output_dir / f"all_hosts_total_density_norm_{host_mass_tag}_DD{snapshot:04d}.png",
-            reference_lines,
-        ),
-        (
-            "shell_gas_density_norm",
-            r"$\rho_{\mathrm{gas}} / \rho_{\mathrm{vir}}$",
-            output_dir / f"all_hosts_gas_density_norm_{host_mass_tag}_DD{snapshot:04d}.png",
-            reference_lines,
-        ),
         (
             "shell_gas_to_total_density_ratio",
             r"$\rho_{\mathrm{gas}} / \rho_{\mathrm{tot}}$",
@@ -1548,76 +2054,6 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None):
                     linewidth=1.8,
                     label=ref["label"],
                 )
-        if profile_key == "shell_total_density_norm":
-            nfw_concentration = get_concentration(
-                representative_host_mass_msun,
-                redshift,
-                CONCENTRATION_MODEL,
-            )
-            nfw_profile = density_NFW_profile(
-                reference_profile["x_centers"] * nfw_concentration,
-                representative_host_mass_msun,
-                redshift,
-                CONCENTRATION_MODEL,
-            )
-            ax.plot(
-                reference_profile["x_centers"],
-                nfw_profile,
-                color="black",
-                linestyle="--",
-                linewidth=2.8,
-                label=rf"NFW ({CONCENTRATION_MODEL})",
-            )
-        elif profile_key == "shell_gas_density_norm":
-            nfw_concentration = get_concentration(
-                representative_host_mass_msun,
-                redshift,
-                CONCENTRATION_MODEL,
-            )
-            gas_nfw_profile = gasdensity_NFW_profile(
-                reference_profile["x_centers"] * nfw_concentration,
-                representative_host_mass_msun,
-                redshift,
-                CONCENTRATION_MODEL,
-            )
-            gas_core_profile = gasdensity_core_profile(
-                reference_profile["x_centers"] * nfw_concentration,
-                representative_host_mass_msun,
-                redshift,
-                CONCENTRATION_MODEL,
-            )
-            gas_flat_profile = gasdensity_arbitrary_profile(
-                reference_profile["x_centers"] * nfw_concentration,
-                representative_host_mass_msun,
-                redshift,
-                CONCENTRATION_MODEL,
-                alpha=-0.5,
-            )
-            ax.plot(
-                reference_profile["x_centers"],
-                gas_nfw_profile,
-                color="black",
-                linestyle="--",
-                linewidth=2.8,
-                label=rf"Gas NFW ({CONCENTRATION_MODEL})",
-            )
-            ax.plot(
-                reference_profile["x_centers"],
-                gas_core_profile,
-                color="black",
-                linestyle="-.",
-                linewidth=2.8,
-                label=rf"Gas core ({CONCENTRATION_MODEL})",
-            )
-            ax.plot(
-                reference_profile["x_centers"],
-                gas_flat_profile,
-                color="black",
-                linestyle=":",
-                linewidth=2.8,
-                label=rf"Gas flat ({CONCENTRATION_MODEL})",
-            )
-
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.axvline(1.0, color="black", linestyle=":", linewidth=1.2)
@@ -1625,7 +2061,7 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None):
         ax.set_ylabel(ylabel, fontsize=14)
         ax.set_title(
             rf"Pop2Prime host profiles, z={redshift:.2f}, "
-            rf"$M_{{\mathrm{{host}}}} \geq 10^{{{np.log10(host_mass_min):.1f}}}\,M_\odot/h$",
+            rf"$M_{{\mathrm{{host}}}} \geq 10^{{{np.log10(label_host_mass_min):.1f}}}\,M_\odot/h$",
             fontsize=12,
         )
         ax.tick_params(direction="in", which="both", labelsize=12)
@@ -1692,7 +2128,11 @@ def export_selected_host_gas_profiles(
         host_profiles.append(profile)
 
     combined_table_path = host_dir / f"all_host_profiles_{host_mass_tag}_DD{snapshot:04d}.txt"
-    save_host_profile_collection_table(host_profiles, combined_table_path)
+    save_host_profile_collection_table(
+        host_profiles,
+        combined_table_path,
+        host_mass_min=host_mass_min,
+    )
 
     summary_path = host_dir / f"host_summary_{host_mass_tag}_DD{snapshot:04d}.txt"
     with summary_path.open("w") as f:
@@ -1815,25 +2255,23 @@ if __name__ == "__main__":
     # test_gas_density_profile_for_a_single_halo()
 
 
-    # target_redshift = float(os.environ.get("TARGET_REDSHIFT", TARGET_REDSHIFT))
-    # export_selected_host_gas_profiles(target_redshift=target_redshift)
     # plot_pop2prime_radial_subhalo_profiles_allpsi(
     #     target_redshift=12.0,
     #     show_average=True,
     #     show_individual=True,
     # )
-    plot_pop2prime_radial_subhalo_weighted_profile(
-        target_redshift=12.0,
-        psi_min=1.0e-3,
-        show_average=True,
-        show_individual=False,
-        show_percentile=True,
-        statistic="mass2_dx", #"mass2_dx", "mass_dx", "count_dx"
-    )
-
-    # input_path = (
-    #     POP2PRIME_RESULTS_DIR
-    #     / "pop2prime_host_gas_profiles_DD0525"
-    #     / "all_host_profiles_DD0525.txt"
+    # plot_pop2prime_radial_subhalo_weighted_profile(
+    #     target_redshift=12.0,
+    #     psi_min=1.0e-3,
+    #     show_average=True,
+    #     show_individual=False,
+    #     show_percentile=True,
+    #     statistic="mass2_dx", #"mass2_dx", "mass_dx", "count_dx"
     # )
-    # plot_all_host_profiles_overplot(input_path)
+
+    input_path = (
+        POP2PRIME_RESULTS_DIR
+        / "pop2prime_host_gas_profiles_DD0525"
+        / "all_host_profiles_DD0525.txt"
+    )
+    plot_all_host_profiles_overplot(input_path, host_mass_min=10**5.5)

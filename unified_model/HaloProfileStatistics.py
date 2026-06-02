@@ -8,6 +8,11 @@ from TNGDataHandler import get_simulation_resolution
 from TNGDataHandler import load_processed_data
 from physical_constants import h_Hubble
 
+try:
+    from colossus.halo import concentration as colossus_concentration
+except ModuleNotFoundError:
+    colossus_concentration = None
+
 
 def normalize_tng_halo_definition(radius_definition):
     """Return a canonical TNG halo-definition tag: '200c' or '200m'."""
@@ -143,6 +148,93 @@ def _get_statistic_metadata(statistic):
     if statistic not in metadata:
         raise ValueError(f'Unknown statistic: {statistic}')
     return metadata[statistic]
+
+
+def _interpolate_profile_at_x(x_centers, profile, x_target=1.0):
+    """Estimate one profile value at x_target from neighboring radial bins."""
+    x_centers = np.asarray(x_centers, dtype=float)
+    profile = np.asarray(profile, dtype=float)
+    valid = np.isfinite(x_centers) & np.isfinite(profile) & (profile > 0)
+    if np.count_nonzero(valid) == 0:
+        return np.nan
+
+    x_valid = x_centers[valid]
+    profile_valid = profile[valid]
+    if x_target <= x_valid[0]:
+        return profile_valid[0]
+    if x_target >= x_valid[-1]:
+        return profile_valid[-1]
+
+    return np.interp(x_target, x_valid, profile_valid)
+
+
+def _normalize_profile_at_x(x_centers, profile, x_target=1.0):
+    """Return profile/profile(x_target), keeping invalid cases as NaN."""
+    normalization = _interpolate_profile_at_x(x_centers, profile, x_target=x_target)
+    if not np.isfinite(normalization) or normalization <= 0:
+        return np.full_like(profile, np.nan, dtype=float), normalization
+    return np.asarray(profile, dtype=float) / normalization, normalization
+
+
+def _f_nfw(x):
+    """Return the standard NFW helper f(x)=ln(1+x)-x/(1+x)."""
+    x = np.asarray(x, dtype=float)
+    return np.log1p(x) - x / (1.0 + x)
+
+
+def _get_subhalo_reference_concentration(M_mid_msunh, redshift, radius_definition, model='diemer19'):
+    """Return c(M,z) for the requested halo definition using Colossus."""
+    if colossus_concentration is None:
+        return np.nan
+    halo_meta = get_tng_halo_definition_metadata(radius_definition)
+    try:
+        return float(
+            colossus_concentration.concentration(
+                M_mid_msunh,
+                halo_meta['tag'],
+                redshift,
+                model=model,
+                range_return=False,
+            )
+        )
+    except Exception:
+        return np.nan
+
+
+def _get_normalized_nfw_subhalo_reference(
+    x_values,
+    concentration,
+    normalize_at_vir=True,
+    jiang_eta=2.0,
+    jiang_mu=4.0,
+):
+    r"""
+    Return normalized NFW and Jiang+vdB-modified subhalo number-density shapes.
+
+    The baseline dN/dx^3_NFW is taken to follow the NFW density shape,
+    rho(x) \propto 1 / [(c x) (1 + c x)^2], with x=r/Rvir.
+    """
+    x_values = np.asarray(x_values, dtype=float)
+    if not np.isfinite(concentration) or concentration <= 0:
+        nan_profile = np.full_like(x_values, np.nan, dtype=float)
+        return nan_profile, nan_profile
+
+    cx = concentration * x_values
+    nfw_profile = concentration**3 / (3.0 * _f_nfw(concentration))
+    nfw_profile /= cx * (1.0 + cx) ** 2
+
+    jiang_factor = (2.0 ** jiang_mu) * x_values ** jiang_eta / (1.0 + x_values) ** jiang_mu
+    jiang_modified_profile = nfw_profile * jiang_factor
+
+    if normalize_at_vir:
+        nfw_profile, _ = _normalize_profile_at_x(x_values, nfw_profile, x_target=1.0)
+        jiang_modified_profile, _ = _normalize_profile_at_x(
+            x_values,
+            jiang_modified_profile,
+            x_target=1.0,
+        )
+
+    return nfw_profile, jiang_modified_profile
 
 
 PSI_THRESHOLDS_FOR_EXPORT = (1.0e-3, 1.0e-2, 5.0e-2)
@@ -722,6 +814,11 @@ def plot_host_averaged_radial_subhalo_profile(
     show_individual=None,
     statistic=None,
     percentile_mode=None,
+    normalize_at_vir=None,
+    show_analytic_reference=None,
+    analytic_concentration_model=None,
+    jiang_eta=None,
+    jiang_mu=None,
 ):
     """
     Plot host-averaged subhalo radial profile with x=d_sub-host/R200.
@@ -741,6 +838,11 @@ def plot_host_averaged_radial_subhalo_profile(
         'show_individual': show_individual,
         'statistic': statistic,
         'percentile_mode': percentile_mode,
+        'normalize_at_vir': normalize_at_vir,
+        'show_analytic_reference': show_analytic_reference,
+        'analytic_concentration_model': analytic_concentration_model,
+        'jiang_eta': jiang_eta,
+        'jiang_mu': jiang_mu,
     }
     missing_args = [name for name, value in required_args.items() if value is None]
     if missing_args:
@@ -812,6 +914,7 @@ def plot_host_averaged_radial_subhalo_profile(
             continue
         host_mass_min = 10**host_mass_bins[i]
         host_mass_max = 10**host_mass_bins[i + 1]
+        host_mass_mid = 10**(0.5 * (host_mass_bins[i] + host_mass_bins[i + 1]))
         crit_psi = 50.0 * dark_matter_resolution / host_mass_min
         is_resolved = psi_range is None or psi_range[0] >= crit_psi
         print(
@@ -845,6 +948,24 @@ def plot_host_averaged_radial_subhalo_profile(
         median_profile = stats['median_profile']
         p16_profile = stats['p16_profile']
         p84_profile = stats['p84_profile']
+
+        if normalize_at_vir:
+            normalized_rows = []
+            for row in profile_matrix:
+                normalized_row, _ = _normalize_profile_at_x(x_centers, row, x_target=1.0)
+                normalized_rows.append(normalized_row)
+            if normalized_rows:
+                profile_matrix = np.asarray(normalized_rows, dtype=float)
+            mean_profile, mean_norm = _normalize_profile_at_x(x_centers, mean_profile, x_target=1.0)
+            median_profile, median_norm = _normalize_profile_at_x(x_centers, median_profile, x_target=1.0)
+            p16_profile, p16_norm = _normalize_profile_at_x(x_centers, p16_profile, x_target=1.0)
+            p84_profile, p84_norm = _normalize_profile_at_x(x_centers, p84_profile, x_target=1.0)
+            print(
+                f'mass bin {i} normalization at x=1: '
+                f'mean={mean_norm:.3e}, median={median_norm:.3e}, '
+                f'p16={p16_norm:.3e}, p84={p84_norm:.3e}'
+            )
+
         nonzero_width = np.where(p84_profile > p16_profile)[0]
         sample_bins = [0, num_x_bins // 2, num_x_bins - 1]
         sample_summary = ', '.join(
@@ -862,8 +983,8 @@ def plot_host_averaged_radial_subhalo_profile(
             f'nonzero_width_bins={nonzero_width.size}/{num_x_bins}; {sample_summary}'
         )
 
-        plot_mean = np.where(mean_profile > 0, mean_profile, artificial_small)
-        plot_median = np.where(median_profile > 0, median_profile, artificial_small)
+        plot_mean = np.where(np.isfinite(mean_profile) & (mean_profile > 0), mean_profile, artificial_small)
+        plot_median = np.where(np.isfinite(median_profile) & (median_profile > 0), median_profile, artificial_small)
         base_label = (
             rf'${host_mass_bins[i]:.1f}<\log_{{10}}({halo_meta["mass_label"]}/M_\odot h^{{-1}})'
             rf'<{host_mass_bins[i+1]:.1f}$'
@@ -874,21 +995,72 @@ def plot_host_averaged_radial_subhalo_profile(
             n_hosts_with_subhalos=stats['n_hosts_with_subhalos'],
             n_subhalos=stats['n_subhalos'],
         )
+        reference_concentration = np.nan
+        reference_nfw = None
+        reference_jiang = None
+        if show_analytic_reference and statistic == 'count_dx3':
+            reference_concentration = _get_subhalo_reference_concentration(
+                host_mass_mid,
+                data.header.get('Redshift', np.nan),
+                radius_definition=radius_definition,
+                model=analytic_concentration_model,
+            )
+            reference_nfw, reference_jiang = _get_normalized_nfw_subhalo_reference(
+                x_centers,
+                reference_concentration,
+                normalize_at_vir=normalize_at_vir,
+                jiang_eta=jiang_eta,
+                jiang_mu=jiang_mu,
+            )
+            print(
+                f'mass bin {i} analytic reference: '
+                f'Mmid={host_mass_mid:.3e} Msun/h, c={reference_concentration:.3f}, '
+                f'model={analytic_concentration_model}, eta={jiang_eta:.1f}, mu={jiang_mu:.1f}'
+            )
 
         if show_individual:
             for row in profile_matrix:
                 ax.plot(
                     x_centers,
-                    np.where(row > 0, row, artificial_small),
+                    np.where(np.isfinite(row) & (row > 0), row, artificial_small),
                     color=colors[i],
                     linewidth=0.8,
                     alpha=0.08,
                 )
         if show_average:
             ax.plot(x_centers, plot_mean, color=colors[i], linewidth=2.0, label=label + ' mean')
+        if show_analytic_reference and statistic == 'count_dx3':
+            plot_reference_nfw = np.where(
+                np.isfinite(reference_nfw) & (reference_nfw > 0),
+                reference_nfw,
+                artificial_small,
+            )
+            plot_reference_jiang = np.where(
+                np.isfinite(reference_jiang) & (reference_jiang > 0),
+                reference_jiang,
+                artificial_small,
+            )
+            ax.plot(
+                x_centers,
+                plot_reference_nfw,
+                color=colors[i],
+                linewidth=1.4,
+                linestyle='-.',
+                alpha=0.95,
+                label=base_label + rf' NFW, $c={reference_concentration:.2f}$',
+            )
+            ax.plot(
+                x_centers,
+                plot_reference_jiang,
+                color=colors[i],
+                linewidth=1.4,
+                linestyle=':',
+                alpha=0.95,
+                label=base_label + ' NFW x Jiang+vdB',
+            )
         if show_percentile:
-            plot_p16 = np.where(p16_profile > 0, p16_profile, artificial_small)
-            plot_p84 = np.where(p84_profile > 0, p84_profile, artificial_small)
+            plot_p16 = np.where(np.isfinite(p16_profile) & (p16_profile > 0), p16_profile, artificial_small)
+            plot_p84 = np.where(np.isfinite(p84_profile) & (p84_profile > 0), p84_profile, artificial_small)
             ax.fill_between(
                 x_centers,
                 plot_p16,
@@ -923,8 +1095,12 @@ def plot_host_averaged_radial_subhalo_profile(
             )
     ax.set_xscale('log')
     ax.set_yscale('log')
+    ax.set_ylim(bottom=1.0e-3)
     ax.set_xlabel(rf'$x=d_{{\mathrm{{sub-host}}}}/{halo_meta["radius_label"]}$', fontsize=14)
-    ax.set_ylabel(statistic_meta['ylabel'], fontsize=14)
+    ylabel = statistic_meta['ylabel']
+    if normalize_at_vir:
+        ylabel = 'Normalized ' + ylabel
+    ax.set_ylabel(ylabel, fontsize=14)
     ax.axvline(1.0, color='black', linestyle=':', linewidth=1.5)
     redshift = data.header.get('Redshift', np.nan)
     title = f'snap {snapNum}, z={redshift:.2f}, {statistic_meta["title_label"]}'
@@ -934,6 +1110,10 @@ def plot_host_averaged_radial_subhalo_profile(
         title += ', resolved bins only'
     if show_percentile:
         title += f', pct={percentile_mode}'
+    if normalize_at_vir:
+        title += ', normalized at Rvir'
+    if show_analytic_reference and statistic == 'count_dx3':
+        title += f', analytic c(M,z)={analytic_concentration_model}'
     ax.set_title(title, fontsize=13)
     ax.tick_params(direction='in', which='both', labelsize=12)
     ax.legend(fontsize=8, ncol=1)
@@ -941,9 +1121,11 @@ def plot_host_averaged_radial_subhalo_profile(
 
     tag = get_profile_tag(psi_range=psi_range, profile_tag=profile_tag)
     tag_suffix = '' if tag == '' else f'_{tag}'
+    normalization_tag = '_normRvir' if normalize_at_vir else ''
+    analytic_tag = '_withAnalyticRef' if show_analytic_reference and statistic == 'count_dx3' else ''
     filename = os.path.join(
         output_dir,
-        f'{save_prefix}_{halo_meta["tag"]}_{statistic}{tag_suffix}_snap_{snapNum}.png'
+        f'{save_prefix}_{halo_meta["tag"]}_{statistic}{normalization_tag}{analytic_tag}{tag_suffix}_snap_{snapNum}.png'
     )
     plt.savefig(filename, dpi=300, bbox_inches='tight')
     plt.close()
@@ -976,8 +1158,13 @@ def run_subhalo_number_profile(
         'show_average': True,
         'show_percentile': True,
         'show_individual': False,
-        'statistic': 'mass2_dx',   #count_dx3, count_dx, mass_dx, or mass2_dx
+        'statistic': 'count_dx3',   #count_dx3, count_dx, mass_dx, or mass2_dx
         'percentile_mode': 'all_hosts',  #'all_hosts' or 'occupied_hosts'
+        'normalize_at_vir': True,
+        'show_analytic_reference': True,
+        'analytic_concentration_model': 'diemer19',
+        'jiang_eta': 2.0,
+        'jiang_mu': 4.0,
     }
     if profile_kwargs is not None:
         driver_defaults.update(profile_kwargs)

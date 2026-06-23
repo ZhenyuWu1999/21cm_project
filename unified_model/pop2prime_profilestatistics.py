@@ -27,7 +27,8 @@ from read_pop2prime import (
 POP2PRIME_RESULTS_DIR = Path("/home/zwu/21cm_project/unified_model/Pop2prime_results")
 TARGET_REDSHIFT = 12.0
 HOST_MASS_MIN = 10**5.5  # Msun/h
-CONCENTRATION_MODEL = "diemer19"
+CONCENTRATION_MODEL = "ludlow16"
+CONCENTRATION_LABEL = "Ludlow16"
 PSI_MIN = 0.05   #Note: this is not the psi_min for plot_pop2prime_radial_subhalo_weighted_profile()
 PSI_THRESHOLDS_FOR_EXPORT = (1.0e-3, 1.0e-2, 5.0e-2)
 GAS_PROFILE_HOST_MASS_MIN = HOST_MASS_MIN
@@ -36,6 +37,7 @@ PAPER_GAS_PROFILE_ALPHAS = (-0.5, 1.5)
 PAPER_DENSITY_YMIN = 1.0e-3
 JB17_ETA = 2.0
 JB17_MU = 4.0
+HAN16_GAMMA = 1.33
 
 
 def build_x_bins(x_min=2.0e-2, x_max=2.0, num_x_bins=20, log_x_bins=True):
@@ -80,6 +82,12 @@ def jb17_radial_bias(x_values, eta=JB17_ETA, mu=JB17_MU):
     return (2.0 ** mu) * x_values ** eta / (1.0 + x_values) ** mu
 
 
+def han16_radial_bias(x_values, gamma=HAN16_GAMMA):
+    """Return the Han16 radial bias factor phi(x) = x^gamma."""
+    x_values = np.asarray(x_values, dtype=float)
+    return x_values ** gamma
+
+
 def nfw_count_dx3_shape(x_values, concentration):
     """Return the NFW dN/dx^3 shape for x=r/Rvir up to an overall constant."""
     x_values = np.asarray(x_values, dtype=float)
@@ -87,14 +95,16 @@ def nfw_count_dx3_shape(x_values, concentration):
     return 1.0 / (cx * (1.0 + cx) ** 2)
 
 
-def build_jb17_reference_profiles(x_centers, host_mass_msunh, redshift):
-    """Return normalized NFW and JB17-modified NFW reference profiles."""
+def build_jb17_reference_profiles(x_centers, host_mass_msunh, redshift, han16_gamma=HAN16_GAMMA):
+    """Return normalized NFW, JB17-modified, and Han16-modified profiles."""
     concentration = get_concentration(host_mass_msunh / h_Hubble, redshift, CONCENTRATION_MODEL)
     nfw_profile = nfw_count_dx3_shape(x_centers, concentration)
     jb17_profile = nfw_profile * jb17_radial_bias(x_centers)
+    han16_profile = nfw_profile * han16_radial_bias(x_centers, gamma=han16_gamma)
     nfw_profile, _ = normalize_profile_at_x(x_centers, nfw_profile, x_target=1.0)
     jb17_profile, _ = normalize_profile_at_x(x_centers, jb17_profile, x_target=1.0)
-    return nfw_profile, jb17_profile, concentration
+    han16_profile, _ = normalize_profile_at_x(x_centers, han16_profile, x_target=1.0)
+    return nfw_profile, jb17_profile, han16_profile, concentration
 
 
 def format_host_mass_min_tag(host_mass_min):
@@ -753,7 +763,8 @@ def plot_exported_pop2prime_radial_profiles_with_jb17(
     input_path,
     output_dir=None,
     normalize_at_vir=True,
-    show_percentile=True,
+    show_percentile=False,
+    show_median=True,
 ):
     """Plot exported Pop2Prime dN/dx^3 profiles against NFW and corrected JB17."""
     loaded = load_exported_subhalo_count_profiles_txt(input_path)
@@ -809,27 +820,29 @@ def plot_exported_pop2prime_radial_profiles_with_jb17(
             ),
         )
 
+        p16_profile = profile["p16_profile"]
+        median_profile = profile["median_profile"]
+        p84_profile = profile["p84_profile"]
+        if normalize_at_vir:
+            p16_profile, _ = normalize_profile_at_x(x_centers, p16_profile, x_target=1.0)
+            median_profile, _ = normalize_profile_at_x(x_centers, median_profile, x_target=1.0)
+            p84_profile, _ = normalize_profile_at_x(x_centers, p84_profile, x_target=1.0)
+        p16_profile = np.where(np.isfinite(p16_profile) & (p16_profile > 0), p16_profile, artificial_small)
+        median_profile = np.where(np.isfinite(median_profile) & (median_profile > 0), median_profile, artificial_small)
+        p84_profile = np.where(np.isfinite(p84_profile) & (p84_profile > 0), p84_profile, artificial_small)
         if show_percentile:
-            p16_profile = profile["p16_profile"]
-            median_profile = profile["median_profile"]
-            p84_profile = profile["p84_profile"]
-            if normalize_at_vir:
-                p16_profile, _ = normalize_profile_at_x(x_centers, p16_profile, x_target=1.0)
-                median_profile, _ = normalize_profile_at_x(x_centers, median_profile, x_target=1.0)
-                p84_profile, _ = normalize_profile_at_x(x_centers, p84_profile, x_target=1.0)
-            p16_profile = np.where(np.isfinite(p16_profile) & (p16_profile > 0), p16_profile, artificial_small)
-            median_profile = np.where(np.isfinite(median_profile) & (median_profile > 0), median_profile, artificial_small)
-            p84_profile = np.where(np.isfinite(p84_profile) & (p84_profile > 0), p84_profile, artificial_small)
             ax.fill_between(x_centers, p16_profile, p84_profile, color="black", alpha=0.18, linewidth=0)
+        if show_median:
             ax.plot(x_centers, median_profile, color="black", linestyle="--", linewidth=2.0, label="median")
 
-        nfw_reference, jb17_reference, reference_concentration = build_jb17_reference_profiles(
+        nfw_reference, jb17_reference, han16_reference, reference_concentration = build_jb17_reference_profiles(
             x_centers,
             reference_host_mass,
             redshift,
         )
         nfw_reference = np.where(np.isfinite(nfw_reference) & (nfw_reference > 0), nfw_reference, artificial_small)
         jb17_reference = np.where(np.isfinite(jb17_reference) & (jb17_reference > 0), jb17_reference, artificial_small)
+        han16_reference = np.where(np.isfinite(han16_reference) & (han16_reference > 0), han16_reference, artificial_small)
         ax.plot(
             x_centers,
             nfw_reference,
@@ -845,6 +858,14 @@ def plot_exported_pop2prime_radial_profiles_with_jb17(
             linewidth=2.0,
             linestyle="--",
             label=rf"NFW $\times$ JB17, $(\eta,\mu)=({JB17_ETA:.0f},{JB17_MU:.0f})$",
+        )
+        ax.plot(
+            x_centers,
+            han16_reference,
+            color="#7B61B7",
+            linewidth=2.0,
+            linestyle=":",
+            label=rf"NFW $\times$ Han16, $\gamma={HAN16_GAMMA:.2f}$",
         )
 
         ax.set_xscale("log")
@@ -863,7 +884,7 @@ def plot_exported_pop2prime_radial_profiles_with_jb17(
         rf"Pop2Prime radial subhalo profiles, z={redshift:.2f}, "
         rf"analytic ref ({reference_mass_label}): "
         rf"$M_{{\mathrm{{host}}}}=10^{{{np.log10(reference_host_mass):.1f}}}\,M_\odot/h$, "
-        rf"{CONCENTRATION_MODEL} $c={reference_concentration:.2f}$",
+        rf"{CONCENTRATION_LABEL} $c={reference_concentration:.2f}$",
         fontsize=13,
     )
     handles, labels = axes[0].get_legend_handles_labels()
@@ -872,7 +893,7 @@ def plot_exported_pop2prime_radial_profiles_with_jb17(
 
     plt.tight_layout(rect=(0, 0, 1, 0.94))
     norm_tag = "_normRvir" if normalize_at_vir else ""
-    output_path = output_dir / f"{input_path.stem}{norm_tag}_JB17eta{JB17_ETA:.0f}mu{JB17_MU:.0f}.png"
+    output_path = output_dir / f"{input_path.stem}{norm_tag}_JB17eta{JB17_ETA:.0f}mu{JB17_MU:.0f}_Han16gamma{HAN16_GAMMA:.2f}.png"
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"Saved exported Pop2Prime JB17 comparison plot: {output_path}")
@@ -1010,7 +1031,7 @@ def plot_pop2prime_radial_subhalo_profiles_allpsi(
             )
 
         if show_jb17_reference:
-            nfw_reference, jb17_reference, reference_concentration = build_jb17_reference_profiles(
+            nfw_reference, jb17_reference, han16_reference, reference_concentration = build_jb17_reference_profiles(
                 x_centers,
                 reference_host_mass,
                 redshift,
@@ -1023,6 +1044,11 @@ def plot_pop2prime_radial_subhalo_profiles_allpsi(
             jb17_reference = np.where(
                 np.isfinite(jb17_reference) & (jb17_reference > 0),
                 jb17_reference,
+                artificial_small,
+            )
+            han16_reference = np.where(
+                np.isfinite(han16_reference) & (han16_reference > 0),
+                han16_reference,
                 artificial_small,
             )
             ax.plot(
@@ -1040,6 +1066,14 @@ def plot_pop2prime_radial_subhalo_profiles_allpsi(
                 linewidth=2.0,
                 linestyle="--",
                 label=rf"NFW $\times$ JB17, $(\eta,\mu)=({JB17_ETA:.0f},{JB17_MU:.0f})$",
+            )
+            ax.plot(
+                x_centers,
+                han16_reference,
+                color="#7B61B7",
+                linewidth=2.0,
+                linestyle=":",
+                label=rf"NFW $\times$ Han16, $\gamma={HAN16_GAMMA:.2f}$",
             )
 
         ax.set_xscale("log")
@@ -1065,7 +1099,7 @@ def plot_pop2prime_radial_subhalo_profiles_allpsi(
 
     plt.tight_layout(rect=(0, 0, 1, 0.94))
     mode_tag = f"avg{int(show_average)}_ind{int(show_individual)}_pct{int(show_percentile)}"
-    ref_tag = f"_JB17eta{JB17_ETA:.0f}mu{JB17_MU:.0f}" if show_jb17_reference else ""
+    ref_tag = f"_JB17eta{JB17_ETA:.0f}mu{JB17_MU:.0f}_Han16gamma{HAN16_GAMMA:.2f}" if show_jb17_reference else ""
     norm_tag = "_normRvir" if normalize_at_vir else ""
     output_path = host_dir / f"pop2prime_radial_profiles_allpsi_{mode_tag}{norm_tag}{ref_tag}_{host_mass_tag}_DD{snapshot:04d}.png"
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
@@ -1790,15 +1824,21 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None, host_mass_min=N
     if has_temperature_column:
         temperature_ratio_path = output_dir / f"all_hosts_gas_temperature_over_tvir_{host_mass_tag}_DD{snapshot:04d}.png"
         fig, ax = plt.subplots(figsize=(8, 6), facecolor="white")
-        artificial_small = 1.0e-10
         for profile, color in zip(host_profiles, host_colors):
             host_mvir_msun = profile["host_mass"] / h_Hubble
             host_tvir = Temperature_Virial_analytic(host_mvir_msun, redshift)
             y = profile["shell_gas_temperature_mw"] / host_tvir
-            y_plot = np.where(y > 0, y, artificial_small)
+            valid = (
+                np.isfinite(y)
+                & (y > 0.0)
+                & np.isfinite(profile["shell_gas_mass_msun"])
+                & (profile["shell_gas_mass_msun"] >= 1.0)
+            )
+            if not np.any(valid):
+                continue
             ax.plot(
-                profile["x_centers"],
-                y_plot,
+                profile["x_centers"][valid],
+                y[valid],
                 color=color,
                 linewidth=1.2,
                 alpha=0.75,
@@ -1807,10 +1847,11 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None, host_mass_min=N
 
         ax.set_xscale("log")
         ax.set_yscale("log")
+        ax.set_ylim(bottom=1.0e-2)
         ax.axvline(1.0, color="black", linestyle=":", linewidth=1.2)
         ax.axhline(1.0, color="tab:red", linestyle="--", linewidth=1.5, label=r"$T_{\rm gas}=T_{\rm vir}$")
         ax.set_xlabel(r"$x=r/R_{\mathrm{vir}}$", fontsize=14)
-        ax.set_ylabel(r"$T_{\mathrm{gas,mw}} / T_{\mathrm{vir}}$", fontsize=14)
+        ax.set_ylabel(r"$T_{\rm gas} / T_{\rm vir}$", fontsize=14)
         ax.set_title(
             rf"Pop2Prime host temperature profiles, z={redshift:.2f}, "
             rf"$M_{{\mathrm{{host}}}} \geq 10^{{{np.log10(label_host_mass_min):.1f}}}\,M_\odot/h$",
@@ -1850,12 +1891,12 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None, host_mass_min=N
             artificial_small,
         )
         total_density_plot = np.maximum(total_density_plot, PAPER_DENSITY_YMIN)
-        gas_density_plot = np.where(
-            profile["shell_gas_density_norm"] > 0,
-            profile["shell_gas_density_norm"],
-            artificial_small,
+        gas_density_valid = (
+            np.isfinite(profile["shell_gas_density_norm"])
+            & (profile["shell_gas_density_norm"] > 0.0)
+            & np.isfinite(profile["shell_gas_mass_msun"])
+            & (profile["shell_gas_mass_msun"] >= 1.0)
         )
-        gas_density_plot = np.maximum(gas_density_plot, PAPER_DENSITY_YMIN)
         ax.plot(
             profile["x_centers"],
             total_density_plot,
@@ -1864,14 +1905,15 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None, host_mass_min=N
             alpha=0.8,
             label=f"host {profile['host_id']}",
         )
-        ax.plot(
-            profile["x_centers"],
-            gas_density_plot,
-            color=color,
-            linewidth=1.3,
-            linestyle="--",
-            alpha=0.8,
-        )
+        if np.any(gas_density_valid):
+            ax.plot(
+                profile["x_centers"][gas_density_valid],
+                profile["shell_gas_density_norm"][gas_density_valid],
+                color=color,
+                linewidth=1.3,
+                linestyle="--",
+                alpha=0.8,
+            )
 
     nfw_concentration = get_concentration(
         representative_host_mass_msun,
@@ -1893,7 +1935,7 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None, host_mass_min=N
         color="black",
         linestyle="-",
         linewidth=3.2,
-        label=rf"NFW total ({CONCENTRATION_MODEL})",
+        label=rf"NFW total ({CONCENTRATION_LABEL})",
         zorder=5,
     )
 
@@ -1951,7 +1993,6 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None, host_mass_min=N
 
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_ylim(bottom=PAPER_DENSITY_YMIN)
     ax.axvline(1.0, color="black", linestyle=":", linewidth=1.2)
     ax.set_xlabel(r"$x=r/R_{\mathrm{vir}}$", fontsize=14)
     ax.set_ylabel(r"$\rho / \rho_{\mathrm{vir}}$", fontsize=14)
@@ -1965,7 +2006,7 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None, host_mass_min=N
     style_handles = [
         Line2D([0], [0], color="0.25", linewidth=1.6, linestyle="-", label="host total density"),
         Line2D([0], [0], color="0.25", linewidth=1.4, linestyle="--", label="host gas density"),
-        Line2D([0], [0], color="black", linewidth=3.2, linestyle="-", label=rf"NFW total ({CONCENTRATION_MODEL})"),
+        Line2D([0], [0], color="black", linewidth=3.2, linestyle="-", label=rf"NFW total ({CONCENTRATION_LABEL})"),
         Patch(
             facecolor="0.45",
             alpha=0.38,
@@ -2012,6 +2053,174 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None, host_mass_min=N
     plt.close()
     print(f"Saved combined density overplot figure to {combined_density_output_path}")
 
+    if has_temperature_column:
+        density_temperature_output_path = (
+            output_dir
+            / f"all_hosts_density_temperature_profiles_{host_mass_tag}_DD{snapshot:04d}.png"
+        )
+        fig, axes = plt.subplots(1, 2, figsize=(14.0, 5.6), facecolor="white")
+        ax_density, ax_temperature = axes
+
+        for profile, color in zip(host_profiles, host_colors):
+            total_density_plot = np.where(
+                profile["shell_total_density_norm"] > 0,
+                profile["shell_total_density_norm"],
+                artificial_small,
+            )
+            total_density_plot = np.maximum(total_density_plot, PAPER_DENSITY_YMIN)
+            gas_density_valid = (
+                np.isfinite(profile["shell_gas_density_norm"])
+                & (profile["shell_gas_density_norm"] > 0.0)
+                & np.isfinite(profile["shell_gas_mass_msun"])
+                & (profile["shell_gas_mass_msun"] >= 1.0)
+            )
+            ax_density.plot(
+                profile["x_centers"],
+                total_density_plot,
+                color=color,
+                linewidth=1.4,
+                alpha=0.8,
+            )
+            if np.any(gas_density_valid):
+                ax_density.plot(
+                    profile["x_centers"][gas_density_valid],
+                    profile["shell_gas_density_norm"][gas_density_valid],
+                    color=color,
+                    linewidth=1.2,
+                    linestyle="--",
+                    alpha=0.8,
+                )
+
+        ax_density.plot(
+            profile_radii,
+            total_nfw_profile,
+            color="black",
+            linestyle="-",
+            linewidth=2.8,
+            label=rf"NFW total ({CONCENTRATION_LABEL})",
+            zorder=5,
+        )
+        ax_density.fill_between(
+            profile_radii,
+            gas_band_lower,
+            gas_band_upper,
+            color="0.45",
+            alpha=0.38,
+            linewidth=0.0,
+            zorder=2,
+        )
+        ax_density.fill_between(
+            profile_radii,
+            np.maximum(gas_band_lower * low_fgas_scale, PAPER_DENSITY_YMIN),
+            np.maximum(gas_band_upper * low_fgas_scale, PAPER_DENSITY_YMIN),
+            color="0.75",
+            alpha=0.24,
+            linewidth=0.0,
+            zorder=1,
+        )
+        for ref in reference_lines:
+            ax_density.axhline(
+                ref["y"],
+                color=ref["color"],
+                linestyle=ref["linestyle"],
+                linewidth=2.5,
+            )
+
+        ax_density.set_xscale("log")
+        ax_density.set_yscale("log")
+        ax_density.axvline(1.0, color="black", linestyle=":", linewidth=1.2)
+        ax_density.set_xlabel(r"$x=r/R_{\mathrm{vir}}$", fontsize=13)
+        ax_density.set_ylabel(r"$\rho / \rho_{\mathrm{vir}}$", fontsize=13)
+        ax_density.set_title("Density profile", fontsize=12)
+        ax_density.tick_params(direction="in", which="both", labelsize=11)
+
+        density_style_handles = [
+            Line2D([0], [0], color="0.25", linewidth=1.5, linestyle="-", label="host total"),
+            Line2D([0], [0], color="0.25", linewidth=1.3, linestyle="--", label="host gas"),
+            Line2D([0], [0], color="black", linewidth=2.8, linestyle="-", label=rf"NFW total ({CONCENTRATION_LABEL})"),
+            Patch(
+                facecolor="0.45",
+                alpha=0.38,
+                label=rf"gas gNFW, $f_{{\rm g}}=\Omega_{{\rm b}}/\Omega_{{\rm m}}$",
+            ),
+            Patch(
+                facecolor="0.75",
+                alpha=0.24,
+                label=rf"gas gNFW, $f_{{\rm g}}={PAPER_GAS_FRACTION_LOW:.2f}$",
+            ),
+        ]
+        density_legend = ax_density.legend(
+            handles=density_style_handles,
+            fontsize=8.8,
+            loc="upper right",
+            frameon=True,
+        )
+        ax_density.add_artist(density_legend)
+        density_reference_handles = [
+            Line2D(
+                [0],
+                [0],
+                color=ref["color"],
+                linewidth=1.7,
+                linestyle=ref["linestyle"],
+                label=ref["label"],
+            )
+            for ref in reference_lines
+        ]
+        ax_density.legend(
+            handles=density_reference_handles,
+            fontsize=8.6,
+            loc="lower left",
+            frameon=True,
+        )
+
+        for profile, color in zip(host_profiles, host_colors):
+            host_mvir_msun = profile["host_mass"] / h_Hubble
+            host_tvir = Temperature_Virial_analytic(host_mvir_msun, redshift)
+            temperature_ratio = profile["shell_gas_temperature_mw"] / host_tvir
+            valid_temperature = (
+                np.isfinite(temperature_ratio)
+                & (temperature_ratio > 0.0)
+                & np.isfinite(profile["shell_gas_mass_msun"])
+                & (profile["shell_gas_mass_msun"] >= 1.0)
+            )
+            if not np.any(valid_temperature):
+                continue
+            ax_temperature.plot(
+                profile["x_centers"][valid_temperature],
+                temperature_ratio[valid_temperature],
+                color=color,
+                linewidth=1.2,
+                alpha=0.75,
+            )
+
+        ax_temperature.set_xscale("log")
+        ax_temperature.set_yscale("log")
+        ax_temperature.set_ylim(bottom=1.0e-2)
+        ax_temperature.axvline(1.0, color="black", linestyle=":", linewidth=1.2)
+        ax_temperature.axhline(
+            1.0,
+            color="tab:red",
+            linestyle="--",
+            linewidth=1.5,
+            label=r"$T_{\rm gas}=T_{\rm vir}$",
+        )
+        ax_temperature.set_xlabel(r"$x=r/R_{\mathrm{vir}}$", fontsize=13)
+        ax_temperature.set_ylabel(r"$T_{\rm gas} / T_{\rm vir}$", fontsize=13)
+        ax_temperature.set_title("Temperature profile", fontsize=12)
+        ax_temperature.tick_params(direction="in", which="both", labelsize=11)
+        ax_temperature.legend(fontsize=9.0, loc="lower right", frameon=True)
+
+        fig.suptitle(
+            rf"Pop2Prime host profiles, z={redshift:.2f}, "
+            rf"$M_{{\mathrm{{host}}}} \geq 10^{{{np.log10(label_host_mass_min):.1f}}}\,M_\odot/h$",
+            fontsize=13,
+        )
+        fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.94), w_pad=2.2)
+        fig.savefig(density_temperature_output_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved combined density-temperature figure to {density_temperature_output_path}")
+
     plot_specs = [
         (
             "shell_gas_to_total_density_ratio",
@@ -2024,7 +2233,7 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None, host_mass_min=N
         plot_specs.append(
             (
                 "shell_gas_temperature_mw",
-                r"$T_{\mathrm{gas,mw}}\,[\mathrm{K}]$",
+                r"$T_{\rm gas}\,[\mathrm{K}]$",
                 output_dir / f"all_hosts_gas_temperature_mw_{host_mass_tag}_DD{snapshot:04d}.png",
                 None,
             )

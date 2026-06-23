@@ -619,16 +619,39 @@ def plot_shmf_redshift_evolution(snapNums, redshifts, dark_matter_resolution):
     ax = fig.gca()
     labels = [f'z={redshift}' for redshift in redshifts]
     lgx_all = [-2, -1, -0.8, -0.5, -0.2]
+    beta_evolved = np.log(10) * p_evolved[1]
+    omega_evolved = p_evolved[2]
 
     for lgx in lgx_all:
         x = 10**lgx
         exponential_tail = [np.exp(-beta*x**omega) for beta, omega in zip(beta_list, omega_list)]
-        ax.plot(redshifts, exponential_tail, label=f'lg(m/M)={lgx}')
+        line, = ax.plot(redshifts, exponential_tail, label=f'lg(m/M)={lgx}')
+        color = line.get_color()
+        ax.scatter(
+            0,
+            np.exp(-beta_evolved*x**omega_evolved),
+            marker='s',
+            s=45,
+            facecolors='none',
+            edgecolors=color,
+            linewidths=1.5,
+            zorder=5,
+        )
     
     ax.set_xlabel('Redshift', fontsize=14)
     ax.set_ylabel(r'$\exp(-\beta (m/M)^{\omega})$', fontsize=14)
     ax.tick_params(direction='in', which='both', labelsize=12)
-    ax.legend(fontsize=11)
+    jb16_marker = Line2D(
+        [0], [0],
+        marker='s',
+        linestyle='None',
+        markerfacecolor='none',
+        markeredgecolor='k',
+        markersize=7,
+        label='Jiang & van den Bosch16 evolved'
+    )
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles + [jb16_marker], labels + [jb16_marker.get_label()], fontsize=11)
     ax.invert_xaxis()
     plt.tight_layout()
     plt.savefig(output_filename,dpi=300)

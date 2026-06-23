@@ -2310,11 +2310,472 @@ def _get_subhalo_profile_color(config):
         return 'tab:green'
     if radial_bias_model == "han16":
         return 'tab:purple'
-    return 'tab:red'
+    return '#666666'
 
 
 def _get_xmax_marker(x_max):
     return 's' if np.isclose(x_max, 1.0) else 'D'
+
+
+
+def plot_overlay_Hgas_Hsub_cumulative_heating_cooling(
+    input_path=None,
+    output_path=None,
+    radius_names_to_plot=('rs', '0p5Rvir'),
+    hsub_configs=None,
+    hsub_color='tab:purple',
+    cooling_color='blue',
+    hgas_color='tab:red',
+    shmf_color='orange',
+    figsize=None,
+):
+    """
+    Plot cumulative heating/cooling within selected radii and overlay H_sub.
+
+    The input file is the npz summary produced by
+    plot_modelA_cumulative_heating_cooling_massivehalo(). It contains the
+    global heating/cooling amplitudes, the H_gas profile correction, the
+    cooling profile correction, and SHMF scatter bands. This function keeps
+    those data unchanged and computes H_sub curves only for the overlay.
+    """
+    if input_path is None:
+        input_path = (
+            '/home/zwu/21cm_project/unified_model/Analytic_HC_results_within_radius/'
+            'modelA_cumulative_HC_massivehalo_z0p00_alpha0p0_fg0p050_ludlow16_SHMFscatter.npz'
+        )
+    if output_path is None:
+        output_path = (
+            '/home/zwu/21cm_project/unified_model/Analytic_HC_results_within_radius/'
+            'overlay_Hgas_Hsub_mean_massivehalo_z0p00_alpha0p0_fg0p050_ludlow16_test.png'
+        )
+    if hsub_configs is None:
+        hsub_configs = [
+            {'x_max': 1.0, 'radial_bias_model': 'han16', 'han16_gamma': 1.33},
+            {'x_max': 2.0, 'radial_bias_model': 'han16', 'han16_gamma': 1.33},
+        ]
+
+    data = np.load(input_path, allow_pickle=True)
+    lgM_list = data['lgM_list']
+    concentration_values = data['concentration']
+    radii_Rvir = data['radii_Rvir']
+    radius_names = [str(name) for name in data['radius_names']]
+    alpha = float(data['alpha'])
+    redshift = float(data['redshift'])
+    f_gas = float(data['f_gas'])
+    Z_Dekel = float(data['Z_Dekel']) if 'Z_Dekel' in data.files else 0.3 * 10.0**(-0.17 * redshift)
+
+    radius_indices = []
+    for radius_name in radius_names_to_plot:
+        if radius_name not in radius_names:
+            raise ValueError(f"Radius name {radius_name!r} not found in {radius_names}.")
+        radius_indices.append(radius_names.index(radius_name))
+
+    radius_labels = {
+        'rs': r'$<r_s$',
+        '0p5Rvir': r'$<0.5R_{\rm vir}$',
+        'Rvir': r'$<R_{\rm vir}$',
+    }
+    n_panels = len(radius_indices)
+    if figsize is None:
+        figsize = (5.75 * n_panels, 5.2)
+
+    fig, axes = plt.subplots(
+        1,
+        n_panels,
+        figsize=figsize,
+        sharey=True,
+        facecolor='white',
+        squeeze=False,
+    )
+    axes = axes[0]
+
+    heating_global_erg_s = data['heating_global_erg_s']
+    heating_within_erg_s = data['heating_within_erg_s']
+    cooling_within_erg_s = data['cooling_within_erg_s']
+
+    hsub_within = {}
+    for config_index, config in enumerate(hsub_configs):
+        ratio = np.zeros((len(radius_indices), len(lgM_list)))
+        for panel_index, radius_index in enumerate(radius_indices):
+            for mass_index, concentration_value in enumerate(concentration_values):
+                ratio[panel_index, mass_index] = get_cumulative_heating_ratio_modelC(
+                    radii_Rvir[radius_index, mass_index],
+                    concentration_value,
+                    alpha,
+                    x_max=config['x_max'],
+                    radial_bias_model=config.get('radial_bias_model', 'nfw'),
+                    han16_gamma=config.get('han16_gamma', 1.33),
+                )
+        hsub_within[config_index] = heating_global_erg_s[None, :] * ratio
+
+    for panel_index, radius_index in enumerate(radius_indices):
+        ax = axes[panel_index]
+        radius_name = radius_names[radius_index]
+
+        if 'Heating_singlehost_p0p15_within_erg_s' in data.files:
+            scatter_bands = [
+                ('Heating_singlehost_p0p15_within_erg_s', 'Heating_singlehost_p99p85_within_erg_s', 0.10),
+                ('Heating_singlehost_p2p5_within_erg_s', 'Heating_singlehost_p97p5_within_erg_s', 0.20),
+                ('Heating_singlehost_p16_within_erg_s', 'Heating_singlehost_p84_within_erg_s', 0.40),
+            ]
+            for low_key, high_key, alpha_fill in scatter_bands:
+                ax.fill_between(
+                    lgM_list,
+                    data[low_key][radius_index],
+                    data[high_key][radius_index],
+                    color=shmf_color,
+                    alpha=alpha_fill,
+                    linewidth=0,
+                    zorder=1,
+                )
+
+        cooling_lower = np.min(cooling_within_erg_s[radius_index], axis=1)
+        cooling_upper = np.max(cooling_within_erg_s[radius_index], axis=1)
+        ax.fill_between(
+            lgM_list,
+            cooling_lower,
+            cooling_upper,
+            color=cooling_color,
+            alpha=0.30,
+            linewidth=0,
+            zorder=1,
+        )
+        if cooling_within_erg_s.shape[2] >= 3:
+            ax.plot(
+                lgM_list,
+                cooling_within_erg_s[radius_index, :, 2],
+                color=cooling_color,
+                linewidth=1.8,
+                zorder=4,
+            )
+
+        ax.plot(
+            lgM_list,
+            heating_within_erg_s[radius_index],
+            color=hgas_color,
+            linewidth=1.7,
+            linestyle='-',
+            zorder=6,
+        )
+        if 'Heating_singlehost_median_within_erg_s' in data.files:
+            ax.plot(
+                lgM_list,
+                data['Heating_singlehost_median_within_erg_s'][radius_index],
+                color=hgas_color,
+                linewidth=1.7,
+                linestyle=':',
+                zorder=5,
+            )
+
+        for config_index, config in enumerate(hsub_configs):
+            ax.plot(
+                lgM_list,
+                hsub_within[config_index][panel_index],
+                color=hsub_color,
+                linewidth=1.8,
+                linestyle='-',
+                marker=_get_xmax_marker(config['x_max']),
+                markersize=4.5,
+                markerfacecolor='none',
+                markevery=5,
+                zorder=7,
+            )
+
+        ax.set_title(radius_labels.get(radius_name, radius_name), fontsize=13)
+        ax.set_yscale('log')
+        ax.set_xlabel(r'log$_{10}$ M [M$_\odot$/h]', fontsize=12)
+        ax.tick_params(axis='both', direction='in')
+        ax.grid(alpha=0.25)
+        if panel_index == 0:
+            ax.set_ylabel(r'Cumulative heating/cooling within radius [erg/s]', fontsize=12)
+            first_hsub = hsub_configs[0]
+            profile_name = first_hsub.get('radial_bias_model', 'nfw').lower()
+            if profile_name == 'han16':
+                hsub_text = rf'H$_{{\rm sub}}$: Han16, $\gamma={first_hsub.get("han16_gamma", 1.33):.2f}$'
+            elif profile_name == 'jb17':
+                hsub_text = r'H$_{\rm sub}$: JvBIII'
+            else:
+                hsub_text = r'H$_{\rm sub}$: NFW'
+            ax.text(
+                0.04,
+                0.95,
+                rf'$z={redshift:.0f}$, $\alpha={alpha:.0f}$, $f_g={f_gas:.2f}$' + '\n' + hsub_text,
+                transform=ax.transAxes,
+                ha='left',
+                va='top',
+                fontsize=10.5,
+                bbox=dict(boxstyle='round,pad=0.25', facecolor='white', edgecolor='0.7', alpha=0.9),
+            )
+
+    hsub_handles = [
+        mlines.Line2D(
+            [],
+            [],
+            color=hsub_color,
+            linestyle='-',
+            marker=_get_xmax_marker(config['x_max']),
+            markerfacecolor='none',
+            markersize=5,
+            label=rf'$H_{{\rm sub}}$, $x_{{\max}}={config["x_max"]:.0f}$',
+        )
+        for config in hsub_configs
+    ]
+    legend_handles = [
+        mlines.Line2D([], [], color=hgas_color, linewidth=1.8, linestyle='-', label=r'$H_{\rm gas}$ mean'),
+        mlines.Line2D([], [], color=hgas_color, linewidth=1.8, linestyle=':', label=r'$H_{\rm gas}$ median'),
+        mlines.Line2D([], [], color=shmf_color, linewidth=6, alpha=0.35, label='SHMF scatter'),
+    ] + hsub_handles + [
+        mlines.Line2D([], [], color=cooling_color, linewidth=6, alpha=0.30, label=r'$Z=10^{-3}-1Z_\odot$'),
+        mlines.Line2D([], [], color=cooling_color, linewidth=1.8, linestyle='-', label=rf'$Z_{{\rm Dekel}}={Z_Dekel:.2f}Z_\odot$'),
+    ]
+    axes[-1].legend(handles=legend_handles, loc='best', fontsize=9.5, frameon=True)
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Saved Hgas/Hsub cumulative overlay plot: {output_path}")
+    return output_path
+
+
+
+def plot_paper_cooling_heating_within_radius_z0_alpha0_fg0p05(
+    output_path=(
+        '/home/zwu/21cm_project/unified_model/Profile_results_for_paper/'
+        'cooling_heating_within_radius/cooling_heating_within_radius_z0_alpha0_fg0p05.png'
+    ),
+):
+    """Generate the z=0 paper figure for cumulative H_gas/H_sub heating and cooling."""
+    return plot_overlay_Hgas_Hsub_cumulative_heating_cooling(output_path=output_path)
+
+
+
+def plot_paper_cooling_heating_within_radius_z15_extreme_cases(
+    upper_input_path=(
+        '/home/zwu/21cm_project/unified_model/Analytic_HC_results_within_radius/'
+        'modelA_cumulative_HC_minihalo_z15p00_alpha1p0_fgcosmic_ludlow16_SHMFscatter.npz'
+    ),
+    lower_input_path=(
+        '/home/zwu/21cm_project/unified_model/Analytic_HC_results_within_radius/'
+        'modelA_cumulative_HC_minihalo_z15p00_alpha0p0_fg0p050_ludlow16_SHMFscatter.npz'
+    ),
+    output_path=(
+        '/home/zwu/21cm_project/unified_model/Profile_results_for_paper/'
+        'cooling_heating_within_radius/cooling_heating_within_radius_z15_extreme_cases.png'
+    ),
+    radius_names_to_plot=('rs', '0p5Rvir'),
+    hsub_configs=None,
+):
+    """Generate the z=15 paper figure for two extreme gas-profile/gas-fraction cases."""
+    if hsub_configs is None:
+        hsub_configs = [
+            {'x_max': 1.0, 'radial_bias_model': 'nfw'},
+            {'x_max': 2.0, 'radial_bias_model': 'nfw'},
+        ]
+
+    case_specs = [
+        {
+            'input_path': upper_input_path,
+            'row_label': r'$z=15$, $\alpha=1$, $f_g=f_b$' + '\n' + r'$H_{\rm sub}$: NFW',
+        },
+        {
+            'input_path': lower_input_path,
+            'row_label': r'$z=15$, $\alpha=0$, $f_g=0.05$' + '\n' + r'$H_{\rm sub}$: NFW',
+        },
+    ]
+    radius_labels = {
+        'rs': r'$<r_s$',
+        '0p5Rvir': r'$<0.5R_{\rm vir}$',
+        'Rvir': r'$<R_{\rm vir}$',
+    }
+    cooling_colors = ['cyan', 'deepskyblue', 'royalblue']
+    hgas_color = 'tab:red'
+    shmf_color = 'orange'
+    hsub_color = _get_subhalo_profile_color({'radial_bias_model': 'nfw'})
+
+    fig, axes = plt.subplots(
+        len(case_specs),
+        len(radius_names_to_plot),
+        figsize=(11.5, 8.4),
+        sharex=True,
+        sharey=True,
+        facecolor='white',
+        squeeze=False,
+    )
+
+    for row_index, case in enumerate(case_specs):
+        data = np.load(case['input_path'], allow_pickle=True)
+        lgM_list = data['lgM_list']
+        concentration_values = data['concentration']
+        radii_Rvir = data['radii_Rvir']
+        radius_names = [str(name) for name in data['radius_names']]
+        alpha = float(data['alpha'])
+        heating_global_erg_s = data['heating_global_erg_s']
+        heating_within_erg_s = data['heating_within_erg_s']
+        cooling_within_erg_s = data['cooling_within_erg_s']
+        f_H2_values = data['f_H2_values']
+
+        radius_indices = []
+        for radius_name in radius_names_to_plot:
+            if radius_name not in radius_names:
+                raise ValueError(f"Radius name {radius_name!r} not found in {radius_names}.")
+            radius_indices.append(radius_names.index(radius_name))
+
+        hsub_within = {}
+        for config_index, config in enumerate(hsub_configs):
+            ratio = np.zeros((len(radius_indices), len(lgM_list)))
+            for panel_index, radius_index in enumerate(radius_indices):
+                for mass_index, concentration_value in enumerate(concentration_values):
+                    ratio[panel_index, mass_index] = get_cumulative_heating_ratio_modelC(
+                        radii_Rvir[radius_index, mass_index],
+                        concentration_value,
+                        alpha,
+                        x_max=config['x_max'],
+                        radial_bias_model=config.get('radial_bias_model', 'nfw'),
+                        han16_gamma=config.get('han16_gamma', 1.33),
+                    )
+            hsub_within[config_index] = heating_global_erg_s[None, :] * ratio
+
+        for col_index, radius_index in enumerate(radius_indices):
+            ax = axes[row_index, col_index]
+            radius_name = radius_names[radius_index]
+
+            scatter_bands = [
+                ('Heating_singlehost_p0p15_within_erg_s', 'Heating_singlehost_p99p85_within_erg_s', 0.10),
+                ('Heating_singlehost_p2p5_within_erg_s', 'Heating_singlehost_p97p5_within_erg_s', 0.20),
+                ('Heating_singlehost_p16_within_erg_s', 'Heating_singlehost_p84_within_erg_s', 0.40),
+            ]
+            for low_key, high_key, alpha_fill in scatter_bands:
+                if low_key in data.files and high_key in data.files:
+                    ax.fill_between(
+                        lgM_list,
+                        data[low_key][radius_index],
+                        data[high_key][radius_index],
+                        color=shmf_color,
+                        alpha=alpha_fill,
+                        linewidth=0,
+                        zorder=1,
+                    )
+
+            ax.plot(
+                lgM_list,
+                heating_within_erg_s[radius_index],
+                color=hgas_color,
+                linewidth=1.7,
+                linestyle='-',
+                zorder=6,
+            )
+            if 'Heating_singlehost_median_within_erg_s' in data.files:
+                ax.plot(
+                    lgM_list,
+                    data['Heating_singlehost_median_within_erg_s'][radius_index],
+                    color=hgas_color,
+                    linewidth=1.7,
+                    linestyle=':',
+                    zorder=5,
+                )
+
+            for config_index, config in enumerate(hsub_configs):
+                ax.plot(
+                    lgM_list,
+                    hsub_within[config_index][col_index],
+                    color=hsub_color,
+                    linewidth=1.8,
+                    linestyle='-',
+                    marker=_get_xmax_marker(config['x_max']),
+                    markersize=4.5,
+                    markerfacecolor='none',
+                    markevery=5,
+                    zorder=7,
+                )
+
+            for cooling_index, f_H2 in enumerate(f_H2_values):
+                ax.plot(
+                    lgM_list,
+                    cooling_within_erg_s[radius_index, :, cooling_index],
+                    color=cooling_colors[cooling_index % len(cooling_colors)],
+                    linewidth=1.8,
+                    linestyle='-',
+                    zorder=4,
+                )
+
+            if row_index == 0:
+                ax.set_title(radius_labels.get(radius_name, radius_name), fontsize=13)
+            if col_index == 0:
+                ax.text(
+                    0.04,
+                    0.95,
+                    case['row_label'],
+                    transform=ax.transAxes,
+                    ha='left',
+                    va='top',
+                    fontsize=10.5,
+                    bbox=dict(boxstyle='round,pad=0.25', facecolor='white', edgecolor='0.7', alpha=0.9),
+                )
+            if row_index == len(case_specs) - 1:
+                ax.set_xlabel(r'log$_{10}$ M [M$_\odot$/h]', fontsize=12)
+
+            ax.set_yscale('log')
+            ax.tick_params(axis='both', direction='in')
+            ax.grid(alpha=0.25)
+
+    hsub_handles = [
+        mlines.Line2D(
+            [],
+            [],
+            color=hsub_color,
+            linestyle='-',
+            marker=_get_xmax_marker(config['x_max']),
+            markerfacecolor='none',
+            markersize=5,
+            label=rf'$H_{{\rm sub}}$, $x_{{\max}}={config["x_max"]:.0f}$',
+        )
+        for config in hsub_configs
+    ]
+    cooling_handles = [
+        mlines.Line2D(
+            [],
+            [],
+            color=cooling_colors[i % len(cooling_colors)],
+            linewidth=1.8,
+            linestyle='-',
+            label=rf'$f_{{\rm H_2}}=10^{{{int(np.log10(f_H2))}}}$',
+        )
+        for i, f_H2 in enumerate(case_specs[0].get('f_H2_values', []))
+    ]
+    if not cooling_handles:
+        first_data = np.load(case_specs[0]['input_path'], allow_pickle=True)
+        cooling_handles = [
+            mlines.Line2D(
+                [],
+                [],
+                color=cooling_colors[i % len(cooling_colors)],
+                linewidth=1.8,
+                linestyle='-',
+                label=rf'$f_{{\rm H_2}}=10^{{{int(np.log10(f_H2))}}}$',
+            )
+            for i, f_H2 in enumerate(first_data['f_H2_values'])
+        ]
+
+    legend_handles = [
+        mlines.Line2D([], [], color=hgas_color, linewidth=1.8, linestyle='-', label=r'$H_{\rm gas}$ mean'),
+        mlines.Line2D([], [], color=hgas_color, linewidth=1.8, linestyle=':', label=r'$H_{\rm gas}$ median'),
+        mlines.Line2D([], [], color=shmf_color, linewidth=6, alpha=0.35, label='SHMF scatter'),
+    ] + hsub_handles + cooling_handles
+    axes[0, -1].legend(
+        handles=legend_handles,
+        loc='upper left',
+        fontsize=9.5,
+        frameon=True,
+    )
+    fig.supylabel(r'Cumulative heating/cooling within radius [erg/s]', fontsize=12)
+
+    fig.subplots_adjust(left=0.10, right=0.98, bottom=0.09, top=0.95, wspace=0.08, hspace=0.13)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Saved z=15 cumulative H/C paper plot: {output_path}")
+    return output_path
 
 
 def test_cooling_heating_profile():

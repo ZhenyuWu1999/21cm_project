@@ -156,6 +156,37 @@ def get_cumulative_cooling_fraction(radii_Rvir, concentration, alpha):
     return cumulative_corr / total_corr
 
 
+def get_differential_cooling_fraction(radii_Rvir, concentration, alpha):
+    """
+    Return d[C(<r) / C(<Rvir)] / d(r/Rvir).
+
+    This is the shell contribution per unit x, where x = r/Rvir.  It integrates
+    to unity from x=0 to x=1.
+    """
+    scalar_input = np.isscalar(radii_Rvir)
+    radii_Rvir = np.atleast_1d(np.asarray(radii_Rvir, dtype=float))
+    if np.any(radii_Rvir < 0):
+        raise ValueError("radii_Rvir must be non-negative.")
+
+    A_alpha = get_A_alpha_c(concentration, alpha)
+    total_corr = get_profile_corr_for_cooling_within_radius(1.0, concentration, alpha)
+
+    derivative = np.zeros_like(radii_Rvir, dtype=float)
+    in_range = radii_Rvir <= 1.0
+    x = radii_Rvir[in_range] * concentration
+    derivative[in_range] = (
+        concentration**4
+        / (3.0 * A_alpha**2)
+        * x**(2.0 - 2.0 * alpha)
+        / (1.0 + x)**(6.0 - 2.0 * alpha)
+        / total_corr
+    )
+
+    if scalar_input:
+        return float(derivative[0])
+    return derivative
+
+
 def get_cumulative_heating_fraction_modelA(radii_Rvir, concentration, alpha):
     """
     Return H_A(<r) / H_A(<Rvir) for heating Model A, where h_A(r) ∝ rho_g(r).
@@ -172,6 +203,33 @@ def get_cumulative_heating_fraction_modelA(radii_Rvir, concentration, alpha):
     if scalar_input:
         return float(heating_fraction[0])
     return heating_fraction
+
+
+def get_differential_heating_fraction_modelA(radii_Rvir, concentration, alpha):
+    """
+    Return d[H_A(<r) / H_A(<Rvir)] / d(r/Rvir).
+
+    Heating Model A has shell contribution proportional to rho_g(r) r^2 dr.
+    The result integrates to unity from x=0 to x=1, with x = r/Rvir.
+    """
+    scalar_input = np.isscalar(radii_Rvir)
+    radii_Rvir = np.atleast_1d(np.asarray(radii_Rvir, dtype=float))
+    if np.any(radii_Rvir < 0):
+        raise ValueError("radii_Rvir must be non-negative.")
+
+    derivative = np.zeros_like(radii_Rvir, dtype=float)
+    in_range = radii_Rvir <= 1.0
+    x = radii_Rvir[in_range] * concentration
+    derivative[in_range] = (
+        concentration
+        * x**(2.0 - alpha)
+        / (1.0 + x)**(3.0 - alpha)
+        / get_A_alpha_c(concentration, alpha)
+    )
+
+    if scalar_input:
+        return float(derivative[0])
+    return derivative
 
 
 def get_toy_Ksub_top_hat(x, amplitude, x_min=0.1, x_max=1.0):
@@ -245,6 +303,194 @@ def get_cumulative_heating_ratio_modelB_toy(
     inverse_order = np.argsort(order)
     return ratio_sorted[inverse_order]
 
+
+
+def get_modelC_subhalo_count_dx3_shape(
+    radii_Rvir,
+    concentration,
+    use_jb17_correction=False,
+    jb17_eta=2.0,
+    jb17_mu=4.0,
+    radial_bias_model=None,
+    han16_gamma=1.33,
+):
+    """
+    Return the Model C subhalo number-density shape P(x) = dN/dx^3.
+
+    Here x = r/Rvir.  The baseline shape is NFW-like.  Optional radial-bias
+    factors are JB17, 2^mu x^eta / (1+x)^mu, or Han16, x^gamma.
+    """
+    scalar_input = np.isscalar(radii_Rvir)
+    x_values = np.atleast_1d(np.asarray(radii_Rvir, dtype=float))
+    if np.any(x_values < 0):
+        raise ValueError("radii_Rvir must be non-negative.")
+
+    if radial_bias_model is None:
+        radial_bias_model = 'jb17' if use_jb17_correction else 'nfw'
+    radial_bias_model = radial_bias_model.lower()
+
+    profile = np.zeros_like(x_values, dtype=float)
+    positive = x_values > 0.0
+    cx = concentration * x_values[positive]
+    profile[positive] = 1.0 / (cx * (1.0 + cx) ** 2)
+
+    if radial_bias_model in {'nfw', 'none'}:
+        pass
+    elif radial_bias_model == 'jb17':
+        profile[positive] *= (
+            (2.0 ** jb17_mu)
+            * x_values[positive] ** jb17_eta
+            / (1.0 + x_values[positive]) ** jb17_mu
+        )
+    elif radial_bias_model == 'han16':
+        profile[positive] *= x_values[positive] ** han16_gamma
+    else:
+        raise ValueError(f"Unknown radial_bias_model: {radial_bias_model}")
+
+    if scalar_input:
+        return float(profile[0])
+    return profile
+
+
+def get_modelC_subhalo_radial_pdf(
+    radii_Rvir,
+    concentration,
+    x_max=1.0,
+    use_jb17_correction=False,
+    num_points=4096,
+    radial_bias_model=None,
+    han16_gamma=1.33,
+):
+    """
+    Return the normalized Model C radial PDF u(x) per unit x.
+
+    P(x) is normalized over [0, x_max] using
+        u(x) = 3 x^2 P(x) / integral_0^xmax 3 x'^2 P(x') dx'.
+    """
+    if x_max <= 0:
+        raise ValueError("x_max must be positive.")
+
+    scalar_input = np.isscalar(radii_Rvir)
+    x_values = np.atleast_1d(np.asarray(radii_Rvir, dtype=float))
+    if np.any(x_values < 0):
+        raise ValueError("radii_Rvir must be non-negative.")
+
+    x_floor = max(1.0e-8, x_max * 1.0e-6)
+    x_grid = np.concatenate(([0.0], np.geomspace(x_floor, x_max, num_points)))
+    p_grid = get_modelC_subhalo_count_dx3_shape(
+        x_grid,
+        concentration,
+        use_jb17_correction=use_jb17_correction,
+        radial_bias_model=radial_bias_model,
+        han16_gamma=han16_gamma,
+    )
+    pdf_grid = 3.0 * x_grid**2 * p_grid
+    normalization = np.trapezoid(pdf_grid, x_grid)
+    if not np.isfinite(normalization) or normalization <= 0.0:
+        raise ValueError("Model C radial PDF normalization failed.")
+
+    pdf_values = np.zeros_like(x_values, dtype=float)
+    in_range = x_values <= x_max
+    p_values = get_modelC_subhalo_count_dx3_shape(
+        x_values[in_range],
+        concentration,
+        use_jb17_correction=use_jb17_correction,
+        radial_bias_model=radial_bias_model,
+        han16_gamma=han16_gamma,
+    )
+    pdf_values[in_range] = 3.0 * x_values[in_range] ** 2 * p_values / normalization
+
+    if scalar_input:
+        return float(pdf_values[0])
+    return pdf_values
+
+
+def get_gas_density_ratio_to_virial(radii_Rvir, concentration, alpha):
+    """
+    Return rho_g(x) / rho_g,vir for the generalized NFW gas profile.
+
+    The denominator is the mean gas density inside Rvir used by the global
+    heating model.  The gas fraction cancels in this ratio.
+    """
+    scalar_input = np.isscalar(radii_Rvir)
+    radii_Rvir = np.atleast_1d(np.asarray(radii_Rvir, dtype=float))
+    if np.any(radii_Rvir < 0):
+        raise ValueError("radii_Rvir must be non-negative.")
+
+    x = radii_Rvir * concentration
+    rho_s_over_rho_vir = concentration**3 / (3.0 * get_A_alpha_c(concentration, alpha))
+    density_ratio = np.zeros_like(x, dtype=float)
+    positive = x > 0.0
+    density_ratio[positive] = generalized_NFW_profile(
+        x[positive],
+        rho_s_over_rho_vir,
+        alpha,
+    )
+
+    if scalar_input:
+        return float(density_ratio[0])
+    return density_ratio
+
+
+def get_cumulative_heating_ratio_modelC(
+    radii_Rvir,
+    concentration,
+    alpha,
+    x_max=1.0,
+    use_jb17_correction=False,
+    num_points=4096,
+    radial_bias_model=None,
+    han16_gamma=1.33,
+):
+    """
+    Return H_C(<r) / H_global for Heating Model C.
+
+    The curve is not renormalized to make H_C(<Rvir) equal H_global.  It keeps
+    the extra correction from the gas-density profile and the subhalo radial
+    PDF normalized over [0, x_max].
+    """
+    if x_max <= 0:
+        raise ValueError("x_max must be positive.")
+
+    scalar_input = np.isscalar(radii_Rvir)
+    radii_Rvir = np.atleast_1d(np.asarray(radii_Rvir, dtype=float))
+    if np.any(radii_Rvir < 0):
+        raise ValueError("radii_Rvir must be non-negative.")
+
+    radii_clipped = np.clip(radii_Rvir, 0.0, x_max)
+    order = np.argsort(radii_clipped)
+    x_eval = radii_clipped[order]
+
+    x_floor = max(1.0e-8, x_max * 1.0e-6)
+    x_grid = np.concatenate(([0.0], np.geomspace(x_floor, x_max, num_points)))
+    u_grid = get_modelC_subhalo_radial_pdf(
+        x_grid,
+        concentration,
+        x_max=x_max,
+        use_jb17_correction=use_jb17_correction,
+        num_points=num_points,
+        radial_bias_model=radial_bias_model,
+        han16_gamma=han16_gamma,
+    )
+    density_ratio_grid = get_gas_density_ratio_to_virial(
+        x_grid,
+        concentration,
+        alpha,
+    )
+    integrand = density_ratio_grid * u_grid
+    integrand[0] = 0.0
+
+    cumulative_grid = np.zeros_like(x_grid)
+    cumulative_grid[1:] = np.cumsum(
+        0.5 * (integrand[1:] + integrand[:-1]) * np.diff(x_grid)
+    )
+    ratio_sorted = np.interp(x_eval, x_grid, cumulative_grid)
+
+    if scalar_input:
+        return float(ratio_sorted[0])
+
+    inverse_order = np.argsort(order)
+    return ratio_sorted[inverse_order]
 
 def get_concentration(M_in_Msun, z, model_name):
     '''

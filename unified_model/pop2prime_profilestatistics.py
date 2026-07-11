@@ -2129,7 +2129,7 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None, host_mass_min=N
         ax_density.set_xscale("log")
         ax_density.set_yscale("log")
         ax_density.axvline(1.0, color="black", linestyle=":", linewidth=1.2)
-        ax_density.set_xlabel(r"$x=r/R_{\mathrm{vir}}$", fontsize=13)
+        ax_density.set_xlabel(r"$r/R_{\mathrm{vir}}$", fontsize=13)
         ax_density.set_ylabel(r"$\rho / \rho_{\mathrm{vir}}$", fontsize=13)
         ax_density.set_title("Density profile", fontsize=12)
         ax_density.tick_params(direction="in", which="both", labelsize=11)
@@ -2205,7 +2205,7 @@ def plot_all_host_profiles_overplot(input_path, output_dir=None, host_mass_min=N
             linewidth=1.5,
             label=r"$T_{\rm gas}=T_{\rm vir}$",
         )
-        ax_temperature.set_xlabel(r"$x=r/R_{\mathrm{vir}}$", fontsize=13)
+        ax_temperature.set_xlabel(r"$r/R_{\mathrm{vir}}$", fontsize=13)
         ax_temperature.set_ylabel(r"$T_{\rm gas} / T_{\rm vir}$", fontsize=13)
         ax_temperature.set_title("Temperature profile", fontsize=12)
         ax_temperature.tick_params(direction="in", which="both", labelsize=11)

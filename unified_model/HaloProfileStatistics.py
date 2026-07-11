@@ -121,9 +121,9 @@ def _get_statistic_metadata(statistic):
     """Return normalization metadata for a supported radial-profile statistic."""
     metadata = {
         'count_dx3': {
-            'ylabel': r'$\mathrm{d}N_{\mathrm{sub}}/\mathrm{d}x^3$',
+            'ylabel': r'$\mathrm{d}N_{\mathrm{sub}}/\mathrm{d}\xi^3$',
             'column_label': 'dN_dx3',
-            'profile_definition': 'dN/dx^3 with x=d_sub-host/R200',
+            'profile_definition': 'dN/dxi^3 with xi=d_sub-host/R200',
             'title_label': 'count-per-volume-weighted',
         },
         'count_dx': {
@@ -802,14 +802,14 @@ def plot_pop2prime_tng_radial_profile_comparison(
         ax.set_xscale('log')
         ax.set_yscale('log')
         ax.axvline(1.0, color='black', linestyle=':', linewidth=1.2)
-        ax.set_xlabel(r'$r/R_{\rm vir}$', fontsize=13)
+        ax.set_xlabel(r'$\xi = r/R_{\rm vir}$', fontsize=13)
         ax.set_title(rf'$\psi > {psi_min:.0e}$', fontsize=13)
         ax.tick_params(direction='in', which='both', labelsize=11)
         handles, labels = ax.get_legend_handles_labels()
         if handles:
             ax.legend(fontsize=8.2 if paper_style else 8)
 
-    axes[0].set_ylabel(r'$\mathrm{d}N_{\mathrm{sub}}/\mathrm{d}x^3$', fontsize=14)
+    axes[0].set_ylabel(r'$\mathrm{d}N_{\mathrm{sub}}/\mathrm{d}\xi^3$', fontsize=14)
     if not paper_style:
         fig.suptitle(
             f'Pop2Prime vs TNG radial subhalo profile, z={z_label}',
@@ -1054,8 +1054,8 @@ def plot_pop2prime_tng_radial_profile_comparison_selected_z12_paper(
     ax.set_yscale('log')
     ax.set_xlim(1.0e-2, 3.0)
     ax.set_ylim(bottom=1.0e-3)
-    ax.set_xlabel(r'$x = r/R_{200c}$', fontsize=13)
-    ax.set_ylabel(r'Normalized $\mathrm{d}N_{\rm sub}/\mathrm{d}x^3$', fontsize=13)
+    ax.set_xlabel(r'$\xi = r/R_{200c}$', fontsize=13)
+    ax.set_ylabel(r'Normalized $\mathrm{d}N_{\rm sub}/\mathrm{d}\xi^3$', fontsize=13)
     ax.tick_params(direction='in', which='both', labelsize=11)
     ax.legend(fontsize=8.5, frameon=True)
     plt.tight_layout()
@@ -1401,9 +1401,9 @@ def plot_host_averaged_radial_subhalo_profile(
     ax.set_yscale('log')
     ax.set_ylim(bottom=1.0e-3)
     if paper_style:
-        ax.set_xlabel(rf'$x=r/{halo_meta["radius_label"]}$', fontsize=14)
+        ax.set_xlabel(rf'$\xi = r/{halo_meta["radius_label"]}$', fontsize=14)
     else:
-        ax.set_xlabel(rf'$x=d_{{\mathrm{{sub-host}}}}/{halo_meta["radius_label"]}$', fontsize=14)
+        ax.set_xlabel(rf'$\xi = d_{{\mathrm{{sub-host}}}}/{halo_meta["radius_label"]}$', fontsize=14)
     ylabel = statistic_meta['ylabel']
     if normalize_at_vir:
         ylabel = 'Normalized ' + ylabel
@@ -1772,9 +1772,9 @@ def plot_host_selected_radial_subhalo_profile(
     ax.set_yscale('log')
     ax.set_ylim(bottom=1.0e-3)
     if paper_style:
-        ax.set_xlabel(rf'$r/{halo_meta["radius_label"]}$', fontsize=14)
+        ax.set_xlabel(rf'$\xi = r/{halo_meta["radius_label"]}$', fontsize=14)
     else:
-        ax.set_xlabel(rf'$x=d_{{\mathrm{{sub-host}}}}/{halo_meta["radius_label"]}$', fontsize=14)
+        ax.set_xlabel(rf'$\xi = d_{{\mathrm{{sub-host}}}}/{halo_meta["radius_label"]}$', fontsize=14)
     ylabel = statistic_meta['ylabel']
     if normalize_at_vir:
         ylabel = 'Normalized ' + ylabel

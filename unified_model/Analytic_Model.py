@@ -21,35 +21,35 @@ from TNGDataHandler import load_processed_data
 from Config import simulation_set, Kim2005_result
 from DF_Ostriker99_wake_structure import Idf_Ostriker99_nosingularity_Vtrmin
 
-def lgM_to_Tvir(lgM, z, mean_molecular_weight=mu):
+def lgM_to_Tvir(lgM, z, mean_molecular_weight=mu, mdef='200m'):
     #lgM in Msun/h
-    Tvir = Temperature_Virial_analytic(10**lgM/h_Hubble, z, mean_molecular_weight)  # Tvir in K
+    Tvir = Temperature_Virial_analytic(10**lgM/h_Hubble, z, mean_molecular_weight, mdef=mdef)  # Tvir in K
     return Tvir
 
-def Tvir_to_lgM(Tvir, z, mean_molecular_weight=mu):
-    Mvir = inversefunc_Temperature_Virial_analytic(Tvir, z, mean_molecular_weight) #Mvir in Msun
+def Tvir_to_lgM(Tvir, z, mean_molecular_weight=mu, mdef='200m'):
+    Mvir = inversefunc_Temperature_Virial_analytic(Tvir, z, mean_molecular_weight, mdef=mdef) #Mvir in Msun
     lgM = np.log10(Mvir * h_Hubble)  # convert to lgM [M_sun/h]
     return lgM
 
-def get_DF_heating_useVelVirial(M, m, redshft):
+def get_DF_heating_useVelVirial(M, m, redshft, mdef='200m'):
     #M, m in Msun/h
     #return DF heating in J/s
-    rho_g = 200 * rho_b0*(1+redshft)**3 *Msun/Mpc**3
+    rho_g = get_mass_density_analytic(redshft, mdef=mdef) * (Omega_b / Omega_m)
     I_DF = 1.0 #do not consider I_DF here
-    DF_heating = I_DF* 4 * np.pi * (G_grav * m *Msun/h_Hubble) ** 2 / Vel_Virial_analytic(M/h_Hubble, redshft) *rho_g
+    DF_heating = I_DF* 4 * np.pi * (G_grav * m *Msun/h_Hubble) ** 2 / Vel_Virial_analytic(M/h_Hubble, redshft, mdef=mdef) *rho_g
     return DF_heating
 
-def get_DF_heating_useCs(M, m, redshft, mean_molecular_weight=mu):
+def get_DF_heating_useCs(M, m, redshft, mean_molecular_weight=mu, mdef='200m'):
     #M, m in Msun/h
     #return DF heating in J/s
-    rho_g = 200 * rho_b0*(1+redshft)**3 *Msun/Mpc**3
+    rho_g = get_mass_density_analytic(redshft, mdef=mdef) * (Omega_b / Omega_m)
     I_DF = 1.0 #do not consider I_DF here
-    Tvir = Temperature_Virial_analytic(M/h_Hubble, redshft)
+    Tvir = Temperature_Virial_analytic(M/h_Hubble, redshft, mean_molecular_weight, mdef=mdef)
     Cs = np.sqrt(5.0/3.0 * kB * Tvir / (mean_molecular_weight*mp))
     DF_heating = I_DF* 4 * np.pi * (G_grav * m *Msun/h_Hubble) ** 2 / Cs *rho_g
     return DF_heating
 
-def integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF_model, mean_molecular_weight=mu):
+def integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF_model, mean_molecular_weight=mu, mdef='200m'):
     lg_x_bin_edges = np.linspace(lgx_min, lgx_max, 50)
     lg_x_bin_centers = 0.5*(lg_x_bin_edges[1:]+lg_x_bin_edges[:-1])
     lg_x_bin_width = lg_x_bin_edges[1] - lg_x_bin_edges[0]
@@ -59,13 +59,13 @@ def integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF
     m_subs = Mhost * 10**lg_x_bin_centers
 
     #debug: useVelVirial or useCs
-    heating_per_sub = np.array([get_DF_heating_useCs(Mhost, m, redshift, mean_molecular_weight) for m in m_subs])
+    heating_per_sub = np.array([get_DF_heating_useCs(Mhost, m, redshift, mean_molecular_weight, mdef=mdef) for m in m_subs])
     heating_per_bin = heating_per_sub * N_subs_per_bin
     SHMF_heating = np.sum(heating_per_bin)
     return SHMF_heating
 
 def integrate_SHMF_heating_for_single_host_with_variance(redshift, lgx_min, lgx_max, lgM, SHMF_model,
-                                                        variance_factor_list, correction_model, mean_molecular_weight=mu):
+                                                        variance_factor_list, correction_model, mean_molecular_weight=mu, mdef='200m'):
     #variance_factor_list: list of factors for variance, e.g., [1, 2, 3] means 1, 2, and 3 sigma levels
     #correction_model: 'superPoisson' or 'supersubPoisson', or 'None'
     lg_x_bin_edges = np.linspace(lgx_min, lgx_max, 50)
@@ -85,7 +85,7 @@ def integrate_SHMF_heating_for_single_host_with_variance(redshift, lgx_min, lgx_
     # calculate average heating rate
     Mhost = 10**lgM
     m_subs = Mhost * 10**lg_x_bin_centers
-    heating_per_sub = np.array([get_DF_heating_useCs(Mhost, m, redshift, mean_molecular_weight) for m in m_subs])
+    heating_per_sub = np.array([get_DF_heating_useCs(Mhost, m, redshift, mean_molecular_weight, mdef=mdef) for m in m_subs])
     heating_per_bin_mean = heating_per_sub * N_subs_per_bin_mean
     heating_mean = np.sum(heating_per_bin_mean)
 
@@ -123,7 +123,7 @@ def integrate_SHMF_heating_for_single_host_with_variance(redshift, lgx_min, lgx_
     return heating_upper_list, heating_lower_list, heating_mean
 
 
-def integrate_SHMF_heating_for_single_host_PoissonSampling(redshift, lgx_min, lgx_max, lgM, SHMF_model, n_samples, mean_molecular_weight=mu, verbose=True):
+def integrate_SHMF_heating_for_single_host_PoissonSampling(redshift, lgx_min, lgx_max, lgM, SHMF_model, n_samples, mean_molecular_weight=mu, verbose=True, mdef='200m'):
 
     lg_x_vals, F_vals, N_mean = get_normalized_SHMF_Cumulative(lgx_min, lgx_max, redshift, SHMF_model)
     if verbose:
@@ -156,13 +156,13 @@ def integrate_SHMF_heating_for_single_host_PoissonSampling(redshift, lgx_min, lg
             #directly sum the heating of all subhalos without binning
             Mhost = 10**lgM
             m_subs = Mhost * 10**sampled_lg_psi
-            heating_of_subs = np.array([get_DF_heating_useCs(Mhost, m, redshift, mean_molecular_weight) for m in m_subs])
+            heating_of_subs = np.array([get_DF_heating_useCs(Mhost, m, redshift, mean_molecular_weight, mdef=mdef) for m in m_subs])
             heating_sum = np.sum(heating_of_subs)
             SHMF_heating_for_host_samples.append(heating_sum)
     SHMF_heating_for_host_samples = np.array(SHMF_heating_for_host_samples)
     return SHMF_heating_for_host_samples
 
-def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_model, mean_molecular_weight=mu, PoissonSamplingFlag = False):
+def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_model, mean_molecular_weight=mu, PoissonSamplingFlag = False, mdef='200m'):
     '''
     return:
     data_dict = {'lgM_list':lgM_list,
@@ -183,7 +183,7 @@ def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_mod
     for index, lgM in enumerate(lgM_list):
         lgx_min = lgx_min_list[index]
         lgx_max = lgx_max_list[index]
-        heating = integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF_model, mean_molecular_weight)
+        heating = integrate_SHMF_heating_for_single_host(redshift, lgx_min, lgx_max, lgM, SHMF_model, mean_molecular_weight, mdef=mdef)
 
         dN_dlgM = HMF_2Dbestfit(lgM, redshift, include_selection_factor=True)
         dN_dlgM_totHMF = HMF_2Dbestfit(lgM, redshift, include_selection_factor=False)
@@ -194,7 +194,7 @@ def get_heating_per_lgM(lgM_list, lgx_min_list, lgx_max_list, redshift, SHMF_mod
         if PoissonSamplingFlag:  #use Poisson sampling of SHMF to see the variance of heating
             n_samples = 500
             heating_of_samples = integrate_SHMF_heating_for_single_host_PoissonSampling(redshift,
-                                lgx_min, lgx_max, lgM, SHMF_model, n_samples, mean_molecular_weight=mean_molecular_weight, verbose=True)
+                                lgx_min, lgx_max, lgM, SHMF_model, n_samples, mean_molecular_weight=mean_molecular_weight, verbose=True, mdef=mdef)
 
 
             heating_of_samples = np.asarray(heating_of_samples).reshape(-1)
@@ -248,7 +248,7 @@ def create_heating_data_dict_with_fgas(data_dict, f_gas):
     return heating_data_dict_with_fgas
 
 
-def get_EqCooling_for_single_host(Mvir, redshift, param_sets, mean_molecular_weight=mu, converge_when_setup=True):
+def get_EqCooling_for_single_host(Mvir, redshift, param_sets, mean_molecular_weight=mu, converge_when_setup=True, mdef='200m'):
     """
     Calculate cooling rates for multiple parameter sets
     Parameters:
@@ -273,17 +273,17 @@ def get_EqCooling_for_single_host(Mvir, redshift, param_sets, mean_molecular_wei
     dynamic_final_flag = False
 
     # Pre-calculate common values
-    mass_density = get_mass_density_analytic(redshift)
+    mass_density = get_mass_density_analytic(redshift, mdef=mdef)
     volume_vir = Mvir*Msun/h_Hubble/mass_density
     volume_vir_cm3 = volume_vir * (1e6)
-    lognH = get_gas_lognH_analytic(redshift)
+    lognH = get_gas_lognH_analytic(redshift, mdef=mdef)
     nH = 10**lognH
     print("lognH: ", lognH)
     print("nH: ", nH)
 
     specific_heating_rate = 0.0
     volumetric_heating_rate = 0.0
-    temperature = Temperature_Virial_analytic(Mvir/h_Hubble, redshift, mean_molecular_weight)
+    temperature = Temperature_Virial_analytic(Mvir/h_Hubble, redshift, mean_molecular_weight, mdef=mdef)
 
     # Iterate through all parameter sets
     for params in param_sets:
@@ -339,6 +339,7 @@ def get_EqCooling_envelope_for_single_host_minihalo(
     param_sets,
     mean_molecular_weight=mu,
     return_components=False,
+    mdef='200m',
 ):
     """
     Return the larger cooling rate from fixed initial species and equilibrium
@@ -352,6 +353,7 @@ def get_EqCooling_envelope_for_single_host_minihalo(
             param_sets,
             mean_molecular_weight=mean_molecular_weight,
             converge_when_setup=True,
+            mdef=mdef,
         ),
         dtype=float,
     )
@@ -362,6 +364,7 @@ def get_EqCooling_envelope_for_single_host_minihalo(
             param_sets,
             mean_molecular_weight=mean_molecular_weight,
             converge_when_setup=False,
+            mdef=mdef,
         ),
         dtype=float,
     )
@@ -382,6 +385,7 @@ def get_cumulative_cooling_and_heating_withinradius_singlehost(
     f_gas=Omega_b/Omega_m,
     mean_molecular_weight=mu,
     converge_when_setup=True,
+    mdef='200m',
 ):
     """
     Return cumulative cooling within selected radii for one host halo.
@@ -402,6 +406,7 @@ def get_cumulative_cooling_and_heating_withinradius_singlehost(
             param_sets,
             mean_molecular_weight=mean_molecular_weight,
             converge_when_setup=converge_when_setup,
+            mdef=mdef,
         ),
         dtype=float,
     )
@@ -543,7 +548,7 @@ def get_NonEqCooling_for_single_host(Mvir, redshift, heating_singlehost):
 """
 
 
-def get_peak_cosmic_DFheating(redshift):
+def get_peak_cosmic_DFheating(redshift, mdef='200m'):
     lgM_limits = [4, 14]  # Limits for log10(M [Msun/h])
     if (redshift < 6.0):
         lgM_limits = [4, 16]
@@ -557,7 +562,7 @@ def get_peak_cosmic_DFheating(redshift):
     bin_widths = np.diff(bin_edges)
     lgx_min_2_list = np.array([np.log10(1e-2) for j in range(len(lgM_list))])
     lgx_max_0_list = np.array([np.log10(1.0) for j in range(len(lgM_list))])
-    data_min2_max0 = get_heating_per_lgM(lgM_list, lgx_min_2_list, lgx_max_0_list, redshift, 'BestFit_z')
+    data_min2_max0 = get_heating_per_lgM(lgM_list, lgx_min_2_list, lgx_max_0_list, redshift, 'BestFit_z', mdef=mdef)
 
     peak_index = np.argmax(data_min2_max0['Heating_perlgM'])
     peak_lgM = data_min2_max0['lgM_list'][peak_index]
@@ -587,7 +592,7 @@ def plot_peak_lgM_cosmic_DFheating():
     print("Saved figure: ", filename)
 
 
-def plot_cosmic_DFheating(redshift, snapNum = None, ax=None, show_legend=True, show_title=False, show_ylabel = True, save_fig=True):
+def plot_cosmic_DFheating(redshift, snapNum = None, ax=None, show_legend=True, show_title=False, show_ylabel = True, save_fig=True, mdef='200m'):
     #check contribution to heating
     # M_Jeans = get_M_Jeans(redshift)
     # print("Jeans mass: ",M_Jeans)
@@ -619,13 +624,13 @@ def plot_cosmic_DFheating(redshift, snapNum = None, ax=None, show_legend=True, s
     lgx_max_2_list = np.array([np.log10(1.0e-2) for j in range(len(lgM_list))])
 
     # data_minMJeans_max1 = get_heating_per_lgM(lgM_list, lgx_min_MJeans_list, lgx_max_1_list, redshift, 'BestFit_z')
-    data_min2_max1 = get_heating_per_lgM(lgM_list, lgx_min_2_list, lgx_max_1_list, redshift, 'BestFit_z')
-    data_min3_max1 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'BestFit_z')
-    data_min1_max0 = get_heating_per_lgM(lgM_list, lgx_min_1_list, lgx_max_0_list, redshift, 'BestFit_z')
-    data_min2_max0 = get_heating_per_lgM(lgM_list, lgx_min_2_list, lgx_max_0_list, redshift, 'BestFit_z')
-    data_min3_max0 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'BestFit_z')
-    data_min3_max0_Bosch16evolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16evolved')
-    data_min3_max0_Bosch16unevolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16unevolved')
+    data_min2_max1 = get_heating_per_lgM(lgM_list, lgx_min_2_list, lgx_max_1_list, redshift, 'BestFit_z', mdef=mdef)
+    data_min3_max1 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'BestFit_z', mdef=mdef)
+    data_min1_max0 = get_heating_per_lgM(lgM_list, lgx_min_1_list, lgx_max_0_list, redshift, 'BestFit_z', mdef=mdef)
+    data_min2_max0 = get_heating_per_lgM(lgM_list, lgx_min_2_list, lgx_max_0_list, redshift, 'BestFit_z', mdef=mdef)
+    data_min3_max0 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'BestFit_z', mdef=mdef)
+    data_min3_max0_Bosch16evolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16evolved', mdef=mdef)
+    data_min3_max0_Bosch16unevolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16unevolved', mdef=mdef)
 
     #heating per logM (old version)
     '''
@@ -675,6 +680,13 @@ def plot_cosmic_DFheating(redshift, snapNum = None, ax=None, show_legend=True, s
                 heating_per_bin[bin_idx] += sub_DFheating_with_mach[i]
                 count_per_bin[bin_idx] += 1
         heating_rate_per_lgM_TNG = heating_per_bin / bin_widths / box_volume  # J/s/(cMpc/h)^3/dex
+        if mdef != '200m':
+            tng_density_rescale = (
+                get_mass_density_analytic(redshift, mdef=mdef)
+                / get_mass_density_analytic(redshift, mdef='200m')
+            )
+            heating_rate_per_lgM_TNG *= tng_density_rescale
+            print(f"Rescaled TNG DF_heating_fid from 200m to {mdef}: factor={tng_density_rescale:.4f}")
         print(f"Total number of subhalos processed: {len(host_M)}")
         print(f"Subhalos assigned to bins: {count_per_bin.sum()}")
         print(f"Total DF heating: {heating_per_bin.sum():.2e} J/s")
@@ -785,7 +797,7 @@ def plot_cosmic_DFheating(redshift, snapNum = None, ax=None, show_legend=True, s
     if show_legend:
         ax.legend()
     ax.set_xlim([min(lgM_list),max(lgM_list)])
-    ax.set_ylim([1e33,1e41])
+    ax.set_ylim([1e33,3e41])
     ax.set_yscale('log')
     if show_ylabel:
         ax.set_ylabel(r'DF heating per lgM [erg/s (cMpc/h)$^{-3}$ dex$^{-1}$]',fontsize=14)
@@ -810,7 +822,8 @@ def plot_cosmic_DFheating_multi_z(
     sharex=False,
     sharey=True,
     output_dir='/home/zwu/21cm_project/unified_model/Analytic_results/cosmic_DFheating',
-    filename_prefix='DF_heating_perlogM_multiZ'
+    filename_prefix='DF_heating_perlogM_multiZ',
+    mdef='200m'
 ):
     if layout is None:
         n = len(redshifts)
@@ -844,7 +857,8 @@ def plot_cosmic_DFheating_multi_z(
             show_legend=(i == 0),
             show_title=False,
             show_ylabel=False,
-            save_fig=False
+            save_fig=False,
+            mdef=mdef
         )
 
         ax.text(
@@ -880,7 +894,11 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM,
                                             show_legend_cooling=True,
                                             show_tvir_axis=True,
                                             save_fig=True,
-                                            xlim=None):
+                                            xlim=None,
+                                            profile_type='core',
+                                            concentration_model='ludlow16',
+                                            mdef='200m',
+                                            tag_mdef_in_filename=False):
 
     print(f"plotting DF heating and cooling in a single host halo at z = {redshift:.2f} ...")
     lgM_limits = [min_lgM, max_lgM]  # Limits for log10(M [Msun/h])
@@ -897,10 +915,10 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM,
 
     print("Calculating DF heating for host halo ...")
     # data_minMJeans_max1 = get_heating_per_lgM(lgM_list, lgx_min_MJeans_list, lgx_max_1_list, redshift, 'BestFit_z')
-    data_min3_max1 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'BestFit_z')
-    data_min3_max0 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'BestFit_z', mean_molecular_weight=mu, PoissonSamplingFlag=True)
-    # data_min3_max0_Bosch16evolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16evolved')
-    # data_min3_max0_Bosch16unevolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16unevolved')
+    data_min3_max1 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_1_list, redshift, 'BestFit_z', mdef=mdef)
+    data_min3_max0 = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'BestFit_z', mean_molecular_weight=mu, PoissonSamplingFlag=True, mdef=mdef)
+    # data_min3_max0_Bosch16evolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16evolved', mdef=mdef)
+    # data_min3_max0_Bosch16unevolved = get_heating_per_lgM(lgM_list, lgx_min_3_list, lgx_max_0_list, redshift, 'Bosch16unevolved', mdef=mdef)
 
     # same as data_min3_max0, but with fg = 0.05
     data_min3_max0_fg005 = create_heating_data_dict_with_fgas(data_min3_max0, f_gas=0.05)
@@ -960,8 +978,6 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM,
     fg_correction_sq = [fg**2 for fg in fg_correction]
 
     cooling_results = []
-    profile_type = 'core' #'core' or 'NFW'
-    concentration_model = 'ludlow16' #remember to change the concentration model in Dekel08.py
 
     for lgM in lgM_list:
         Mvir = 10**lgM
@@ -971,7 +987,7 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM,
         # print("lgM: ",lgM, "c: ",c, "profile_correction_for_cooling: ",profile_correction_for_cooling)
         # print("profile_correction_Dekel08_approx: ",profile_correction_Dekel08)
 
-        cooling_result = get_EqCooling_for_single_host(Mvir, redshift, cooling_param_sets, converge_when_setup=True)
+        cooling_result = get_EqCooling_for_single_host(Mvir, redshift, cooling_param_sets, converge_when_setup=True, mdef=mdef)
         cooling_result = np.array(cooling_result) * profile_correction_for_cooling
 
         cooling_results.append(cooling_result)
@@ -1028,7 +1044,8 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM,
     output_dir = '/home/zwu/21cm_project/unified_model/Analytic_results/singlehost'
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    filename = os.path.join(output_dir,f"DF_heating_singlehost_z{redshift:.2f}_{profile_type}_{concentration_model}.png")
+    mdef_suffix = f'_{mdef}' if tag_mdef_in_filename and mdef != '200m' else ''
+    filename = os.path.join(output_dir,f"DF_heating_singlehost_z{redshift:.2f}_{profile_type}_{concentration_model}{mdef_suffix}.png")
 
     if ax is None:
         fig, ax1 = plt.subplots(figsize=(8, 6), facecolor='white')
@@ -1169,11 +1186,11 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM,
         ax2 = ax1.twiny()
         ax2.set_xlim(ax1.get_xlim())
         xlim = ax1.get_xlim()
-        Tvir_min = lgM_to_Tvir(xlim[0], redshift)
-        Tvir_max = lgM_to_Tvir(xlim[1], redshift)
+        Tvir_min = lgM_to_Tvir(xlim[0], redshift, mdef=mdef)
+        Tvir_max = lgM_to_Tvir(xlim[1], redshift, mdef=mdef)
         # Tvir_locator = LogLocator(base=10)
         # Tvir_ticks = Tvir_locator.tick_values(Tvir_min, Tvir_max)
-        # lgM_ticks_top = [Tvir_to_lgM(Tvir, redshift) for Tvir in Tvir_ticks]
+        # lgM_ticks_top = [Tvir_to_lgM(Tvir, redshift, mdef=mdef) for Tvir in Tvir_ticks]
         # valid_ticks = [(lgM, Tvir) for lgM, Tvir in zip(lgM_ticks_top, Tvir_ticks)
         #             if min(lgM_list) <= lgM <= max(lgM_list)]
 
@@ -1183,7 +1200,7 @@ def plot_global_heating_cooling_singlehost(redshift, min_lgM, max_lgM,
         exp_max = int(np.ceil(np.log10(Tvir_max)))
         Tvir_ticks = [10**e for e in range(exp_min, exp_max + 1)]
 
-        lgM_ticks_top = [Tvir_to_lgM(Tvir, redshift) for Tvir in Tvir_ticks]
+        lgM_ticks_top = [Tvir_to_lgM(Tvir, redshift, mdef=mdef) for Tvir in Tvir_ticks]
 
         xlim = ax1.get_xlim()
         valid_ticks = [(lgM, Tvir) for lgM, Tvir in zip(lgM_ticks_top, Tvir_ticks)
@@ -1242,7 +1259,10 @@ def plot_global_heating_cooling_multi_z(
     sharey=True,
     show_tvir_axis=True,
     output_dir='/home/zwu/21cm_project/unified_model/Analytic_results/singlehost',
-    filename_prefix='DF_heating_singlehost_multiZ'
+    filename_prefix='DF_heating_singlehost_multiZ',
+    profile_type='core',
+    concentration_model='ludlow16',
+    mdef='200m'
 ):
     # redshift -> (min_lgM, max_lgM)
     default_mass_ranges = {
@@ -1289,7 +1309,10 @@ def plot_global_heating_cooling_multi_z(
             show_legend_heating=(z == 0),
             show_legend_cooling=True,
             show_tvir_axis=show_tvir_axis,
-            save_fig=False
+            save_fig=False,
+            profile_type=profile_type,
+            concentration_model=concentration_model,
+            mdef=mdef
         )
         # ax.set_title(f"z = {z}")
         ax.text(
@@ -1611,6 +1634,7 @@ def plot_modelA_cumulative_heating_cooling_minihalo(
     concentration_model='ludlow16',
     output_dir='/home/zwu/21cm_project/unified_model/Analytic_HC_results_within_radius',
     include_shmf_scatter=True,
+    mdef='200m',
 ):
     """
     Plot cumulative Model A DF heating and cooling within selected radii.
@@ -1624,7 +1648,7 @@ def plot_modelA_cumulative_heating_cooling_minihalo(
     print(
         f"plotting cumulative Model A heating/cooling in high-z minihalos: "
         f"z={redshift:.2f}, alpha={alpha:.2f}, f_gas={f_gas:.4f}, "
-        f"SHMF scatter={include_shmf_scatter}"
+        f"mdef={mdef}, SHMF scatter={include_shmf_scatter}"
     )
     os.makedirs(output_dir, exist_ok=True)
 
@@ -1640,6 +1664,7 @@ def plot_modelA_cumulative_heating_cooling_minihalo(
         'BestFit_z',
         mean_molecular_weight=mu_minihalo,
         PoissonSamplingFlag=include_shmf_scatter,
+        mdef=mdef,
     )
     fg_corr = f_gas / (Omega_b / Omega_m)
     heating_global_erg_s = 1.0e7 * heating_data['Heating_singlehost'] * fg_corr
@@ -1725,6 +1750,7 @@ def plot_modelA_cumulative_heating_cooling_minihalo(
             cooling_param_sets,
             mean_molecular_weight=mu_minihalo,
             return_components=True,
+            mdef=mdef,
         )
 
     heating_within_erg_s = heating_global_erg_s[None, :] * heating_fraction
@@ -1849,6 +1875,7 @@ def plot_modelA_cumulative_heating_cooling_minihalo(
         redshift=redshift,
         f_gas=f_gas,
         include_shmf_scatter=include_shmf_scatter,
+        mdef=mdef,
     )
     if include_shmf_scatter:
         for key, values in heating_scatter_global_erg_s.items():
@@ -1881,6 +1908,7 @@ def plot_modelA_cumulative_heating_cooling_massivehalo(
     concentration_model='ludlow16',
     output_dir='/home/zwu/21cm_project/unified_model/Analytic_HC_results_within_radius',
     include_shmf_scatter=True,
+    mdef='200m',
 ):
     """
     Plot low-z massive-halo Model A cumulative heating/cooling within selected radii.
@@ -1911,7 +1939,8 @@ def plot_modelA_cumulative_heating_cooling_massivehalo(
     print(
         f"plotting low-z cumulative Model A heating/cooling: "
         f"z={redshift:.2f}, alpha={alpha:.2f}, f_gas={f_gas:.3f}, "
-        f"concentration={concentration_model}, SHMF scatter={include_shmf_scatter}"
+        f"concentration={concentration_model}, mdef={mdef}, "
+        f"SHMF scatter={include_shmf_scatter}"
     )
     os.makedirs(output_dir, exist_ok=True)
 
@@ -1927,6 +1956,7 @@ def plot_modelA_cumulative_heating_cooling_massivehalo(
         'BestFit_z',
         mean_molecular_weight=mu,
         PoissonSamplingFlag=include_shmf_scatter,
+        mdef=mdef,
     )
     heating_data = create_heating_data_dict_with_fgas(heating_data_raw, f_gas=f_gas)
     heating_global_erg_s = 1.0e7 * heating_data['Heating_singlehost']
@@ -1992,6 +2022,7 @@ def plot_modelA_cumulative_heating_cooling_massivehalo(
                 cooling_param_sets,
                 mean_molecular_weight=mu,
                 converge_when_setup=True,
+                mdef=mdef,
             ),
             dtype=float,
         )
@@ -2096,8 +2127,8 @@ def plot_modelA_cumulative_heating_cooling_massivehalo(
         ax.legend(fontsize=8)
 
     fig.suptitle(
-        rf'Model A cumulative heating/cooling, z={redshift:.1f}, core profile, '
-        rf'{concentration_model}, $f_g={f_gas:.2f}$',
+        rf'Model A cumulative heating/cooling, z={redshift:.1f}, '
+        rf'$\alpha={alpha:.1f}$, {concentration_model}, $f_g={f_gas:.2f}$',
         fontsize=13,
     )
     plt.tight_layout(rect=(0, 0, 1, 0.93))
@@ -2131,6 +2162,7 @@ def plot_modelA_cumulative_heating_cooling_massivehalo(
         f_gas=f_gas,
         Z_Dekel=Z_Dekel,
         include_shmf_scatter=include_shmf_scatter,
+        mdef=mdef,
     )
     if include_shmf_scatter:
         for key, values in heating_scatter_global_erg_s.items():
@@ -2156,6 +2188,7 @@ def plot_modelA_cumulative_heating_cooling_massivehalo(
 def plot_modelA_cumulative_heating_cooling_massivehalo_redshift_set(
     redshifts=(0, 2, 6),
     output_dir='/home/zwu/21cm_project/unified_model/Analytic_HC_results_within_radius',
+    mdef='200m',
 ):
     results = {}
     for redshift in redshifts:
@@ -2163,6 +2196,7 @@ def plot_modelA_cumulative_heating_cooling_massivehalo_redshift_set(
             redshift=redshift,
             output_dir=output_dir,
             include_shmf_scatter=True,
+            mdef=mdef,
         )
     return results
 
@@ -2516,7 +2550,7 @@ def plot_overlay_Hgas_Hsub_cumulative_heating_cooling(
             marker=_get_xmax_marker(config['x_max']),
             markerfacecolor='none',
             markersize=5,
-            label=rf'$H_{{\rm sub}}$, $x_{{\max}}={config["x_max"]:.0f}$',
+            label=rf'$H_{{\rm sub}}$, $\xi_{{\max}}={config["x_max"]:.0f}$',
         )
         for config in hsub_configs
     ]
@@ -2728,7 +2762,7 @@ def plot_paper_cooling_heating_within_radius_z15_extreme_cases(
             marker=_get_xmax_marker(config['x_max']),
             markerfacecolor='none',
             markersize=5,
-            label=rf'$H_{{\rm sub}}$, $x_{{\max}}={config["x_max"]:.0f}$',
+            label=rf'$H_{{\rm sub}}$, $\xi_{{\max}}={config["x_max"]:.0f}$',
         )
         for config in hsub_configs
     ]
@@ -2823,6 +2857,7 @@ def test_cooling_heating_profile():
         },
     ]
     concentration_model = 'ludlow16'
+    mdef = '200c'
     output_dir = '/home/zwu/21cm_project/unified_model/Profile_results_for_paper/cooling_heating_profile_corr'
     os.makedirs(output_dir, exist_ok=True)
 
@@ -2879,6 +2914,7 @@ def test_cooling_heating_profile():
                 f_gas=Omega_b / Omega_m,
                 mean_molecular_weight=mean_molecular_weight,
                 converge_when_setup=True,
+                mdef=mdef,
             )
         )
         print("wrapper radii_sorted =", radii_sorted)
@@ -3032,7 +3068,7 @@ def test_cooling_heating_profile():
                     marker=_get_xmax_marker(x_max),
                     markerfacecolor='none',
                     markersize=5,
-                    label=rf'$H_{{\rm sub}}$, $x_{{\max}}={x_max:.0f}$',
+                    label=rf'$H_{{\rm sub}}$, $\xi_{{\max}}={x_max:.0f}$',
                 )
                 for x_max in x_max_values
             ])
